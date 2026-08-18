@@ -14,8 +14,6 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        
-        // Добавляем плейсхолдер для AppAuth
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
 
@@ -44,6 +42,11 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+    
+    // ВКЛЮЧАЕМ DATABINDING
+    buildFeatures {
+        dataBinding = true
     }
 }
 
