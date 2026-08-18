@@ -34,8 +34,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        
+        // Добавляем плейсхолдер для AppAuth
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
     buildTypes {
@@ -60,6 +64,8 @@ android {
 >>>>>>> 503641ba7e1197474c9213ceb2c26b635f14f884
 =======
     // Убираем create("debug") и просто настраиваем существующий
+=======
+>>>>>>> b3fb2643f80ee91ead98360a796a36a0d1856ed4
     signingConfigs {
         getByName("debug") {
             storeFile = file("debug.keystore")
