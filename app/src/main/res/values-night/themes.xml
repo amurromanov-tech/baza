@@ -1,0 +1,18 @@
+<resources>
+    <style name="Theme.BAZA" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF5722</item>
+        <item name="colorPrimaryDark">#E64A19</item>
+        <item name="colorAccent">#FF9800</item>
+        <item name="colorControlNormal">#FFFFFF</item>
+    </style>
+
+    <style name="BottomNavButton" parent="Widget.AppCompat.Button.Borderless">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:tint">#FFFFFF</item>
+        <item name="android:background">@drawable/btn_dark_circle</item>
+    </style>
+</resources>

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">BAZA</string>
+    <string name="add_folder">Add folder</string>
+    <string name="add_item">Add item</string>
+    <string name="home">Root</string>
+    <string name="go_up">Level up</string>
+    <string name="settings">Settings</string>
+    <string name="item_icon">Item icon</string>
+</resources>

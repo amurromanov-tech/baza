@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
+        tools:title="BAZA">
+        
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_gravity="end"
+            android:gravity="center_vertical">
+            
+            <!-- Иконка статуса синхронизации -->
+            <ImageView
+                android:id="@+id/ivSyncStatus"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_sync_done"
+                android:contentDescription="Sync status"
+                android:layout_marginEnd="8dp"
+                android:visibility="visible" />
+            
+            <!-- Кнопка поиска -->
+            <ImageButton
+                android:id="@+id/btnSearch"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_search"
+                android:background="@drawable/btn_dark_circle"
+                android:contentDescription="Search"
+                android:tint="?attr/colorControlNormal" />
+                
+            <!-- Кнопка настроек -->
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_settings"
+                android:background="@drawable/btn_dark_circle"
+                android:contentDescription="Settings"
+                android:tint="?attr/colorControlNormal" />
+        </LinearLayout>
+    </com.google.android.material.appbar.MaterialToolbar>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvCatalog"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        tools:listitem="@layout/item_catalog_entry" />
+
+    <!-- Нижняя панель с 4 кнопками (убрали поиск) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="8dp"
+        android:background="?attr/colorSurface">
+
+        <ImageButton
+            android:id="@+id/btnAddFolder"
+            style="@style/BottomNavButton"
+            android:contentDescription="Add folder"
+            android:src="@drawable/ic_folder_add" />
+
+        <ImageButton
+            android:id="@+id/btnAddItem"
+            style="@style/BottomNavButton"
+            android:contentDescription="Add item"
+            android:src="@drawable/ic_add_photo" />
+
+        <ImageButton
+            android:id="@+id/btnHome"
+            style="@style/BottomNavButton"
+            android:contentDescription="Root"
+            android:src="@drawable/ic_home" />
+
+        <ImageButton
+            android:id="@+id/btnUp"
+            style="@style/BottomNavButton"
+            android:contentDescription="Level up"
+            android:src="@drawable/ic_arrow_up" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,11 @@
+<resources>
+    <color name="colorPrimary">#FF5722</color>
+    <color name="colorPrimaryDark">#E64A19</color>
+    <color name="colorAccent">#FF9800</color>
+    <color name="colorNormal">#4CAF50</color>
+    <color name="colorSoonExpired">#FFC107</color>
+    <color name="colorExpired">#F44336</color>
+    <color name="colorFolderBar">#9E9E9E</color>
+    <color name="iconColor">#000000</color>
+    <color name="colorWarning">#FFC107</color>  <!-- жёлтый (скоро просрочка) -->
+</resources>
