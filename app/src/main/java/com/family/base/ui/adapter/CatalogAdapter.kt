@@ -9,6 +9,7 @@ import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ItemCatalogEntryBinding
 import com.family.base.util.ImageUtils
+import java.io.File
 
 class CatalogAdapter(
     private val onFolderClick: (FolderEntity) -> Unit,
@@ -37,10 +38,10 @@ class CatalogAdapter(
 
         when (entry) {
             is FolderEntity -> {
-                // ===== ПАПКИ: сбрасываем предыдущую загрузку =====
+                // Очищаем предыдущую загрузку
                 holder.binding.icon.load(null)
 
-                // ===== ИСПРАВЛЕНИЕ: проверяем наличие локальной иконки =====
+                // Проверяем наличие локальной иконки
                 val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
                 if (iconFile != null && iconFile.exists()) {
                     holder.binding.icon.load(iconFile) {
@@ -63,9 +64,8 @@ class CatalogAdapter(
                 holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
             }
             is ItemEntity -> {
-                // ===== ПРЕДМЕТЫ: очищаем перед загрузкой =====
+                // Очищаем перед загрузкой
                 holder.binding.icon.load(null)
-                holder.binding.icon.setImageDrawable(null)
 
                 val localFile = ImageUtils.getLocalImageFile(context, entry.id)
                 if (localFile != null && localFile.exists()) {
@@ -75,7 +75,9 @@ class CatalogAdapter(
                         error(R.drawable.ic_item_default_48)
                     }
                 } else {
-                    holder.binding.icon.setImageResource(R.drawable.ic_item_default_48)
+                    holder.binding.icon.load(R.drawable.ic_item_default_48) {
+                        crossfade(false)
+                    }
                 }
 
                 holder.binding.name.text = entry.name
