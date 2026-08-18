@@ -193,7 +193,7 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ПЕРЕИМЕНОВАНО: showClearAllDataDialog =====
+    // ===== ИСПРАВЛЕНА ЛЯМБДА С ЯВНЫМИ ТИПАМИ =====
     private fun showClearAllDataDialog() {
         val randomWord = generateRandomWord()
         val editText = android.widget.EditText(this)
