@@ -265,6 +265,7 @@ class MainActivity : AppCompatActivity() {
         stopSyncAnimation()
     }
 
+    // ===== ИСПРАВЛЕНАЯ ФУНКЦИЯ =====
     private fun updatePathTitle() {
         val path = viewModel.currentPath.value ?: "BAZA"
         pathTextView?.text = path
