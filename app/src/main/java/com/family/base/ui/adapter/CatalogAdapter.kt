@@ -80,7 +80,7 @@ class CatalogAdapter(
                 }
 
                 holder.name.text = entry.name
-                val infoText = buildInfoText(entry)
+                var infoText = buildInfoText(entry)
                 holder.info.text = infoText
 
                 val colorRes = when {
