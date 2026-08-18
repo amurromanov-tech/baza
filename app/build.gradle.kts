@@ -9,11 +9,11 @@ android {
     compileSdk = 34
 
     signingConfigs {
-        create("customDebug") {
-            storeFile = file(System.getenv("HOME") + "/debug.keystore")
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "android"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "androiddebugkey"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "android"
+        create("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android
         }
     }
 
@@ -29,9 +29,9 @@ android {
 
     }
 
-    buildTypes {
+   buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("customDebug")
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = true
