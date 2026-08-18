@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<Layout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -44,4 +44,4 @@
             android:textAppearance="?attr/textAppearanceCaption"
             tools:text="Qty: 1 | Exp: 01.01.2025" />
     </LinearLayout>
-</LinearLayout>
+</Layout>
