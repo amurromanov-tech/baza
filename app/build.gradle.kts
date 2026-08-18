@@ -9,11 +9,19 @@ android {
     compileSdk = 34
 
     signingConfigs {
+<<<<<<< HEAD
     create("debug") {
         storeFile = file("debug.keystore")
         storePassword = "android"
         keyAlias = "androiddebugkey"
         keyPassword = "android"
+=======
+        create("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android
+>>>>>>> 503641ba7e1197474c9213ceb2c26b635f14f884
         }
     }
 
@@ -29,6 +37,7 @@ android {
 
     }
 
+<<<<<<< HEAD
     buildTypes {
     debug {
         signingConfig = signingConfigs.getByName("debug")
@@ -36,6 +45,19 @@ android {
     release {
         isMinifyEnabled = false
         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+=======
+   buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("customDebug")
+>>>>>>> 503641ba7e1197474c9213ceb2c26b635f14f884
         }
     }
 
