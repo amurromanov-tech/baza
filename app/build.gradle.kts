@@ -46,7 +46,8 @@ android {
     
     // ВКЛЮЧАЕМ DATABINDING
     buildFeatures {
-        dataBinding = true
+       dataBinding = false
+       viewBinding = true
     }
 }
 
