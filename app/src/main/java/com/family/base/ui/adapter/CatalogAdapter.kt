@@ -81,7 +81,7 @@ class CatalogAdapter(
                 }
 
                 holder.binding.name.text = entry.name
-                var infoText = buildInfoText(entry)
+                val infoText = buildInfoText(entry)
                 holder.binding.info.text = infoText
 
                 val colorRes = when {
