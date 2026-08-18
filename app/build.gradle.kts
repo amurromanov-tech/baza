@@ -8,6 +8,7 @@ android {
     namespace = "com.family.base"
     compileSdk = 34
 
+<<<<<<< HEAD
     signingConfigs {
 <<<<<<< HEAD
     create("debug") {
@@ -25,18 +26,17 @@ android {
         }
     }
 
+=======
+>>>>>>> 51e49751c89aeb9b47447d315b02febeebc7e402
     defaultConfig {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
-        manifestPlaceholders["appAuthRedirectHost"] = "oauth2redirect"
-
     }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
     buildTypes {
     debug {
@@ -58,18 +58,32 @@ android {
             )
             signingConfig = signingConfigs.getByName("customDebug")
 >>>>>>> 503641ba7e1197474c9213ceb2c26b635f14f884
+=======
+    // Убираем create("debug") и просто настраиваем существующий
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+>>>>>>> 51e49751c89aeb9b47447d315b02febeebc7e402
         }
     }
 
-    buildFeatures {
-        viewBinding = true
+    buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
     kotlinOptions {
         jvmTarget = "17"
     }
