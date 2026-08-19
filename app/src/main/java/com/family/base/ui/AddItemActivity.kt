@@ -39,10 +39,8 @@ class AddItemActivity : AppCompatActivity() {
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
-                // Используем binding
-                binding.ivPhoto?.setImageBitmap(bitmap)
-                binding.ivPhoto?.visibility = View.VISIBLE
-                binding.btnRemovePhoto?.visibility = View.VISIBLE
+                binding.ivManualPhoto.setImageBitmap(bitmap)
+                binding.ivManualPhoto.visibility = View.VISIBLE
                 Logger.log(TAG, "Image selected, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -83,44 +81,71 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        // Кнопки режимов
+        binding.btnManualMode.setOnClickListener {
+            binding.modeSelection.visibility = View.GONE
+            binding.manualModeLayout.visibility = View.VISIBLE
+            binding.autoModeLayout.visibility = View.GONE
+            Logger.log(TAG, "Manual mode selected")
+        }
+
+        binding.btnAutoMode.setOnClickListener {
+            binding.modeSelection.visibility = View.GONE
+            binding.autoModeLayout.visibility = View.VISIBLE
+            binding.manualModeLayout.visibility = View.GONE
+            Logger.log(TAG, "Auto mode selected")
+        }
+
+        // Отмена
         binding.btnCancel.setOnClickListener {
             Logger.log(TAG, "Cancel clicked")
             finish()
         }
 
+        // Сохранение (используем ручной режим)
         binding.btnSave.setOnClickListener {
             Logger.log(TAG, "Save clicked")
             saveItem()
         }
 
-        binding.etExpiry.setOnClickListener {
+        // Дата для ручного режима
+        binding.etManualExpiry.setOnClickListener {
             showDatePickerDialog()
         }
 
-        binding.ivPhoto?.setOnClickListener {
+        // Дата для авто режима
+        binding.etAutoExpiry.setOnClickListener {
+            showDatePickerDialog()
+        }
+
+        // Фото
+        binding.btnTakePhoto.setOnClickListener {
             pickImageLauncher.launch("image/*")
         }
 
-        binding.btnRemovePhoto?.setOnClickListener {
-            imageBytes = null
-            binding.ivPhoto?.setImageDrawable(null)
-            binding.ivPhoto?.visibility = View.GONE
-            binding.btnRemovePhoto?.visibility = View.GONE
-            Logger.log(TAG, "Photo removed")
-        }
-
-        binding.btnScanBarcode?.setOnClickListener {
+        // Сканер штрих-кода
+        binding.btnScanBarcode.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
             Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
         }
+
+        // Переключение режимов (если нужно вернуться)
+        // Можно добавить кнопку "Назад" или "Выбрать режим"
     }
 
     private fun showDatePickerDialog() {
         val calendar = Calendar.getInstance()
-        val currentText = binding.etExpiry.text.toString()
-        if (currentText.isNotEmpty()) {
+        val currentText = binding.etManualExpiry.text.toString()
+        val targetEditText = if (currentText.isNotEmpty()) {
+            binding.etManualExpiry
+        } else {
+            binding.etAutoExpiry
+        }
+
+        val currentTextValue = targetEditText.text.toString()
+        if (currentTextValue.isNotEmpty()) {
             try {
-                val date = dateFormat.parse(currentText)
+                val date = dateFormat.parse(currentTextValue)
                 date?.let { calendar.time = it }
             } catch (e: Exception) { /* ignore */ }
         }
@@ -129,7 +154,7 @@ class AddItemActivity : AppCompatActivity() {
             this,
             { _, year, month, dayOfMonth ->
                 val dateStr = String.format("%02d.%02d.%d", dayOfMonth, month + 1, year)
-                binding.etExpiry.setText(dateStr)
+                targetEditText.setText(dateStr)
                 try {
                     expiryDate = dateFormat.parse(dateStr)?.time
                 } catch (e: Exception) {
@@ -145,17 +170,24 @@ class AddItemActivity : AppCompatActivity() {
     private fun saveItem() {
         Logger.log(TAG, "saveItem() called")
 
-        val name = binding.etName.text.toString().trim()
+        // Используем поля из ручного режима
+        val name = binding.etManualName.text.toString().trim()
         if (name.isEmpty()) {
             Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val quantity = binding.etQuantity.text.toString().toIntOrNull() ?: 1
-        val description = binding.etDescription.text.toString().trim()
+        val quantity = binding.etManualQuantity.text.toString().toIntOrNull() ?: 1
+        val description = binding.etManualDescription.text.toString().trim()
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // Исправленный конструктор ItemEntity (без parentFolderId)
+        // Тип
+        val type = when (binding.rgType.checkedRadioButtonId) {
+            R.id.rbFood -> "food"
+            R.id.rbMedicine -> "medicine"
+            else -> "other"
+        }
+
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
             name = name,
@@ -164,11 +196,12 @@ class AddItemActivity : AppCompatActivity() {
             price = price,
             expiryDate = expiryDate,
             parentId = parentFolderId,
-            addedBy = "user"
+            addedBy = "user",
+            type = type
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price")
+        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$type")
 
         lifecycleScope.launch {
             try {
