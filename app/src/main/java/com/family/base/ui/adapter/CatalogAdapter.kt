@@ -1,15 +1,16 @@
 package com.family.base.ui.adapter
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import com.family.base.R
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
-import com.family.base.databinding.ItemCatalogEntryBinding
 import com.family.base.util.ImageUtils
-import java.io.File
 
 class CatalogAdapter(
     private val onFolderClick: (FolderEntity) -> Unit,
@@ -26,10 +27,8 @@ class CatalogAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val binding = ItemCatalogEntryBinding.inflate(
-            LayoutInflater.from(parent.context), parent, false
-        )
-        return ViewHolder(binding)
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_catalog_entry, parent, false)
+        return ViewHolder(view)
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -39,25 +38,25 @@ class CatalogAdapter(
         when (entry) {
             is FolderEntity -> {
                 // Очищаем предыдущую загрузку
-                holder.binding.icon.load(null)
+                holder.icon.load(null)
 
                 // Проверяем наличие локальной иконки
                 val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
                 if (iconFile != null && iconFile.exists()) {
-                    holder.binding.icon.load(iconFile) {
+                    holder.icon.load(iconFile) {
                         crossfade(true)
                         placeholder(R.drawable.ic_folder_48)
                         error(R.drawable.ic_folder_48)
                     }
                 } else {
-                    holder.binding.icon.load(R.drawable.ic_folder_48) {
+                    holder.icon.load(R.drawable.ic_folder_48) {
                         crossfade(false)
                     }
                 }
 
-                holder.binding.name.text = entry.name
-                holder.binding.info.text = ""
-                holder.binding.colorBar.setBackgroundColor(
+                holder.name.text = entry.name
+                holder.info.text = ""
+                holder.colorBar.setBackgroundColor(
                     context.resources.getColor(R.color.colorNormal, context.theme)
                 )
                 holder.itemView.setOnClickListener { onFolderClick(entry) }
@@ -65,31 +64,31 @@ class CatalogAdapter(
             }
             is ItemEntity -> {
                 // Очищаем перед загрузкой
-                holder.binding.icon.load(null)
+                holder.icon.load(null)
 
                 val localFile = ImageUtils.getLocalImageFile(context, entry.id)
                 if (localFile != null && localFile.exists()) {
-                    holder.binding.icon.load(localFile) {
+                    holder.icon.load(localFile) {
                         crossfade(true)
                         placeholder(R.drawable.ic_item_default_48)
                         error(R.drawable.ic_item_default_48)
                     }
                 } else {
-                    holder.binding.icon.load(R.drawable.ic_item_default_48) {
+                    holder.icon.load(R.drawable.ic_item_default_48) {
                         crossfade(false)
                     }
                 }
 
-                holder.binding.name.text = entry.name
-                var infoText = buildInfoText(entry)
-                holder.binding.info.text = infoText
+                holder.name.text = entry.name
+                val infoText = buildInfoText(entry)
+                holder.info.text = infoText
 
                 val colorRes = when {
                     entry.isExpired -> R.color.colorExpired
                     entry.daysUntilExpiry in 0..3 -> R.color.colorWarning
                     else -> R.color.colorNormal
                 }
-                holder.binding.colorBar.setBackgroundColor(
+                holder.colorBar.setBackgroundColor(
                     context.resources.getColor(colorRes, context.theme)
                 )
 
@@ -127,6 +126,10 @@ class CatalogAdapter(
 
     override fun getItemCount(): Int = items.size
 
-    inner class ViewHolder(val binding: ItemCatalogEntryBinding) :
-        RecyclerView.ViewHolder(binding.root)
+    inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val icon: ImageView = view.findViewById(R.id.icon)
+        val name: TextView = view.findViewById(R.id.name)
+        val info: TextView = view.findViewById(R.id.info)
+        val colorBar: View = view.findViewById(R.id.colorBar)
+    }
 }
