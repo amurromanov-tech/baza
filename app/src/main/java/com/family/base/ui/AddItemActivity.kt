@@ -110,12 +110,12 @@ class AddItemActivity : AppCompatActivity() {
 
         // Дата для ручного режима
         binding.etManualExpiry.setOnClickListener {
-            showDatePickerDialog()
+            showDatePickerDialog(binding.etManualExpiry)
         }
 
         // Дата для авто режима
         binding.etAutoExpiry.setOnClickListener {
-            showDatePickerDialog()
+            showDatePickerDialog(binding.etAutoExpiry)
         }
 
         // Фото
@@ -128,24 +128,14 @@ class AddItemActivity : AppCompatActivity() {
             Logger.log(TAG, "Scan barcode clicked")
             Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
         }
-
-        // Переключение режимов (если нужно вернуться)
-        // Можно добавить кнопку "Назад" или "Выбрать режим"
     }
 
-    private fun showDatePickerDialog() {
+    private fun showDatePickerDialog(targetEditText: com.google.android.material.textfield.TextInputEditText) {
         val calendar = Calendar.getInstance()
-        val currentText = binding.etManualExpiry.text.toString()
-        val targetEditText = if (currentText.isNotEmpty()) {
-            binding.etManualExpiry
-        } else {
-            binding.etAutoExpiry
-        }
-
-        val currentTextValue = targetEditText.text.toString()
-        if (currentTextValue.isNotEmpty()) {
+        val currentText = targetEditText.text.toString()
+        if (currentText.isNotEmpty()) {
             try {
-                val date = dateFormat.parse(currentTextValue)
+                val date = dateFormat.parse(currentText)
                 date?.let { calendar.time = it }
             } catch (e: Exception) { /* ignore */ }
         }
@@ -182,26 +172,28 @@ class AddItemActivity : AppCompatActivity() {
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
         // Тип
-        val type = when (binding.rgType.checkedRadioButtonId) {
+        val itemType = when (binding.rgType.checkedRadioButtonId) {
             R.id.rbFood -> "food"
             R.id.rbMedicine -> "medicine"
             else -> "other"
         }
 
+        // Создаём предмет с правильными полями
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
             name = name,
+            parentId = parentFolderId,
             quantity = quantity,
             description = description,
             price = price,
             expiryDate = expiryDate,
-            parentId = parentFolderId,
             addedBy = "user",
-            type = type
+            itemType = itemType,
+            imageUrl = if (imageBytes != null) "${UUID.randomUUID()}.jpg" else null
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$type")
+        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType")
 
         lifecycleScope.launch {
             try {
