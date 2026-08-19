@@ -39,10 +39,10 @@ class AddItemActivity : AppCompatActivity() {
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
-                // Используем стандартные ID из layout
-                findViewById<android.widget.ImageView>(R.id.item_image)?.setImageBitmap(bitmap)
-                findViewById<android.widget.ImageView>(R.id.item_image)?.visibility = View.VISIBLE
-                findViewById<android.widget.Button>(R.id.btn_remove_image)?.visibility = View.VISIBLE
+                // Используем binding
+                binding.ivPhoto?.setImageBitmap(bitmap)
+                binding.ivPhoto?.visibility = View.VISIBLE
+                binding.btnRemovePhoto?.visibility = View.VISIBLE
                 Logger.log(TAG, "Image selected, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -97,19 +97,19 @@ class AddItemActivity : AppCompatActivity() {
             showDatePickerDialog()
         }
 
-        findViewById<android.widget.ImageView>(R.id.item_image)?.setOnClickListener {
+        binding.ivPhoto?.setOnClickListener {
             pickImageLauncher.launch("image/*")
         }
 
-        findViewById<android.widget.Button>(R.id.btn_remove_image)?.setOnClickListener {
+        binding.btnRemovePhoto?.setOnClickListener {
             imageBytes = null
-            findViewById<android.widget.ImageView>(R.id.item_image)?.setImageDrawable(null)
-            findViewById<android.widget.ImageView>(R.id.item_image)?.visibility = View.GONE
-            findViewById<android.widget.Button>(R.id.btn_remove_image)?.visibility = View.GONE
+            binding.ivPhoto?.setImageDrawable(null)
+            binding.ivPhoto?.visibility = View.GONE
+            binding.btnRemovePhoto?.visibility = View.GONE
             Logger.log(TAG, "Photo removed")
         }
 
-        findViewById<android.widget.Button>(R.id.btn_scan_barcode)?.setOnClickListener {
+        binding.btnScanBarcode?.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
             Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
         }
@@ -155,7 +155,7 @@ class AddItemActivity : AppCompatActivity() {
         val description = binding.etDescription.text.toString().trim()
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // Исправленный конструктор ItemEntity
+        // Исправленный конструктор ItemEntity (без parentFolderId)
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
             name = name,
