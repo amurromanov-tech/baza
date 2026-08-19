@@ -39,9 +39,10 @@ class AddItemActivity : AppCompatActivity() {
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
-                binding.ivPhoto.setImageBitmap(bitmap)
-                binding.ivPhoto.visibility = View.VISIBLE
-                binding.btnRemovePhoto.visibility = View.VISIBLE
+                // Используем стандартные ID из layout
+                findViewById<android.widget.ImageView>(R.id.item_image)?.setImageBitmap(bitmap)
+                findViewById<android.widget.ImageView>(R.id.item_image)?.visibility = View.VISIBLE
+                findViewById<android.widget.Button>(R.id.btn_remove_image)?.visibility = View.VISIBLE
                 Logger.log(TAG, "Image selected, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -96,21 +97,20 @@ class AddItemActivity : AppCompatActivity() {
             showDatePickerDialog()
         }
 
-        binding.ivPhoto.setOnClickListener {
+        findViewById<android.widget.ImageView>(R.id.item_image)?.setOnClickListener {
             pickImageLauncher.launch("image/*")
         }
 
-        binding.btnRemovePhoto.setOnClickListener {
+        findViewById<android.widget.Button>(R.id.btn_remove_image)?.setOnClickListener {
             imageBytes = null
-            binding.ivPhoto.setImageDrawable(null)
-            binding.ivPhoto.visibility = View.GONE
-            binding.btnRemovePhoto.visibility = View.GONE
+            findViewById<android.widget.ImageView>(R.id.item_image)?.setImageDrawable(null)
+            findViewById<android.widget.ImageView>(R.id.item_image)?.visibility = View.GONE
+            findViewById<android.widget.Button>(R.id.btn_remove_image)?.visibility = View.GONE
             Logger.log(TAG, "Photo removed")
         }
 
-        binding.btnScanBarcode.setOnClickListener {
+        findViewById<android.widget.Button>(R.id.btn_scan_barcode)?.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
-            // Можно добавить сканер штрих-кода позже
             Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
         }
     }
@@ -130,7 +130,6 @@ class AddItemActivity : AppCompatActivity() {
             { _, year, month, dayOfMonth ->
                 val dateStr = String.format("%02d.%02d.%d", dayOfMonth, month + 1, year)
                 binding.etExpiry.setText(dateStr)
-                // Сохраняем дату в миллисекундах
                 try {
                     expiryDate = dateFormat.parse(dateStr)?.time
                 } catch (e: Exception) {
@@ -156,7 +155,7 @@ class AddItemActivity : AppCompatActivity() {
         val description = binding.etDescription.text.toString().trim()
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // Создаём предмет
+        // Исправленный конструктор ItemEntity
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
             name = name,
@@ -164,10 +163,8 @@ class AddItemActivity : AppCompatActivity() {
             description = description,
             price = price,
             expiryDate = expiryDate,
-            parentFolderId = parentFolderId,
-            createdDate = System.currentTimeMillis(),
-            updatedDate = System.currentTimeMillis(),
-            updatedBy = "user"
+            parentId = parentFolderId,
+            addedBy = "user"
         )
         item.computeExpiryFields()
 
@@ -175,18 +172,15 @@ class AddItemActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                // 1. Сохраняем в БД
                 withContext(Dispatchers.IO) {
                     db.itemDao().insertItem(item)
                 }
 
-                // 2. Если есть фото — загружаем на Яндекс.Диск
                 imageBytes?.let { bytes ->
                     Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
                     try {
                         withContext(Dispatchers.IO) {
                             repository.uploadItemImage(item.id, bytes)
-                            // Сохраняем локально для быстрого доступа
                             ImageUtils.saveImageLocally(applicationContext, item.id, bytes)
                         }
                         Logger.log(TAG, "Image uploaded successfully")
