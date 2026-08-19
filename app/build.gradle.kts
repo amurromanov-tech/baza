@@ -54,7 +54,7 @@ android {
         jvmTarget = "17"
     }
 
-    packagingOptions {
+    packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -86,4 +86,6 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-}
+
+    // ML Kit для сканирования штрих-кодов (добавлено!)
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
