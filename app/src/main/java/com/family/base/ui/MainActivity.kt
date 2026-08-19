@@ -341,59 +341,90 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ДИАЛОГ СОЗДАНИЯ ПАПКИ (С ВОЗМОЖНОСТЬЮ ВЫБРАТЬ ИКОНКУ)
+    // ДИАЛОГ СОЗДАНИЯ ПАПКИ
     // ============================================================
-private fun showCreateFolderDialog() {
-    Logger.log(TAG, "Showing create folder dialog")
-    
-    val editText = android.widget.EditText(this)
-    editText.hint = "Название папки"
+    private fun showCreateFolderDialog() {
+        Logger.log(TAG, "Showing create folder dialog")
+        
+        val editText = android.widget.EditText(this)
+        editText.hint = "Название папки"
 
-    AlertDialog.Builder(this)
-        .setTitle("Новая папка")
-        .setView(editText)
-        .setPositiveButton("Создать") { _, _ ->
-            val name = editText.text.toString().trim()
-            if (name.isNotEmpty()) {
-                createFolderWithImage(name)
-            } else {
-                Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+        AlertDialog.Builder(this)
+            .setTitle("Новая папка")
+            .setView(editText)
+            .setPositiveButton("Создать") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    createFolderWithImage(name)
+                } else {
+                    Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+                }
             }
-        }
-        .setNeutralButton("Выбрать иконку") { _, _ ->
-            val name = editText.text.toString().trim()
-            if (name.isNotEmpty()) {
+            .setNeutralButton("Выбрать иконку") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    newFolderImageBytes = null
+                    pickFolderImageLauncher.launch("image/*")
+                    Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Отмена") { _, _ ->
+                Logger.log(TAG, "Create folder cancelled")
                 newFolderImageBytes = null
-                pickFolderImageLauncher.launch("image/*")
-                Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
             }
-        }
-        .setNegativeButton("Отмена") { _, _ ->
-            Logger.log(TAG, "Create folder cancelled")
-            newFolderImageBytes = null
-        }
-        .show()
-}
+            .show()
+    }
 
-private fun createFolderWithImage(name: String) {
-    Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
-    
-    lifecycleScope.launch {
-        try {
-            viewModel.createFolder(name)
-            // Папка создана, ищем её ID (можно через последний добавленный элемент)
-            // Для простоты используем синхронизацию и обновление списка
-            viewModel.syncWithDisk()
-            viewModel.loadContents()
-            Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error creating folder", e)
-            Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+    private fun createFolderWithImage(name: String) {
+        Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
+        
+        lifecycleScope.launch {
+            try {
+                // Создаём папку через ViewModel
+                viewModel.createFolder(name)
+                
+                // Если есть иконка — пытаемся загрузить её
+                newFolderImageBytes?.let { bytes ->
+                    try {
+                        // Получаем последнюю созданную папку из БД
+                        val folders = withContext(Dispatchers.IO) {
+                            db.folderDao().getAllFolders()
+                        }
+                        val lastFolder = folders.maxByOrNull { it.createdDate }
+                        if (lastFolder != null) {
+                            // Сохраняем локально
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
+                            // Обновляем папку
+                            val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
+                            withContext(Dispatchers.IO) {
+                                db.folderDao().updateFolder(updated)
+                            }
+                            // Загружаем на диск
+                            viewModel.uploadFolderImage(lastFolder.id, bytes)
+                            Logger.log(TAG, "Folder image uploaded")
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "Failed to upload folder image", e)
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Иконка не загружена, но папка создана",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    newFolderImageBytes = null
+                }
+                
+                viewModel.syncWithDisk()
+                viewModel.loadContents()
+                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error creating folder", e)
+                Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+            }
         }
     }
-}
 
     // ============================================================
     // КОНТЕКСТНОЕ МЕНЮ ПАПКИ
