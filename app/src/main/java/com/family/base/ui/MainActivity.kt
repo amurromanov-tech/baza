@@ -317,7 +317,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showFolderContextMenu(folder: FolderEntity) {
         Logger.log(TAG, "Folder context menu: ${folder.name}")
-        val items = arrayOf("Rename", "Change image", "Delete (if empty)", "Statistics", "Move")
+        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить (если пуста)", "Статистика", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с папкой")
             .setItems(items) { _, which ->
@@ -334,7 +334,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showItemContextMenu(item: ItemEntity) {
         Logger.log(TAG, "Item context menu: ${item.name}")
-        val items = arrayOf("Increase quantity", "Decrease quantity", "Edit", "Delete", "History", "Move")
+        val items = arrayOf("Увеличить количество", "Уменьшить количество", "Редактировать", "Удалить", "История", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с предметом")
             .setItems(items) { _, which ->
