@@ -87,5 +87,6 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ML Kit для сканирования штрих-кодов (добавлено!)
+    // ML Kit для сканирования штрих-кодов
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
+}
