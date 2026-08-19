@@ -20,9 +20,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # ===== ДОБАВЬТЕ ЭТОТ ШАГ =====
+    # ===== ИСПРАВЛЕННЫЙ ШАГ: создаём папку .android =====
     - name: Create debug keystore
       run: |
+        mkdir -p ~/.android
         keytool -genkeypair -v -keystore ~/.android/debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, ST=Debug, C=US"
 
     - name: Grant execute permission for gradlew
