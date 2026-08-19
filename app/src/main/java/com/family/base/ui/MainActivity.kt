@@ -27,6 +27,7 @@ import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -385,14 +386,17 @@ class MainActivity : AppCompatActivity() {
                 // Создаём папку через ViewModel
                 viewModel.createFolder(name)
                 
+                // Даём время на сохранение в БД
+                delay(100)
+                
                 // Если есть иконка — пытаемся загрузить её
                 newFolderImageBytes?.let { bytes ->
                     try {
-                        // Получаем последнюю созданную папку из БД
+                        // Получаем список папок и берём последнюю по addedDate
                         val folders = withContext(Dispatchers.IO) {
                             db.folderDao().getAllFolders()
                         }
-                        val lastFolder = folders.maxByOrNull { it.createdDate }
+                        val lastFolder = folders.maxByOrNull { it.addedDate }
                         if (lastFolder != null) {
                             // Сохраняем локально
                             ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
@@ -421,7 +425,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error creating folder", e)
-                Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Ошибка создания папки: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
