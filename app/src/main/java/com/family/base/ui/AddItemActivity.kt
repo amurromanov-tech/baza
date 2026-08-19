@@ -1,11 +1,14 @@
 package com.family.base.ui
 
 import android.app.DatePickerDialog
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.family.base.R
@@ -18,6 +21,7 @@ import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -33,6 +37,10 @@ class AddItemActivity : AppCompatActivity() {
     private var imageBytes: ByteArray? = null
     private var expiryDate: Long? = null
 
+    // Временный файл для фото с камеры
+    private var photoUri: Uri? = null
+
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -41,11 +49,30 @@ class AddItemActivity : AppCompatActivity() {
                 imageBytes = processedBytes
                 binding.ivManualPhoto.setImageBitmap(bitmap)
                 binding.ivManualPhoto.visibility = View.VISIBLE
-                Logger.log(TAG, "Image selected, size=${processedBytes.size}")
+                Logger.log(TAG, "Image selected from gallery, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
                 Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    // ===== ФОТО С КАМЕРЫ =====
+    private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && photoUri != null) {
+            try {
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, photoUri)
+                val processedBytes = ImageUtils.processImage(bitmap)
+                imageBytes = processedBytes
+                binding.ivManualPhoto.setImageBitmap(bitmap)
+                binding.ivManualPhoto.visibility = View.VISIBLE
+                Logger.log(TAG, "Photo captured, size=${processedBytes.size}")
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error processing camera photo", e)
+                Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Фото не сделано", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -102,7 +129,7 @@ class AddItemActivity : AppCompatActivity() {
             finish()
         }
 
-        // Сохранение (используем ручной режим)
+        // Сохранение
         binding.btnSave.setOnClickListener {
             Logger.log(TAG, "Save clicked")
             saveItem()
@@ -118,9 +145,9 @@ class AddItemActivity : AppCompatActivity() {
             showDatePickerDialog(binding.etAutoExpiry)
         }
 
-        // Фото
+        // ===== КНОПКА ВЫБОРА ФОТО (теперь с выбором источника) =====
         binding.btnTakePhoto.setOnClickListener {
-            pickImageLauncher.launch("image/*")
+            showImageSourceDialog()
         }
 
         // Сканер штрих-кода
@@ -130,6 +157,38 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
+    // ===== ДИАЛОГ ВЫБОРА ИСТОЧНИКА ФОТО =====
+    private fun showImageSourceDialog() {
+        val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
+        AlertDialog.Builder(this)
+            .setTitle("Выберите источник фото")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> openCamera()
+                    1 -> pickImageLauncher.launch("image/*")
+                }
+            }
+            .show()
+    }
+
+    // ===== ОТКРЫТЬ КАМЕРУ =====
+    private fun openCamera() {
+        try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
+            photoUri = androidx.core.content.FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                photoFile
+            )
+            takePhotoLauncher.launch(photoUri)
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error opening camera", e)
+            Toast.makeText(this, "Ошибка открытия камеры: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ===== ДИАЛОГ ВЫБОРА ДАТЫ =====
     private fun showDatePickerDialog(targetEditText: com.google.android.material.textfield.TextInputEditText) {
         val calendar = Calendar.getInstance()
         val currentText = targetEditText.text.toString()
@@ -157,10 +216,10 @@ class AddItemActivity : AppCompatActivity() {
         ).show()
     }
 
+    // ===== СОХРАНЕНИЕ ПРЕДМЕТА =====
     private fun saveItem() {
         Logger.log(TAG, "saveItem() called")
 
-        // Используем поля из ручного режима
         val name = binding.etManualName.text.toString().trim()
         if (name.isEmpty()) {
             Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
@@ -171,14 +230,12 @@ class AddItemActivity : AppCompatActivity() {
         val description = binding.etManualDescription.text.toString().trim()
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // Тип
         val itemType = when (binding.rgType.checkedRadioButtonId) {
             R.id.rbFood -> "food"
             R.id.rbMedicine -> "medicine"
             else -> "other"
         }
 
-        // Создаём предмет с правильными полями
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
             name = name,
