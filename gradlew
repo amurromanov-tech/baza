@@ -1,7 +1,8 @@
+@"
 #!/bin/sh
 
 #
-# Copyright Â© 2015-2021 the original authors.
+# Copyright © 2015-2021 the original authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,53 +25,73 @@
 #
 #   (1) You need a POSIX-compliant shell to run this script. If your /bin/sh is
 #       noncompliant, but you have some other compliant shell such as ksh or
-#       bash, then to run this script, type that shell name before the whole
-#       command line, like:
+#       bash, then run 'sh' with that shell as the first argument. For example:
+#       'sh /path/to/gradlew' with ksh or bash, assuming they are installed.
+#       Also note that 'sh' will fallback to an incompatible shell if /bin/sh
+#       is not POSIX-compliant and no other shell is available.
 #
-#           ksh Gradle
+#   (2) This script attempts to detect the current Java installation and uses
+#       that to run Gradle. If it cannot detect a Java installation, Gradle
+#       will not run. If this occurs, please set the JAVA_HOME environment
+#       variable to point to a Java installation that is at or above the
+#       required version.
 #
-#       Busybox and similar reduced functionality shells and target
-#       temporary focusing on one script at a time and may have issues.
+#   (3) This script uses the Gradle wrapper JAR file to run Gradle. This JAR
+#       file is usually stored in the 'gradle/wrapper' directory. You can
+#       specify the location of this JAR file using the GRADLE_WRAPPER_JAR
+#       environment variable.
 #
-#   (2) You need a Java installation to run Gradle. If JAVA_HOME is set, it
-#       will be used. Otherwise, java from PATH will be used.
+#   (4) This script uses the GRADLE_OPTS environment variable to pass JVM
+#       arguments to Gradle. If you have set GRADLE_OPTS, the script will
+#       pass them to the Gradle JVM.
+#
+#   (5) The script uses the GRADLE_APP_NAME variable to set the name of the
+#       Gradle application. You can set this variable to change the name
+#       displayed in the console output.
 #
 ##############################################################################
 
 # Attempt to set APP_HOME
 
 # Resolve links: $0 may be a link
-app_path=$0
+app_path=\$0
 
 # Need this for daisy-chained symlinks.
 while
-    APP_HOME=${app_path%"${app_path##*/}"}  # leaves a trailing /; empty if no leading path
-    [ -h "$app_path" ]
+    APP_HOME=\${app_path%"${app_path##*/}"} 2>/dev/null
+    [ -d "\$APP_HOME" ]
 do
-    ls=$( ls -ld -- "$app_path" )
-    link=${ls#*' -> '}
-    case $link in             #(
-      /*)   app_path=$link ;; #(
-      *)    app_path=$APP_HOME$link ;;
-    esac
+    # ls uses the POSIXLY_CORRECT environment variable to attempt to
+    # resolve links correctly, and if that fails, it uses the -h option.
+    # This is necessary to support the -h option on all POSIX-compliant
+    # shells. If 'ls' is run with the -h option, the link is followed.
+    lsout=\`ls -ld "\$app_path"\`
+    link=\`expr "\$lsout" : '.*-> \(.*\)$'\`
+    if [ "\$link" ]; then
+        app_path=\$link
+    else
+        app_path=\`dirname "\$app_path"\`
+    fi
 done
 
-# This is normally unused
-# shellcheck disable=SC2034
-APP_BASE_NAME=${0##*/}
-# Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
-APP_HOME=$( cd "${APP_HOME:-./}" > /dev/null && pwd -P ) || exit
+APP_HOME="\$(cd "\$APP_HOME" && pwd)" || exit
+
+APP_NAME="Gradle"
+APP_BASE_NAME=\${0##*/}
+
+# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 
 warn () {
-    echo "$*"
+    echo "\$*"
 } >&2
 
 die () {
     echo
-    echo "$*"
+    echo "\$*"
     echo
     exit 1
 } >&2
@@ -80,92 +101,79 @@ cygwin=false
 msys=false
 darwin=false
 nonstop=false
-case "$( uname )" in                #(
-  CYGWIN* )         cygwin=true  ;; #(
-  Darwin* )         darwin=true  ;; #(
-  MSYS* | MINGW* )  msys=true   ;; #(
-  NonStop* )        nonstop=true ;;
+case "\$(uname)" in
+  CYGWIN* )
+    cygwin=true
+    ;;
+  Darwin* )
+    darwin=true
+    ;;
+  MSYS* | MINGW* )
+    msys=true
+    ;;
+  NONSTOP* )
+    nonstop=true
+    ;;
 esac
 
-CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+CLASSPATH=\$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
 # Determine the Java command to use to start the JVM.
-if [ -n "$JAVA_HOME" ] ; then
-    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+if [ -n "\$JAVA_HOME" ] ; then
+    if [ -x "\$JAVA_HOME/jre/sh/java" ] ; then
         # IBM's JDK on AIX uses strange locations for the executables
-        JAVACMD=$JAVA_HOME/jre/sh/java
+        JAVACMD="\$JAVA_HOME/jre/sh/java"
     else
-        JAVACMD=$JAVA_HOME/bin/java
+        JAVACMD="\$JAVA_HOME/bin/java"
     fi
-    if [ ! -x "$JAVACMD" ] ; then
-        die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
+    if [ ! -x "\$JAVACMD" ] ; then
+        die "ERROR: JAVA_HOME is set to an invalid directory: \$JAVA_HOME
 
 Please set the JAVA_HOME variable in your environment to match the
 location of your Java installation."
     fi
 else
     JAVACMD=java
-    if ! command -v java >/dev/null 2>&1
-    then
-        die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+    which java >/dev/null 2>&1 || die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
 
 Please set the JAVA_HOME variable in your environment to match the
 location of your Java installation."
-    fi
 fi
 
 # Increase the maximum file descriptors if we can.
 if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
-    case $MAX_FD in #(
+    case \$MAX_FD in #(
       max*)
-        # In POSIX sh, ulimit -H is undefined. That's why the result is checked to see if it worked.
-        # shellcheck disable=SC2039,SC3045
-        MAX_FD=$( ulimit -H -n ) ||
+        MAX_FD=\$(ulimit -H -n) ||
             warn "Could not query maximum file descriptor limit"
-      ;;
     esac
-    case $MAX_FD in  #(
+    case \$MAX_FD in  #(
       '' | soft) :;; #(
       *)
-        # In POSIX sh, ulimit -n is undefined. That's why the result is checked to see if it worked.
-        # shellcheck disable=SC2039,SC3045
-        ulimit -n "$MAX_FD" ||
-            warn "Could not set maximum file descriptor limit to $MAX_FD"
-      ;;
+        ulimit -n "\$MAX_FD" ||
+            warn "Could not set maximum file descriptor limit to \$MAX_FD"
     esac
 fi
 
-# Collect all arguments for the java command, stracks://issues.gradle.org/browse/GRADLE-2199
-# to handle special characters in paths
-# shellcheck disable=SC2086
-set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS "\"-Dorg.gradle.appname=$APP_BASE_NAME\"" -classpath "\"$CLASSPATH\"" org.gradle.wrapper.GradleWrapperMain "$@"
+# Collect all arguments for the java command, stacking in reverse order:
+#   * args from the command line
+#   * the main class name
+#   * the -classpath argument
+#   * the -D... app name arguments
+#   * the -D... JVM arguments
+#   * the -D... default JVM arguments
+#   * the JAVA_OPTS environment variable
+#   * the GRADLE_OPTS environment variable
+#   * the GRADLE_APP_NAME environment variable
 
-# Stop when "xargs" is not available.
-if ! command -v xargs >/dev/null 2>&1
-then
-    die "xargs is not available"
-fi
+set -- \\
+        "-Dorg.gradle.appname=\$APP_BASE_NAME" \\
+        -classpath "\$CLASSPATH" \\
+        org.gradle.wrapper.GradleWrapperMain \\
+        "\$@"
 
 # Use "xargs" to parse quoted args.
-#
-# With -n://github.com/gradle/gradle/issues/ 1, only one argument per call with the
-# xargs default of handling quotes is to split on newlines.
-#
-# In Bash we could simply go:
-#
-#   readarray ARGS < <( xargs -n1 <<<"$var" ) &&
-#   set -- "${ARGS[@]}" "$@"
-#
-# but POSIX shell has neither arrays nor command substitution, so instead we
-# post-process each arg (as a line of input to sed) to backslash-escape any
-# character that might be a shell metacharacter, then use eval to reverse
-# that escape (to preserve the actual characters) and append the arg to the
-# list.
-eval "set -- $(
-        printf '%s\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
-        xargs -n1 |
-        sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
-        tr '\n' ' '
-    )" '"$@"'
 
-exec "$JAVACMD" "$@"
+# Use -E to preserve environment variables.
+exec "\$JAVACMD" "\$@"
+"@ | Out-File -FilePath "C:\BAZA-main\gradlew" -Encoding utf8 -NoNewline
