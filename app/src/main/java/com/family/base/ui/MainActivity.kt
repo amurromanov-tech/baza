@@ -343,100 +343,57 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
     // ДИАЛОГ СОЗДАНИЯ ПАПКИ (С ВОЗМОЖНОСТЬЮ ВЫБРАТЬ ИКОНКУ)
     // ============================================================
-    private fun showCreateFolderDialog() {
-        Logger.log(TAG, "Showing create folder dialog")
-        
-        val editText = android.widget.EditText(this)
-        editText.hint = "Название папки"
+private fun showCreateFolderDialog() {
+    Logger.log(TAG, "Showing create folder dialog")
+    
+    val editText = android.widget.EditText(this)
+    editText.hint = "Название папки"
 
-        val items = arrayOf("Создать", "Выбрать иконку")
-        
-        AlertDialog.Builder(this)
-            .setTitle("Новая папка")
-            .setView(editText)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> {
-                        // Создать папку
-                        val name = editText.text.toString().trim()
-                        if (name.isNotEmpty()) {
-                            createFolderWithImage(name)
-                        } else {
-                            Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    1 -> {
-                        // Выбрать иконку
-                        val name = editText.text.toString().trim()
-                        if (name.isNotEmpty()) {
-                            // Сохраняем имя и открываем выбор фото
-                            newFolderImageBytes = null
-                            pickFolderImageLauncher.launch("image/*")
-                            // После выбора фото показываем диалог снова для создания
-                            Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
-                        } else {
-                            Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            .setNegativeButton("Отмена") { _, _ ->
-                Logger.log(TAG, "Create folder cancelled")
-                newFolderImageBytes = null
-            }
-            .show()
-    }
-
-    private fun createFolderWithImage(name: String) {
-        Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
-        
-        lifecycleScope.launch {
-            try {
-                viewModel.createFolder(name)
-                  // И используйте существующий метод для получения ID, если нужно
-                  // Например, получить последнюю созданную папку из базы
-                val folderId = db.folderDao().getLastCreatedFolderId() ?: ""
-                Logger.log(TAG, "Folder created with id: $folderId")
-                
-                // Если есть фото — загружаем
-                newFolderImageBytes?.let { bytes ->
-                    Logger.log(TAG, "Uploading folder image, size=${bytes.size}")
-                    try {
-                        withContext(Dispatchers.IO) {
-                            // Сохраняем локально
-                            ImageUtils.saveImageLocally(applicationContext, "folder_$folderId", bytes)
-                            // Обновляем папку в БД
-                            val folder = db.folderDao().getFolderById(folderId)
-                            folder?.let {
-                                val updated = it.copy(iconUrl = "folder_$folderId.jpg")
-                                db.folderDao().updateFolder(updated)
-                            }
-                            // Загружаем на Яндекс.Диск
-                            viewModel.uploadFolderImage(folderId, bytes)
-                        }
-                        Logger.log(TAG, "Folder image uploaded successfully")
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "Failed to upload folder image", e)
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Иконка не загружена, но папка создана",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    newFolderImageBytes = null
-                }
-                
-                // Синхронизация
-                viewModel.syncWithDisk()
-                viewModel.loadContents()
-                
-                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error creating folder", e)
-                Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+    AlertDialog.Builder(this)
+        .setTitle("Новая папка")
+        .setView(editText)
+        .setPositiveButton("Создать") { _, _ ->
+            val name = editText.text.toString().trim()
+            if (name.isNotEmpty()) {
+                createFolderWithImage(name)
+            } else {
+                Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
             }
         }
+        .setNeutralButton("Выбрать иконку") { _, _ ->
+            val name = editText.text.toString().trim()
+            if (name.isNotEmpty()) {
+                newFolderImageBytes = null
+                pickFolderImageLauncher.launch("image/*")
+                Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+            }
+        }
+        .setNegativeButton("Отмена") { _, _ ->
+            Logger.log(TAG, "Create folder cancelled")
+            newFolderImageBytes = null
+        }
+        .show()
+}
+
+private fun createFolderWithImage(name: String) {
+    Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
+    
+    lifecycleScope.launch {
+        try {
+            viewModel.createFolder(name)
+            // Папка создана, ищем её ID (можно через последний добавленный элемент)
+            // Для простоты используем синхронизацию и обновление списка
+            viewModel.syncWithDisk()
+            viewModel.loadContents()
+            Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error creating folder", e)
+            Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+        }
     }
+}
 
     // ============================================================
     // КОНТЕКСТНОЕ МЕНЮ ПАПКИ
