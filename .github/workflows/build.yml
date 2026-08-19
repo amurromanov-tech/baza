@@ -1,55 +1,33 @@
-name: Build Android APK (signed)
+name: Android CI
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+    - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.2
+    - name: Make gradlew executable
+      run: chmod +x gradlew
 
-      - name: Decode Keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > $HOME/debug.keystore
-          echo "Keystore saved to $HOME/debug.keystore ($(stat -c%s $HOME/debug.keystore) bytes)"
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug
 
-      - name: Build Unsigned APK
-        run: gradle assembleDebug
-
-      - name: Sign APK with custom keystore
-        run: |
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
-            --ks $HOME/debug.keystore \
-            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
-            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
-            app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Verify APK Signature
-        run: |
-          echo "===== APK Signature ====="
-          keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk 2>&1
-          echo "========================"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v5
-        with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: app/build/outputs/apk/debug/*.apk
