@@ -37,10 +37,8 @@ class CatalogAdapter(
 
         when (entry) {
             is FolderEntity -> {
-                // Очищаем предыдущую загрузку
                 holder.icon.load(null)
 
-                // Проверяем наличие локальной иконки
                 val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
                 if (iconFile != null && iconFile.exists()) {
                     holder.icon.load(iconFile) {
@@ -63,7 +61,6 @@ class CatalogAdapter(
                 holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
             }
             is ItemEntity -> {
-                // Очищаем перед загрузкой
                 holder.icon.load(null)
 
                 val localFile = ImageUtils.getLocalImageFile(context, entry.id)
@@ -80,7 +77,7 @@ class CatalogAdapter(
                 }
 
                 holder.name.text = entry.name
-                var infoText = buildInfoText(entry)
+                val infoText = buildInfoText(entry)
                 holder.info.text = infoText
 
                 val colorRes = when {
