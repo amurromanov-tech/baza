@@ -94,7 +94,8 @@ android {
     
     // ВКЛЮЧАЕМ DATABINDING
     buildFeatures {
-        dataBinding = true
+        dataBinding = false   // Отключаем DataBinding
+        viewBinding = true     // Включаем ViewBinding (более простой)
     }
 }
 
