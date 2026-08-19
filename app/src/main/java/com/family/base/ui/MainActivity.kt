@@ -392,11 +392,11 @@ class MainActivity : AppCompatActivity() {
                 // Если есть иконка — пытаемся загрузить её
                 newFolderImageBytes?.let { bytes ->
                     try {
-                        // Получаем список папок и берём последнюю по addedDate
+                        // Получаем список папок и берём последнюю по createdAt
                         val folders = withContext(Dispatchers.IO) {
                             db.folderDao().getAllFolders()
                         }
-                        val lastFolder = folders.maxByOrNull { it.addedDate }
+                        val lastFolder = folders.maxByOrNull { it.createdAt }
                         if (lastFolder != null) {
                             // Сохраняем локально
                             ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
