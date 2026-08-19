@@ -42,9 +42,30 @@ class MainActivity : AppCompatActivity() {
     private val TAG = "MainActivity"
     private val db by lazy { AppDatabase.getInstance(this) }
 
-    // ===== ДЛЯ ИКОНКИ ПАПКИ =====
+    // Для иконки папки при создании
+    private var newFolderImageBytes: ByteArray? = null
+
+    // Для смены иконки существующей папки
     private var currentFolderForImage: FolderEntity? = null
+
+    // ===== ВЫБОР ФОТО ДЛЯ НОВОЙ ПАПКИ =====
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            try {
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val processedBytes = ImageUtils.processImage(bitmap)
+                newFolderImageBytes = processedBytes
+                Logger.log(TAG, "Folder image selected, size=${processedBytes.size}")
+                Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error picking folder image", e)
+                Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ===== ВЫБОР ФОТО ДЛЯ СУЩЕСТВУЮЩЕЙ ПАПКИ =====
+    private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
@@ -52,19 +73,24 @@ class MainActivity : AppCompatActivity() {
                 val folder = currentFolderForImage
                 if (folder != null) {
                     lifecycleScope.launch {
-                        // 1. Сохраняем локально
-                        ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
-                        // 2. Обновляем папку в БД
-                        val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                        withContext(Dispatchers.IO) {
-                            db.folderDao().updateFolder(updated)
+                        try {
+                            // 1. Сохраняем локально
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
+                            // 2. Обновляем папку в БД
+                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                            withContext(Dispatchers.IO) {
+                                db.folderDao().updateFolder(updated)
+                            }
+                            // 3. Загружаем на Яндекс.Диск
+                            viewModel.uploadFolderImage(folder.id, processedBytes)
+                            // 4. Синхронизация и обновление списка
+                            viewModel.syncWithDisk()
+                            viewModel.loadContents()
+                            Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Error updating folder image", e)
+                            Toast.makeText(this@MainActivity, "Ошибка обновления иконки", Toast.LENGTH_SHORT).show()
                         }
-                        // 3. Загружаем на диск через ViewModel
-                        viewModel.uploadFolderImage(folder.id, processedBytes)
-                        // 4. Синхронизация и обновление списка
-                        viewModel.syncWithDisk()
-                        viewModel.loadContents()
-                        Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
@@ -265,7 +291,6 @@ class MainActivity : AppCompatActivity() {
         stopSyncAnimation()
     }
 
-    // ===== ИСПРАВЛЕНАЯ ФУНКЦИЯ =====
     private fun updatePathTitle() {
         val path = viewModel.currentPath.value ?: "BAZA"
         pathTextView?.text = path
@@ -315,6 +340,104 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // ДИАЛОГ СОЗДАНИЯ ПАПКИ (С ВОЗМОЖНОСТЬЮ ВЫБРАТЬ ИКОНКУ)
+    // ============================================================
+    private fun showCreateFolderDialog() {
+        Logger.log(TAG, "Showing create folder dialog")
+        
+        val editText = android.widget.EditText(this)
+        editText.hint = "Название папки"
+
+        val items = arrayOf("Создать", "Выбрать иконку")
+        
+        AlertDialog.Builder(this)
+            .setTitle("Новая папка")
+            .setView(editText)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        // Создать папку
+                        val name = editText.text.toString().trim()
+                        if (name.isNotEmpty()) {
+                            createFolderWithImage(name)
+                        } else {
+                            Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    1 -> {
+                        // Выбрать иконку
+                        val name = editText.text.toString().trim()
+                        if (name.isNotEmpty()) {
+                            // Сохраняем имя и открываем выбор фото
+                            newFolderImageBytes = null
+                            pickFolderImageLauncher.launch("image/*")
+                            // После выбора фото показываем диалог снова для создания
+                            Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Отмена") { _, _ ->
+                Logger.log(TAG, "Create folder cancelled")
+                newFolderImageBytes = null
+            }
+            .show()
+    }
+
+    private fun createFolderWithImage(name: String) {
+        Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
+        
+        lifecycleScope.launch {
+            try {
+                val folderId = viewModel.createFolder(name)
+                Logger.log(TAG, "Folder created with id: $folderId")
+                
+                // Если есть фото — загружаем
+                newFolderImageBytes?.let { bytes ->
+                    Logger.log(TAG, "Uploading folder image, size=${bytes.size}")
+                    try {
+                        withContext(Dispatchers.IO) {
+                            // Сохраняем локально
+                            ImageUtils.saveImageLocally(applicationContext, "folder_$folderId", bytes)
+                            // Обновляем папку в БД
+                            val folder = db.folderDao().getFolderById(folderId)
+                            folder?.let {
+                                val updated = it.copy(iconUrl = "folder_$folderId.jpg")
+                                db.folderDao().updateFolder(updated)
+                            }
+                            // Загружаем на Яндекс.Диск
+                            viewModel.uploadFolderImage(folderId, bytes)
+                        }
+                        Logger.log(TAG, "Folder image uploaded successfully")
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "Failed to upload folder image", e)
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Иконка не загружена, но папка создана",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    newFolderImageBytes = null
+                }
+                
+                // Синхронизация
+                viewModel.syncWithDisk()
+                viewModel.loadContents()
+                
+                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error creating folder", e)
+                Toast.makeText(this@MainActivity, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ============================================================
+    // КОНТЕКСТНОЕ МЕНЮ ПАПКИ
+    // ============================================================
     private fun showFolderContextMenu(folder: FolderEntity) {
         Logger.log(TAG, "Folder context menu: ${folder.name}")
         val items = arrayOf("Переименовать", "Сменить иконку", "Удалить (если пуста)", "Статистика", "Переместить")
@@ -346,25 +469,6 @@ class MainActivity : AppCompatActivity() {
                     4 -> showItemHistory(item)
                     5 -> showMoveItemDialog(item)
                 }
-            }
-            .show()
-    }
-
-    private fun showCreateFolderDialog() {
-        Logger.log(TAG, "Showing create folder dialog")
-        val editText = android.widget.EditText(this)
-        AlertDialog.Builder(this)
-            .setTitle("Новая папка")
-            .setView(editText)
-            .setPositiveButton("Создать") { _, _ ->
-                val name = editText.text.toString().trim()
-                Logger.log(TAG, "Create folder dialog confirmed, name: $name")
-                if (name.isNotEmpty()) {
-                    viewModel.createFolder(name)
-                }
-            }
-            .setNegativeButton("Отмена") { _, _ ->
-                Logger.log(TAG, "Create folder dialog cancelled")
             }
             .show()
     }
@@ -416,7 +520,7 @@ class MainActivity : AppCompatActivity() {
     private fun changeFolderImage(folder: FolderEntity) {
         Logger.log(TAG, "Change image requested for folder: ${folder.name}")
         currentFolderForImage = folder
-        pickFolderImageLauncher.launch("image/*")
+        pickExistingFolderImageLauncher.launch("image/*")
     }
 
     private fun showFolderStats(folder: FolderEntity) {
@@ -438,7 +542,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ========== ДИАЛОГ ПЕРЕМЕЩЕНИЯ ПАПКИ ==========
     private fun showMoveFolderDialog(folder: FolderEntity) {
         Logger.log(TAG, "Show move folder dialog for: ${folder.name}")
         lifecycleScope.launch {
@@ -464,7 +567,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ========== ДИАЛОГ ПЕРЕМЕЩЕНИЯ ПРЕДМЕТА ==========
     private fun showMoveItemDialog(item: ItemEntity) {
         Logger.log(TAG, "Show move item dialog for: ${item.name}")
         lifecycleScope.launch {
