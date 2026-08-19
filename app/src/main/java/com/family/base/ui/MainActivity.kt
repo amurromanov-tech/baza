@@ -392,7 +392,10 @@ class MainActivity : AppCompatActivity() {
         
         lifecycleScope.launch {
             try {
-                val folderId = viewModel.createFolder(name)
+                viewModel.createFolder(name)
+                  // И используйте существующий метод для получения ID, если нужно
+                  // Например, получить последнюю созданную папку из базы
+                val folderId = db.folderDao().getLastCreatedFolderId() ?: ""
                 Logger.log(TAG, "Folder created with id: $folderId")
                 
                 // Если есть фото — загружаем
