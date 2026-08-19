@@ -1,7 +1,9 @@
 package com.family.base.ui
 
+import android.Manifest
 import android.app.DatePickerDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -10,6 +12,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
@@ -32,12 +36,12 @@ class AddItemActivity : AppCompatActivity() {
     private lateinit var repository: CatalogRepository
     private val TAG = "AddItemActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    private val CAMERA_PERMISSION_REQUEST = 100
 
     private var parentFolderId: String? = null
     private var imageBytes: ByteArray? = null
     private var expiryDate: Long? = null
 
-    // Временный файл для фото с камеры
     private var photoUri: Uri? = null
 
     // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
@@ -108,7 +112,6 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        // Кнопки режимов
         binding.btnManualMode.setOnClickListener {
             binding.modeSelection.visibility = View.GONE
             binding.manualModeLayout.visibility = View.VISIBLE
@@ -123,41 +126,34 @@ class AddItemActivity : AppCompatActivity() {
             Logger.log(TAG, "Auto mode selected")
         }
 
-        // Отмена
         binding.btnCancel.setOnClickListener {
             Logger.log(TAG, "Cancel clicked")
             finish()
         }
 
-        // Сохранение
         binding.btnSave.setOnClickListener {
             Logger.log(TAG, "Save clicked")
             saveItem()
         }
 
-        // Дата для ручного режима
         binding.etManualExpiry.setOnClickListener {
             showDatePickerDialog(binding.etManualExpiry)
         }
 
-        // Дата для авто режима
         binding.etAutoExpiry.setOnClickListener {
             showDatePickerDialog(binding.etAutoExpiry)
         }
 
-        // ===== КНОПКА ВЫБОРА ФОТО (теперь с выбором источника) =====
         binding.btnTakePhoto.setOnClickListener {
             showImageSourceDialog()
         }
 
-        // Сканер штрих-кода
         binding.btnScanBarcode.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
             Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // ===== ДИАЛОГ ВЫБОРА ИСТОЧНИКА ФОТО =====
     private fun showImageSourceDialog() {
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(this)
@@ -171,8 +167,27 @@ class AddItemActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== ОТКРЫТЬ КАМЕРУ =====
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.CAMERA),
+            CAMERA_PERMISSION_REQUEST
+        )
+    }
+
     private fun openCamera() {
+        if (!checkCameraPermission()) {
+            requestCameraPermission()
+            return
+        }
+
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
@@ -188,7 +203,21 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ДИАЛОГ ВЫБОРА ДАТЫ =====
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                openCamera()
+            } else {
+                Toast.makeText(this, "Необходимо разрешение на использование камеры", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun showDatePickerDialog(targetEditText: com.google.android.material.textfield.TextInputEditText) {
         val calendar = Calendar.getInstance()
         val currentText = targetEditText.text.toString()
@@ -216,7 +245,6 @@ class AddItemActivity : AppCompatActivity() {
         ).show()
     }
 
-    // ===== СОХРАНЕНИЕ ПРЕДМЕТА =====
     private fun saveItem() {
         Logger.log(TAG, "saveItem() called")
 
