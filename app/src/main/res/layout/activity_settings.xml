@@ -49,6 +49,20 @@
         </com.google.android.material.textfield.TextInputLayout>
 
         <Button
+    android:id="@+id/btnCheckUpdate"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:text="Проверить обновления"
+    android:layout_marginTop="16dp" />
+
+<TextView
+    android:id="@+id/tvVersion"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:text="Версия: 1.1.0"
+    android:layout_marginTop="8dp" />
+        
+        <Button
             android:id="@+id/btnSaveNotifications"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
