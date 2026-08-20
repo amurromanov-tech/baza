@@ -5,6 +5,9 @@ plugins {
 }
 
 android {
+        buildFeatures {
+        buildConfig = true
+    }
     namespace = "com.family.base"
     compileSdk = 34
 
