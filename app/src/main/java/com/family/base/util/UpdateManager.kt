@@ -13,7 +13,7 @@ import java.io.File
 class UpdateManager(private val context: Context) {
 
     companion object {
-        private const val VERSION_URL = "https://disk.yandex.ru/d/o2V2hjHOqZFAGw"
+        private const val VERSION_URL = "https://disk.yandex.ru/.../versions.json?dl=1"
         // Замените на вашу реальную ссылку
     }
 
