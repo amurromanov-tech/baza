@@ -344,7 +344,18 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
     }
-
+    private fun shareFolderLink() {
+    val link = tokenStorage.getSharedFolderLink()
+    if (link != null) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Присоединяйтесь к общей папке БАЗА: $link")
+        }
+        startActivity(Intent.createChooser(intent, "Поделиться ссылкой"))
+    } else {
+        Toast.makeText(this, "Ссылка не найдена", Toast.LENGTH_SHORT).show()
+    }
+}
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
