@@ -86,6 +86,9 @@ class ConnectFamilyActivity : AppCompatActivity() {
             tokenStorage.savePublicKey(publicKey)
             Logger.log(TAG, "Public key saved successfully")
 
+             tokenStorage.saveSharedFolderLink(link)
+             Logger.log(TAG, "Shared folder link saved: $link")
+             
             // Получаем имя папки через API
             CoroutineScope(Dispatchers.IO).launch {
                 try {
