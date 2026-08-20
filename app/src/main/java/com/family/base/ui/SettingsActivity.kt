@@ -16,6 +16,7 @@ import com.family.base.data.remote.YandexDiskApi
 import com.family.base.databinding.ActivitySettingsBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
+import com.family.base.BuildConfig
 import com.family.base.util.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
