@@ -56,58 +56,81 @@ class SettingsActivity : AppCompatActivity() {
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
     }
 
+    // ============================================================
+    // ПОКАЗАТЬ ТЕКУЩУЮ ВЕРСИЮ
+    // ============================================================
     private fun showCurrentVersion() {
         val versionName = BuildConfig.VERSION_NAME
         val versionCode = BuildConfig.VERSION_CODE
         binding.tvVersion.text = "Версия $versionName (код $versionCode)"
     }
 
+    // ============================================================
+    // НАСТРОЙКА СЛУШАТЕЛЕЙ
+    // ============================================================
     private fun setupListeners() {
         Logger.log(TAG, "Setting up listeners")
 
+        // Синхронизация
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
             Toast.makeText(this, "Синхронизация запущена...", Toast.LENGTH_SHORT).show()
             viewModel.forceSync()
         }
 
+        // Очистка кэша
         binding.btnClearCache.setOnClickListener {
             Logger.log(TAG, "Clear cache clicked")
             showClearCacheDialog()
         }
 
+        // Очистка логов
         binding.btnClearLogs.setOnClickListener {
             Logger.log(TAG, "Clear logs clicked")
             showClearLogsDialog()
         }
 
+        // Отправка логов
         binding.btnSendLog.setOnClickListener {
             Logger.log(TAG, "Send log clicked")
             sendLogs()
         }
 
+        // Выход
         binding.btnLogout.setOnClickListener {
             Logger.log(TAG, "Logout clicked")
             showLogoutDialog()
         }
 
+        // Полная очистка данных
         binding.btnClearAllData.setOnClickListener {
             Logger.log(TAG, "Clear all data clicked")
             showClearAllDataDialog()
         }
 
+        // Логирование (вкл/выкл)
         binding.switchLogging.setOnCheckedChangeListener { _, isChecked ->
             Logger.log(TAG, "Logging enabled: $isChecked")
             Logger.setEnabled(isChecked)
             saveSettings()
         }
 
+        // ===== КНОПКА ПРОВЕРКИ ОБНОВЛЕНИЙ =====
         binding.btnCheckUpdate.setOnClickListener {
             Logger.log(TAG, "Check for updates clicked")
             checkForUpdates()
         }
+
+        // ===== НОВАЯ КНОПКА: ПОДЕЛИТЬСЯ ССЫЛКОЙ =====
+        binding.btnShareLink.setOnClickListener {
+            Logger.log(TAG, "Share link clicked")
+            shareFolderLink()
+        }
     }
 
+    // ============================================================
+    // ЗАГРУЗКА/СОХРАНЕНИЕ НАСТРОЕК
+    // ============================================================
     private fun loadSettings() {
         Logger.log(TAG, "Loading settings")
         try {
@@ -135,6 +158,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ОЧИСТКА КЭША
+    // ============================================================
     private fun showClearCacheDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить кэш")
@@ -158,6 +184,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ОЧИСТКА ЛОГОВ
+    // ============================================================
     private fun showClearLogsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить логи")
@@ -171,6 +200,9 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // ОТПРАВКА ЛОГОВ
+    // ============================================================
     private fun sendLogs() {
         Logger.log(TAG, "Sending logs...")
         try {
@@ -205,6 +237,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ПОЛНАЯ ОЧИСТКА ДАННЫХ
+    // ============================================================
     private fun showClearAllDataDialog() {
         val randomWord = generateRandomWord()
         val editText = android.widget.EditText(this)
@@ -251,6 +286,7 @@ class SettingsActivity : AppCompatActivity() {
         
         lifecycleScope.launch {
             try {
+                // === 1. Удаляем файлы локальной БД физически ===
                 val db = AppDatabase.getInstance(this@SettingsActivity)
                 db.close()
                 
@@ -271,9 +307,11 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 Logger.log(TAG, "Local DB files removed")
 
+                // === 2. Сбрасываем статический экземпляр ===
                 AppDatabase.resetInstance()
                 Logger.log(TAG, "AppDatabase instance reset")
                 
+                // === 3. Удаляем локальные изображения ===
                 try {
                     val imagesDir = java.io.File(filesDir, "images")
                     if (imagesDir.exists()) {
@@ -284,6 +322,7 @@ class SettingsActivity : AppCompatActivity() {
                     Logger.log(TAG, "Error deleting local images", e)
                 }
                 
+                // === 4. Очищаем Яндекс.Диск ===
                 val token = tokenStorage.getAccessToken()
                 if (token != null) {
                     try {
@@ -309,6 +348,7 @@ class SettingsActivity : AppCompatActivity() {
                     Logger.log(TAG, "No token, skip Yandex.Disk deletion")
                 }
                 
+                // === 5. Очищаем кэш и логи ===
                 cacheDir.deleteRecursively()
                 cacheDir.mkdirs()
                 Logger.log(TAG, "Cache cleared")
@@ -316,6 +356,7 @@ class SettingsActivity : AppCompatActivity() {
                 Logger.clearLogs()
                 Logger.log(TAG, "Logs cleared")
                 
+                // === 6. Перезапускаем MainActivity ===
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         this@SettingsActivity,
@@ -344,18 +385,10 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
     }
-    private fun shareFolderLink() {
-    val link = tokenStorage.getSharedFolderLink()
-    if (link != null) {
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, "Присоединяйтесь к общей папке БАЗА: $link")
-        }
-        startActivity(Intent.createChooser(intent, "Поделиться ссылкой"))
-    } else {
-        Toast.makeText(this, "Ссылка не найдена", Toast.LENGTH_SHORT).show()
-    }
-}
+
+    // ============================================================
+    // ВЫХОД
+    // ============================================================
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
@@ -404,6 +437,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ПРОВЕРКА ОБНОВЛЕНИЙ
+    // ============================================================
     private fun checkForUpdates() {
         val currentVersionCode = BuildConfig.VERSION_CODE
         val currentVersionName = BuildConfig.VERSION_NAME
@@ -459,6 +495,22 @@ class SettingsActivity : AppCompatActivity() {
                 Logger.log(TAG, "User clicked 'Later'")
             }
             .show()
+    }
+
+    // ============================================================
+    // ПОДЕЛИТЬСЯ ССЫЛКОЙ (НОВЫЙ МЕТОД)
+    // ============================================================
+    private fun shareFolderLink() {
+        val link = tokenStorage.getSharedFolderLink()
+        if (link != null) {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, "Присоединяйтесь к общей папке БАЗА: $link")
+            }
+            startActivity(Intent.createChooser(intent, "Поделиться ссылкой"))
+        } else {
+            Toast.makeText(this, "Ссылка не найдена. Сначала настройте общую папку.", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
