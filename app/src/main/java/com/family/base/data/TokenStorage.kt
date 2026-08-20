@@ -79,6 +79,24 @@ class TokenStorage(context: Context) {
         return prefs.getString("folder_name", "BAZA") ?: "BAZA"
     }
 
+    // ========== ОБЩАЯ ПАПКА (добавлено) ==========
+
+    fun saveSharedFolderLink(link: String) {
+        prefs.edit().putString("shared_folder_link", link).apply()
+    }
+
+    fun getSharedFolderLink(): String? {
+        return prefs.getString("shared_folder_link", null)
+    }
+
+    fun saveSharedFolderName(name: String) {
+        prefs.edit().putString("shared_folder_name", name).apply()
+    }
+
+    fun getSharedFolderName(): String? {
+        return prefs.getString("shared_folder_name", null)
+    }
+
     // ========== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ ==========
 
     fun saveUserInfo(email: String, displayName: String) {
