@@ -1,18 +1,22 @@
 package com.family.base.ui
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import com.family.base.BuildConfig
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.remote.AppVersion
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.databinding.ActivitySettingsBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
+import com.family.base.util.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,54 +52,80 @@ class SettingsActivity : AppCompatActivity() {
 
         setupListeners()
         loadSettings()
+        showCurrentVersion()
 
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
     }
 
+    // ============================================================
+    // ПОКАЗАТЬ ТЕКУЩУЮ ВЕРСИЮ
+    // ============================================================
+    private fun showCurrentVersion() {
+        val versionName = BuildConfig.VERSION_NAME
+        val versionCode = BuildConfig.VERSION_CODE
+        binding.tvVersion.text = "Версия $versionName (код $versionCode)"
+    }
+
+    // ============================================================
+    // НАСТРОЙКА СЛУШАТЕЛЕЙ
+    // ============================================================
     private fun setupListeners() {
         Logger.log(TAG, "Setting up listeners")
 
+        // Синхронизация
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
             Toast.makeText(this, "Синхронизация запущена...", Toast.LENGTH_SHORT).show()
             viewModel.forceSync()
         }
 
+        // Очистка кэша
         binding.btnClearCache.setOnClickListener {
             Logger.log(TAG, "Clear cache clicked")
             showClearCacheDialog()
         }
 
+        // Очистка логов
         binding.btnClearLogs.setOnClickListener {
             Logger.log(TAG, "Clear logs clicked")
             showClearLogsDialog()
         }
 
+        // Отправка логов
         binding.btnSendLog.setOnClickListener {
             Logger.log(TAG, "Send log clicked")
             sendLogs()
         }
 
+        // Выход
         binding.btnLogout.setOnClickListener {
             Logger.log(TAG, "Logout clicked")
             showLogoutDialog()
         }
 
-        // ===== ИСПРАВЛЕНО: btnClearAllData вместо btn =====
+        // Полная очистка данных
         binding.btnClearAllData.setOnClickListener {
             Logger.log(TAG, "Clear all data clicked")
             showClearAllDataDialog()
         }
 
+        // Логирование (вкл/выкл)
         binding.switchLogging.setOnCheckedChangeListener { _, isChecked ->
             Logger.log(TAG, "Logging enabled: $isChecked")
             Logger.setEnabled(isChecked)
             saveSettings()
         }
 
-        Logger.log(TAG, "Listeners set up")
+        // ===== НОВАЯ КНОПКА: ПРОВЕРКА ОБНОВЛЕНИЙ =====
+        binding.btnCheckUpdate.setOnClickListener {
+            Logger.log(TAG, "Check for updates clicked")
+            checkForUpdates()
+        }
     }
 
+    // ============================================================
+    // ЗАГРУЗКА/СОХРАНЕНИЕ НАСТРОЕК
+    // ============================================================
     private fun loadSettings() {
         Logger.log(TAG, "Loading settings")
         try {
@@ -123,6 +153,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ОЧИСТКА КЭША
+    // ============================================================
     private fun showClearCacheDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить кэш")
@@ -146,6 +179,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ОЧИСТКА ЛОГОВ
+    // ============================================================
     private fun showClearLogsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить логи")
@@ -159,6 +195,9 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // ОТПРАВКА ЛОГОВ
+    // ============================================================
     private fun sendLogs() {
         Logger.log(TAG, "Sending logs...")
         try {
@@ -193,7 +232,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ИСПРАВЛЕНА ЛЯМБДА С ЯВНЫМИ ТИПАМИ =====
+    // ============================================================
+    // ПОЛНАЯ ОЧИСТКА ДАННЫХ
+    // ============================================================
     private fun showClearAllDataDialog() {
         val randomWord = generateRandomWord()
         val editText = android.widget.EditText(this)
@@ -233,16 +274,6 @@ class SettingsActivity : AppCompatActivity() {
         return words.random()
     }
 
-    /**
-     * Полная очистка данных:
-     * 1. Локальная БД (удаляем файлы базы данных физически)
-     * 2. Локальные изображения (папка images в files)
-     * 3. Данные на Яндекс.Диске (удаляем только содержимое: data, images, .last_modified, но НЕ корневую папку)
-     * 4. Кэш и логи
-     * Публичный ключ и имя папки НЕ сбрасываются – подключение остаётся.
-     * Токен авторизации НЕ удаляется.
-     * После очистки перезапускает MainActivity с пустым каталогом.
-     */
     private fun clearAllData() {
         Logger.log(TAG, "=== CLEAR ALL DATA START ===")
         
@@ -271,12 +302,11 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 Logger.log(TAG, "Local DB files removed")
 
-            // ===== СБРАСЫВАЕМ СТАТИЧЕСКИЙ ЭКЗЕМПЛЯР =====
-            AppDatabase.resetInstance()
-            Logger.log(TAG, "AppDatabase instance reset")
-            // ===========================================
+                // === 2. Сбрасываем статический экземпляр ===
+                AppDatabase.resetInstance()
+                Logger.log(TAG, "AppDatabase instance reset")
                 
-                // === 2. Удаляем локальные изображения ===
+                // === 3. Удаляем локальные изображения ===
                 try {
                     val imagesDir = java.io.File(filesDir, "images")
                     if (imagesDir.exists()) {
@@ -287,7 +317,7 @@ class SettingsActivity : AppCompatActivity() {
                     Logger.log(TAG, "Error deleting local images", e)
                 }
                 
-                // === 3. Очищаем Яндекс.Диск (удаляем только содержимое, корневую папку НЕ трогаем) ===
+                // === 4. Очищаем Яндекс.Диск ===
                 val token = tokenStorage.getAccessToken()
                 if (token != null) {
                     try {
@@ -313,16 +343,13 @@ class SettingsActivity : AppCompatActivity() {
                     Logger.log(TAG, "No token, skip Yandex.Disk deletion")
                 }
                 
-                // === 4. Очищаем кэш и логи ===
+                // === 5. Очищаем кэш и логи ===
                 cacheDir.deleteRecursively()
                 cacheDir.mkdirs()
                 Logger.log(TAG, "Cache cleared")
                 
                 Logger.clearLogs()
                 Logger.log(TAG, "Logs cleared")
-                
-                // === 5. Публичный ключ и имя папки НЕ сбрасываем ===
-                Logger.log(TAG, "Public key and folder name preserved")
                 
                 // === 6. Перезапускаем MainActivity ===
                 withContext(Dispatchers.Main) {
@@ -354,6 +381,9 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ВЫХОД
+    // ============================================================
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
@@ -400,6 +430,66 @@ class SettingsActivity : AppCompatActivity() {
             Logger.log(TAG, "Error during logout", e)
             Toast.makeText(this, "Ошибка выхода", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // ============================================================
+    // ПРОВЕРКА ОБНОВЛЕНИЙ
+    // ============================================================
+    private fun checkForUpdates() {
+        val currentVersionCode = BuildConfig.VERSION_CODE
+        val currentVersionName = BuildConfig.VERSION_NAME
+
+        Logger.log(TAG, "Checking for updates. Current version: $currentVersionName ($currentVersionCode)")
+        Toast.makeText(this, "Проверка обновлений...", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch {
+            try {
+                val updateManager = UpdateManager(this@SettingsActivity)
+                val latestVersion = updateManager.checkForUpdate(currentVersionCode)
+
+                if (latestVersion != null && latestVersion.versionCode > currentVersionCode) {
+                    Logger.log(TAG, "Update available: ${latestVersion.versionName} (${latestVersion.versionCode})")
+                    showUpdateDialog(latestVersion)
+                } else {
+                    Logger.log(TAG, "No updates available")
+                    Toast.makeText(
+                        this@SettingsActivity,
+                        "У вас последняя версия ($currentVersionName)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error checking for updates", e)
+                Toast.makeText(
+                    this@SettingsActivity,
+                    "Ошибка проверки обновлений: ${e.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun showUpdateDialog(version: AppVersion) {
+        AlertDialog.Builder(this)
+            .setTitle("📱 Доступно обновление!")
+            .setMessage(
+                """
+                Версия: ${version.versionName}
+                
+                Что нового:
+                ${version.releaseNotes ?: "• Исправлены ошибки\n• Улучшена производительность"}
+                """.trimIndent()
+            )
+            .setPositiveButton("Обновить") { _, _ ->
+                Logger.log(TAG, "User clicked 'Update'")
+                val updateManager = UpdateManager(this)
+                updateManager.downloadAndInstall(version.downloadUrl, version.versionName)
+                Toast.makeText(this, "Загрузка началась...", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Позже") { _, _ ->
+                Logger.log(TAG, "User clicked 'Later'")
+            }
+            .show()
     }
 
     override fun onDestroy() {
