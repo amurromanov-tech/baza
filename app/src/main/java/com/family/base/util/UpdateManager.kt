@@ -8,23 +8,45 @@ import androidx.core.content.FileProvider
 import com.family.base.data.remote.AppVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 class UpdateManager(private val context: Context) {
 
     companion object {
-        private const val VERSION_URL = "https://disk.yandex.ru/.../versions.json?dl=1"
-        // Замените на вашу реальную ссылку
+        // Замените на вашу реальную ссылку на versions.json
+        private const val VERSION_URL = "https://disk.yandex.ru/d/AbCdEfGhIjKlMnOp?dl=1"
     }
 
     suspend fun checkForUpdate(currentVersionCode: Int): AppVersion? = withContext(Dispatchers.IO) {
         return@withContext try {
-            // Здесь нужно скачать versions.json и распарсить
-            // Используйте OkHttp или Retrofit
-            null // временно
+            val json = downloadJson(VERSION_URL)
+            val versionCode = json.getInt("versionCode")
+            val versionName = json.getString("versionName")
+            val downloadUrl = json.getString("downloadUrl")
+            val releaseNotes = json.optString("releaseNotes", null)
+
+            if (versionCode > currentVersionCode) {
+                AppVersion(versionCode, versionName, downloadUrl, releaseNotes)
+            } else {
+                null
+            }
         } catch (e: Exception) {
+            e.printStackTrace()
             null
         }
+    }
+
+    private fun downloadJson(urlString: String): JSONObject {
+        val url = URL(urlString)
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connect()
+
+        val text = connection.inputStream.bufferedReader().use { it.readText() }
+        return JSONObject(text)
     }
 
     fun downloadAndInstall(apkUrl: String, versionName: String) {
@@ -45,7 +67,6 @@ class UpdateManager(private val context: Context) {
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val downloadId = manager.enqueue(request)
 
-        // Отслеживаем завершение загрузки
         Thread {
             var isDownloading = true
             while (isDownloading) {
