@@ -2,8 +2,10 @@ package com.family.base.util
 
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.family.base.data.remote.AppVersion
 import kotlinx.coroutines.Dispatchers
@@ -16,39 +18,33 @@ import java.net.URL
 class UpdateManager(private val context: Context) {
 
     companion object {
-        // Замените на вашу реальную ссылку на versions.json
-        private const val VERSION_URL = "https://gist.githubusercontent.com/amurromanov-tech/abd1743f33504f22e17dd1cd246eea7e/raw/ed0fad097603ada331da36e531032976ce28f980/versions.json"
+        private const val VERSION_URL = "https://gist.githubusercontent.com/ваш_логин/.../raw/versions.json"
     }
 
     suspend fun checkForUpdate(currentVersionCode: Int): AppVersion? = withContext(Dispatchers.IO) {
-    Logger.log("UpdateManager", "=== checkForUpdate START ===")
-    Logger.log("UpdateManager", "Current version code: $currentVersionCode")
-    Logger.log("UpdateManager", "Downloading JSON from: $VERSION_URL")
-    
-    return@withContext try {
-        val json = downloadJson(VERSION_URL)
-        Logger.log("UpdateManager", "JSON downloaded: $json")
+        Logger.log("UpdateManager", "=== checkForUpdate START ===")
+        Logger.log("UpdateManager", "Current version code: $currentVersionCode")
         
-        val versionCode = json.getInt("versionCode")
-        val versionName = json.getString("versionName")
-        val downloadUrl = json.getString("downloadUrl")
-        val releaseNotes = json.optString("releaseNotes", null)
+        return@withContext try {
+            val json = downloadJson(VERSION_URL)
+            val versionCode = json.getInt("versionCode")
+            val versionName = json.getString("versionName")
+            val downloadUrl = json.getString("downloadUrl")
+            val releaseNotes = json.optString("releaseNotes", null)
 
-        Logger.log("UpdateManager", "Remote version: $versionName ($versionCode)")
-        Logger.log("UpdateManager", "Current version: $currentVersionCode")
-        Logger.log("UpdateManager", "Need update: ${versionCode > currentVersionCode}")
+            Logger.log("UpdateManager", "Remote version: $versionName ($versionCode)")
+            Logger.log("UpdateManager", "Need update: ${versionCode > currentVersionCode}")
 
-        if (versionCode > currentVersionCode) {
-            AppVersion(versionCode, versionName, downloadUrl, releaseNotes)
-        } else {
+            if (versionCode > currentVersionCode) {
+                AppVersion(versionCode, versionName, downloadUrl, releaseNotes)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Logger.log("UpdateManager", "Error in checkForUpdate", e)
             null
         }
-    } catch (e: Exception) {
-        Logger.log("UpdateManager", "Error in checkForUpdate", e)
-        e.printStackTrace()
-        null
     }
-}
 
     private fun downloadJson(urlString: String): JSONObject {
         val url = URL(urlString)
@@ -60,7 +56,34 @@ class UpdateManager(private val context: Context) {
         return JSONObject(text)
     }
 
+    fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    fun requestInstallPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+            context.startActivity(intent)
+        }
+    }
+
     fun downloadAndInstall(apkUrl: String, versionName: String) {
+        Logger.log("UpdateManager", "=== downloadAndInstall START ===")
+        Logger.log("UpdateManager", "APK URL: $apkUrl")
+        
+        // Проверяем разрешение
+        if (!canInstallPackages()) {
+            Logger.log("UpdateManager", "No install permission, requesting...")
+            requestInstallPermission()
+            return
+        }
+
         val fileName = "baza_$versionName.apk"
         val downloadDir = context.getExternalFilesDir(null) ?: context.filesDir
         val file = File(downloadDir, fileName)
@@ -88,11 +111,12 @@ class UpdateManager(private val context: Context) {
                     when (status) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
                             isDownloading = false
+                            Logger.log("UpdateManager", "Download SUCCESS, starting install")
                             installApk(file)
                         }
                         DownloadManager.STATUS_FAILED -> {
                             isDownloading = false
-                            Logger.log("UpdateManager", "Download failed")
+                            Logger.log("UpdateManager", "Download FAILED")
                         }
                     }
                 }
@@ -103,6 +127,13 @@ class UpdateManager(private val context: Context) {
     }
 
     private fun installApk(file: File) {
+        Logger.log("UpdateManager", "=== installApk START ===")
+        
+        if (!file.exists()) {
+            Logger.log("UpdateManager", "File does not exist: ${file.absolutePath}")
+            return
+        }
+        
         val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             FileProvider.getUriForFile(
                 context,
@@ -113,12 +144,17 @@ class UpdateManager(private val context: Context) {
             Uri.fromFile(file)
         }
 
-        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
-        context.startActivity(intent)
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            Logger.log("UpdateManager", "Install intent started")
+        } else {
+            Logger.log("UpdateManager", "No activity to handle install intent")
+        }
     }
 }
