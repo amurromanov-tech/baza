@@ -39,13 +39,13 @@ class BackupManager(private val context: Context) {
     suspend fun exportToLocal(db: AppDatabase, folderName: String): File? = withContext(Dispatchers.IO) {
         try {
             val folders = db.folderDao().getAllFolders()
-            val items = db.itemDao().getAllItems()
+            val allItems = db.itemDao().getAllItems()
             val history = db.historyDao().getAllEntries()
             val settings = db.settingsDao().getSettings()
 
             val backupData = BackupData(
                 folders = folders,
-                items = items,
+                items = allItems,
                 history = history,
                 settings = settings,
                 folderName = folderName
