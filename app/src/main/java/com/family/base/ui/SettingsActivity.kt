@@ -27,35 +27,35 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var viewModel: MainViewModel
     private val TAG = "SettingsActivity"
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        Logger.log(TAG, "=== SettingsActivity onCreate START ===")
+   override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    Logger.log(TAG, "=== SettingsActivity onCreate START ===")
 
-        try {
-            binding = ActivitySettingsBinding.inflate(layoutInflater)
-            setContentView(binding.root)
-            Logger.log(TAG, "Binding inflated successfully")
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
-            return
-        }
-
-        try {
-            tokenStorage = TokenStorage(this)
-            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
-            Logger.log(TAG, "TokenStorage and ViewModel initialized")
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to initialize", e)
-            return
-        }
-
-        setupListeners()
-        loadSettings()
-        showCurrentVersion()
-
-        Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
+    try {
+        binding = ActivitySettingsBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        Logger.log(TAG, "Binding inflated successfully")
+    } catch (e: Exception) {
+        Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+        return
     }
 
+    try {
+        tokenStorage = TokenStorage(this)
+        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+        Logger.log(TAG, "TokenStorage and ViewModel initialized")
+    } catch (e: Exception) {
+        Logger.log(TAG, "CRITICAL: Failed to initialize", e)
+        return
+    }
+
+    setupListeners()           // ← уже было
+    loadSettings()             // ← уже было
+    showCurrentVersion()       // ← уже было
+    setupBackupListeners()     // ← НОВАЯ СТРОЧКА
+
+    Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
+}
     // ============================================================
     // ПОКАЗАТЬ ТЕКУЩУЮ ВЕРСИЮ
     // ============================================================
