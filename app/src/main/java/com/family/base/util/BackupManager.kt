@@ -87,7 +87,7 @@ class BackupManager(private val context: Context) {
             }
 
             // Загружаем файл
-            val uploadResponse = com.family.base.util.DiskUploader.uploadFile(api, auth, path, bytes)
+            val uploadResponse = DiskUploader.uploadFile(api, auth, path, bytes)
             if (uploadResponse) {
                 Logger.log("BackupManager", "Export to cloud: $path")
                 return@withContext true
@@ -105,7 +105,8 @@ class BackupManager(private val context: Context) {
     suspend fun importFromLocal(file: File, db: AppDatabase): Boolean = withContext(Dispatchers.IO) {
         try {
             val json = file.readText()
-            val backupData = gson.fromJson(json, BackupData::class.java)
+            val type = object : TypeToken<BackupData>() {}.type
+            val backupData: BackupData = gson.fromJson(json, type)
 
             // Очищаем текущие данные
             clearAllData(db)
@@ -184,7 +185,9 @@ class BackupManager(private val context: Context) {
             }
 
             // Парсим и импортируем
-            val backupData = gson.fromJson(json, BackupData::class.java)
+            val type = object : TypeToken<BackupData>() {}.type
+            val backupData: BackupData = gson.fromJson(json, type)
+
             clearAllData(db)
 
             backupData.folders.forEach { db.folderDao().insertFolder(it) }
