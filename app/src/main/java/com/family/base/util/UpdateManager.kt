@@ -21,23 +21,34 @@ class UpdateManager(private val context: Context) {
     }
 
     suspend fun checkForUpdate(currentVersionCode: Int): AppVersion? = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val json = downloadJson(VERSION_URL)
-            val versionCode = json.getInt("versionCode")
-            val versionName = json.getString("versionName")
-            val downloadUrl = json.getString("downloadUrl")
-            val releaseNotes = json.optString("releaseNotes", null)
+    Logger.log("UpdateManager", "=== checkForUpdate START ===")
+    Logger.log("UpdateManager", "Current version code: $currentVersionCode")
+    Logger.log("UpdateManager", "Downloading JSON from: $VERSION_URL")
+    
+    return@withContext try {
+        val json = downloadJson(VERSION_URL)
+        Logger.log("UpdateManager", "JSON downloaded: $json")
+        
+        val versionCode = json.getInt("versionCode")
+        val versionName = json.getString("versionName")
+        val downloadUrl = json.getString("downloadUrl")
+        val releaseNotes = json.optString("releaseNotes", null)
 
-            if (versionCode > currentVersionCode) {
-                AppVersion(versionCode, versionName, downloadUrl, releaseNotes)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        Logger.log("UpdateManager", "Remote version: $versionName ($versionCode)")
+        Logger.log("UpdateManager", "Current version: $currentVersionCode")
+        Logger.log("UpdateManager", "Need update: ${versionCode > currentVersionCode}")
+
+        if (versionCode > currentVersionCode) {
+            AppVersion(versionCode, versionName, downloadUrl, releaseNotes)
+        } else {
             null
         }
+    } catch (e: Exception) {
+        Logger.log("UpdateManager", "Error in checkForUpdate", e)
+        e.printStackTrace()
+        null
     }
+}
 
     private fun downloadJson(urlString: String): JSONObject {
         val url = URL(urlString)
