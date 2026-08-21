@@ -17,7 +17,7 @@ class UpdateManager(private val context: Context) {
 
     companion object {
         // Замените на вашу реальную ссылку на versions.json
-        private const val VERSION_URL = "https://disk.yandex.ru/d/o2V2hjHOqZFAGw?dl=1"
+        private const val VERSION_URL = "https://gist.githubusercontent.com/amurromanov-tech/abd1743f33504f22e17dd1cd246eea7e/raw/ed0fad097603ada331da36e531032976ce28f980/versions.json"
     }
 
     suspend fun checkForUpdate(currentVersionCode: Int): AppVersion? = withContext(Dispatchers.IO) {
