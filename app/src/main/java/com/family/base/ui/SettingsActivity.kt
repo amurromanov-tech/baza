@@ -386,6 +386,115 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ===== РЕЗЕРВНОЕ КОПИРОВАНИЕ =====
+private fun setupBackupListeners() {
+    binding.btnExportLocal.setOnClickListener {
+        Logger.log(TAG, "Export local clicked")
+        exportBackup(local = true)
+    }
+
+    binding.btnExportCloud.setOnClickListener {
+        Logger.log(TAG, "Export cloud clicked")
+        exportBackup(local = false)
+    }
+
+    binding.btnImportLocal.setOnClickListener {
+        Logger.log(TAG, "Import local clicked")
+        showImportDialog(local = true)
+    }
+
+    binding.btnImportCloud.setOnClickListener {
+        Logger.log(TAG, "Import cloud clicked")
+        showImportDialog(local = false)
+    }
+}
+
+private fun exportBackup(local: Boolean) {
+    lifecycleScope.launch {
+        try {
+            Toast.makeText(this@SettingsActivity, "Создание бэкапа...", Toast.LENGTH_SHORT).show()
+            val db = AppDatabase.getInstance(this@SettingsActivity)
+            val backupManager = BackupManager(this@SettingsActivity)
+            val folderName = tokenStorage.getFolderName()
+
+            val success = if (local) {
+                val file = backupManager.exportToLocal(db, folderName)
+                file != null
+            } else {
+                backupManager.exportToCloud(db, folderName, tokenStorage)
+            }
+
+            if (success) {
+                Toast.makeText(this@SettingsActivity, "✅ Бэкап создан", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@SettingsActivity, "❌ Ошибка создания бэкапа", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error exporting backup", e)
+            Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun showImportDialog(local: Boolean) {
+    AlertDialog.Builder(this)
+        .setTitle("Восстановление данных")
+        .setMessage("ВНИМАНИЕ! Все текущие данные будут заменены данными из бэкапа. Продолжить?")
+        .setPositiveButton("Да") { _, _ ->
+            importBackup(local)
+        }
+        .setNegativeButton("Отмена", null)
+        .show()
+}
+
+private fun importBackup(local: Boolean) {
+    lifecycleScope.launch {
+        try {
+            Toast.makeText(this@SettingsActivity, "Восстановление...", Toast.LENGTH_SHORT).show()
+            val db = AppDatabase.getInstance(this@SettingsActivity)
+            val backupManager = BackupManager(this@SettingsActivity)
+
+            val success = if (local) {
+                // Показываем диалог выбора файла
+                val backups = backupManager.getLocalBackups()
+                if (backups.isEmpty()) {
+                    Toast.makeText(this@SettingsActivity, "Нет локальных бэкапов", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                val file = pickBackupFile(backups) ?: return@launch
+                backupManager.importFromLocal(file, db)
+            } else {
+                backupManager.importFromCloud(tokenStorage, db)
+            }
+
+            if (success) {
+                Toast.makeText(this@SettingsActivity, "✅ Данные восстановлены", Toast.LENGTH_SHORT).show()
+                viewModel.loadContents()
+            } else {
+                Toast.makeText(this@SettingsActivity, "❌ Ошибка восстановления", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error importing backup", e)
+            Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun pickBackupFile(files: List<File>): File? {
+    val names = files.map { it.name }.toTypedArray()
+    val index = arrayOf(-1)
+    AlertDialog.Builder(this)
+        .setTitle("Выберите бэкап")
+        .setItems(names) { _, which ->
+            index[0] = which
+        }
+        .setPositiveButton("OK") { _, _ ->
+            // handled
+        }
+        .setNegativeButton("Отмена", null)
+        .show()
+
+    return if (index[0] >= 0) files[index[0]] else null
     // ============================================================
     // ВЫХОД
     // ============================================================
