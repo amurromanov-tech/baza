@@ -14,11 +14,13 @@ import com.family.base.data.remote.AppVersion
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.databinding.ActivitySettingsBinding
 import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.util.BackupManager
 import com.family.base.util.Logger
 import com.family.base.util.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -27,110 +29,207 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var viewModel: MainViewModel
     private val TAG = "SettingsActivity"
 
-   override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-    Logger.log(TAG, "=== SettingsActivity onCreate START ===")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Logger.log(TAG, "=== SettingsActivity onCreate START ===")
 
-    try {
-        binding = ActivitySettingsBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-        Logger.log(TAG, "Binding inflated successfully")
-    } catch (e: Exception) {
-        Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
-        return
+        try {
+            binding = ActivitySettingsBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+            Logger.log(TAG, "Binding inflated successfully")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+            return
+        }
+
+        try {
+            tokenStorage = TokenStorage(this)
+            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            Logger.log(TAG, "TokenStorage and ViewModel initialized")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to initialize", e)
+            return
+        }
+
+        setupListeners()
+        loadSettings()
+        showCurrentVersion()
+        setupBackupListeners() // <-- ДОБАВЛЕН ВЫЗОВ
+
+        Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
     }
 
-    try {
-        tokenStorage = TokenStorage(this)
-        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
-        Logger.log(TAG, "TokenStorage and ViewModel initialized")
-    } catch (e: Exception) {
-        Logger.log(TAG, "CRITICAL: Failed to initialize", e)
-        return
-    }
-
-    setupListeners()           // ← уже было
-    loadSettings()             // ← уже было
-    showCurrentVersion()       // ← уже было
-    setupBackupListeners()     // ← НОВАЯ СТРОЧКА
-
-    Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
-}
-    // ============================================================
-    // ПОКАЗАТЬ ТЕКУЩУЮ ВЕРСИЮ
-    // ============================================================
     private fun showCurrentVersion() {
         val versionName = BuildConfig.VERSION_NAME
         val versionCode = BuildConfig.VERSION_CODE
         binding.tvVersion.text = "Версия $versionName (код $versionCode)"
     }
 
-    // ============================================================
-    // НАСТРОЙКА СЛУШАТЕЛЕЙ
-    // ============================================================
     private fun setupListeners() {
         Logger.log(TAG, "Setting up listeners")
 
-        // Синхронизация
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
             Toast.makeText(this, "Синхронизация запущена...", Toast.LENGTH_SHORT).show()
             viewModel.forceSync()
         }
 
-        // Очистка кэша
         binding.btnClearCache.setOnClickListener {
             Logger.log(TAG, "Clear cache clicked")
             showClearCacheDialog()
         }
 
-        // Очистка логов
         binding.btnClearLogs.setOnClickListener {
             Logger.log(TAG, "Clear logs clicked")
             showClearLogsDialog()
         }
 
-        // Отправка логов
         binding.btnSendLog.setOnClickListener {
             Logger.log(TAG, "Send log clicked")
             sendLogs()
         }
 
-        // Выход
         binding.btnLogout.setOnClickListener {
             Logger.log(TAG, "Logout clicked")
             showLogoutDialog()
         }
 
-        // Полная очистка данных
         binding.btnClearAllData.setOnClickListener {
             Logger.log(TAG, "Clear all data clicked")
             showClearAllDataDialog()
         }
 
-        // Логирование (вкл/выкл)
         binding.switchLogging.setOnCheckedChangeListener { _, isChecked ->
             Logger.log(TAG, "Logging enabled: $isChecked")
             Logger.setEnabled(isChecked)
             saveSettings()
         }
 
-        // ===== КНОПКА ПРОВЕРКИ ОБНОВЛЕНИЙ =====
         binding.btnCheckUpdate.setOnClickListener {
             Logger.log(TAG, "Check for updates clicked")
             checkForUpdates()
         }
 
-        // ===== НОВАЯ КНОПКА: ПОДЕЛИТЬСЯ ССЫЛКОЙ =====
         binding.btnShareLink.setOnClickListener {
             Logger.log(TAG, "Share link clicked")
             shareFolderLink()
         }
     }
 
+    private fun setupBackupListeners() {
+        binding.btnExportLocal.setOnClickListener {
+            Logger.log(TAG, "Export local clicked")
+            exportBackup(local = true)
+        }
+
+        binding.btnExportCloud.setOnClickListener {
+            Logger.log(TAG, "Export cloud clicked")
+            exportBackup(local = false)
+        }
+
+        binding.btnImportLocal.setOnClickListener {
+            Logger.log(TAG, "Import local clicked")
+            showImportDialog(local = true)
+        }
+
+        binding.btnImportCloud.setOnClickListener {
+            Logger.log(TAG, "Import cloud clicked")
+            showImportDialog(local = false)
+        }
+    }
+
+    // ===== РЕЗЕРВНОЕ КОПИРОВАНИЕ =====
+
+    private fun exportBackup(local: Boolean) {
+        lifecycleScope.launch {
+            try {
+                Toast.makeText(this@SettingsActivity, "Создание бэкапа...", Toast.LENGTH_SHORT).show()
+                val db = AppDatabase.getInstance(this@SettingsActivity)
+                val backupManager = BackupManager(this@SettingsActivity)
+                val folderName = tokenStorage.getFolderName()
+
+                val success = if (local) {
+                    val file = backupManager.exportToLocal(db, folderName)
+                    file != null
+                } else {
+                    backupManager.exportToCloud(db, folderName, tokenStorage)
+                }
+
+                if (success) {
+                    Toast.makeText(this@SettingsActivity, "✅ Бэкап создан", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@SettingsActivity, "❌ Ошибка создания бэкапа", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error exporting backup", e)
+                Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun showImportDialog(local: Boolean) {
+        AlertDialog.Builder(this)
+            .setTitle("Восстановление данных")
+            .setMessage("ВНИМАНИЕ! Все текущие данные будут заменены данными из бэкапа. Продолжить?")
+            .setPositiveButton("Да") { _, _ ->
+                importBackup(local)
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun importBackup(local: Boolean) {
+        lifecycleScope.launch {
+            try {
+                Toast.makeText(this@SettingsActivity, "Восстановление...", Toast.LENGTH_SHORT).show()
+                val db = AppDatabase.getInstance(this@SettingsActivity)
+                val backupManager = BackupManager(this@SettingsActivity)
+
+                val success = if (local) {
+                    val backups = backupManager.getLocalBackups()
+                    if (backups.isEmpty()) {
+                        Toast.makeText(this@SettingsActivity, "Нет локальных бэкапов", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+                    val file = pickBackupFile(backups) ?: return@launch
+                    backupManager.importFromLocal(file, db)
+                } else {
+                    backupManager.importFromCloud(tokenStorage, db)
+                }
+
+                if (success) {
+                    Toast.makeText(this@SettingsActivity, "✅ Данные восстановлены", Toast.LENGTH_SHORT).show()
+                    viewModel.loadContents()
+                } else {
+                    Toast.makeText(this@SettingsActivity, "❌ Ошибка восстановления", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error importing backup", e)
+                Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun pickBackupFile(files: List<File>): File? {
+        val names = files.map { it.name }.toTypedArray()
+        var selectedIndex = -1
+        AlertDialog.Builder(this)
+            .setTitle("Выберите бэкап")
+            .setItems(names) { _, which ->
+                selectedIndex = which
+            }
+            .setPositiveButton("OK") { _, _ ->
+                // handled
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+        return if (selectedIndex >= 0) files[selectedIndex] else null
+    }
+
     // ============================================================
     // ЗАГРУЗКА/СОХРАНЕНИЕ НАСТРОЕК
     // ============================================================
+
     private fun loadSettings() {
         Logger.log(TAG, "Loading settings")
         try {
@@ -161,6 +260,7 @@ class SettingsActivity : AppCompatActivity() {
     // ============================================================
     // ОЧИСТКА КЭША
     // ============================================================
+
     private fun showClearCacheDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить кэш")
@@ -187,6 +287,7 @@ class SettingsActivity : AppCompatActivity() {
     // ============================================================
     // ОЧИСТКА ЛОГОВ
     // ============================================================
+
     private fun showClearLogsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить логи")
@@ -203,6 +304,7 @@ class SettingsActivity : AppCompatActivity() {
     // ============================================================
     // ОТПРАВКА ЛОГОВ
     // ============================================================
+
     private fun sendLogs() {
         Logger.log(TAG, "Sending logs...")
         try {
@@ -222,7 +324,6 @@ class SettingsActivity : AppCompatActivity() {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_EMAIL, arrayOf("support@familybase.com"))
                 putExtra(Intent.EXTRA_SUBJECT, "Логи приложения БАЗА")
-                
                 val uris = logFiles.map { file ->
                     android.net.Uri.fromFile(file)
                 }
@@ -240,6 +341,7 @@ class SettingsActivity : AppCompatActivity() {
     // ============================================================
     // ПОЛНАЯ ОЧИСТКА ДАННЫХ
     // ============================================================
+
     private fun showClearAllDataDialog() {
         val randomWord = generateRandomWord()
         val editText = android.widget.EditText(this)
@@ -281,15 +383,13 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun clearAllData() {
         Logger.log(TAG, "=== CLEAR ALL DATA START ===")
-        
         Toast.makeText(this, "Очистка данных...", Toast.LENGTH_SHORT).show()
-        
+
         lifecycleScope.launch {
             try {
-                // === 1. Удаляем файлы локальной БД физически ===
                 val db = AppDatabase.getInstance(this@SettingsActivity)
                 db.close()
-                
+
                 val dbFile = getDatabasePath("baza.db")
                 if (dbFile.exists()) {
                     dbFile.delete()
@@ -307,11 +407,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 Logger.log(TAG, "Local DB files removed")
 
-                // === 2. Сбрасываем статический экземпляр ===
                 AppDatabase.resetInstance()
                 Logger.log(TAG, "AppDatabase instance reset")
-                
-                // === 3. Удаляем локальные изображения ===
+
                 try {
                     val imagesDir = java.io.File(filesDir, "images")
                     if (imagesDir.exists()) {
@@ -321,8 +419,7 @@ class SettingsActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Logger.log(TAG, "Error deleting local images", e)
                 }
-                
-                // === 4. Очищаем Яндекс.Диск ===
+
                 val token = tokenStorage.getAccessToken()
                 if (token != null) {
                     try {
@@ -347,32 +444,29 @@ class SettingsActivity : AppCompatActivity() {
                 } else {
                     Logger.log(TAG, "No token, skip Yandex.Disk deletion")
                 }
-                
-                // === 5. Очищаем кэш и логи ===
+
                 cacheDir.deleteRecursively()
                 cacheDir.mkdirs()
                 Logger.log(TAG, "Cache cleared")
-                
+
                 Logger.clearLogs()
                 Logger.log(TAG, "Logs cleared")
-                
-                // === 6. Перезапускаем MainActivity ===
+
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         this@SettingsActivity,
                         "✅ Все данные очищены",
                         Toast.LENGTH_LONG
                     ).show()
-                    
+
                     val intent = Intent(this@SettingsActivity, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     }
                     startActivity(intent)
                     finish()
                 }
-                
+
                 Logger.log(TAG, "=== CLEAR ALL DATA FINISHED ===")
-                
             } catch (e: Exception) {
                 Logger.log(TAG, "Error clearing all data", e)
                 withContext(Dispatchers.Main) {
@@ -386,118 +480,10 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ===== РЕЗЕРВНОЕ КОПИРОВАНИЕ =====
-private fun setupBackupListeners() {
-    binding.btnExportLocal.setOnClickListener {
-        Logger.log(TAG, "Export local clicked")
-        exportBackup(local = true)
-    }
-
-    binding.btnExportCloud.setOnClickListener {
-        Logger.log(TAG, "Export cloud clicked")
-        exportBackup(local = false)
-    }
-
-    binding.btnImportLocal.setOnClickListener {
-        Logger.log(TAG, "Import local clicked")
-        showImportDialog(local = true)
-    }
-
-    binding.btnImportCloud.setOnClickListener {
-        Logger.log(TAG, "Import cloud clicked")
-        showImportDialog(local = false)
-    }
-}
-
-private fun exportBackup(local: Boolean) {
-    lifecycleScope.launch {
-        try {
-            Toast.makeText(this@SettingsActivity, "Создание бэкапа...", Toast.LENGTH_SHORT).show()
-            val db = AppDatabase.getInstance(this@SettingsActivity)
-            val backupManager = BackupManager(this@SettingsActivity)
-            val folderName = tokenStorage.getFolderName()
-
-            val success = if (local) {
-                val file = backupManager.exportToLocal(db, folderName)
-                file != null
-            } else {
-                backupManager.exportToCloud(db, folderName, tokenStorage)
-            }
-
-            if (success) {
-                Toast.makeText(this@SettingsActivity, "✅ Бэкап создан", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this@SettingsActivity, "❌ Ошибка создания бэкапа", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error exporting backup", e)
-            Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-}
-
-private fun showImportDialog(local: Boolean) {
-    AlertDialog.Builder(this)
-        .setTitle("Восстановление данных")
-        .setMessage("ВНИМАНИЕ! Все текущие данные будут заменены данными из бэкапа. Продолжить?")
-        .setPositiveButton("Да") { _, _ ->
-            importBackup(local)
-        }
-        .setNegativeButton("Отмена", null)
-        .show()
-}
-
-private fun importBackup(local: Boolean) {
-    lifecycleScope.launch {
-        try {
-            Toast.makeText(this@SettingsActivity, "Восстановление...", Toast.LENGTH_SHORT).show()
-            val db = AppDatabase.getInstance(this@SettingsActivity)
-            val backupManager = BackupManager(this@SettingsActivity)
-
-            val success = if (local) {
-                // Показываем диалог выбора файла
-                val backups = backupManager.getLocalBackups()
-                if (backups.isEmpty()) {
-                    Toast.makeText(this@SettingsActivity, "Нет локальных бэкапов", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                val file = pickBackupFile(backups) ?: return@launch
-                backupManager.importFromLocal(file, db)
-            } else {
-                backupManager.importFromCloud(tokenStorage, db)
-            }
-
-            if (success) {
-                Toast.makeText(this@SettingsActivity, "✅ Данные восстановлены", Toast.LENGTH_SHORT).show()
-                viewModel.loadContents()
-            } else {
-                Toast.makeText(this@SettingsActivity, "❌ Ошибка восстановления", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error importing backup", e)
-            Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-}
-
-private fun pickBackupFile(files: List<File>): File? {
-    val names = files.map { it.name }.toTypedArray()
-    val index = arrayOf(-1)
-    AlertDialog.Builder(this)
-        .setTitle("Выберите бэкап")
-        .setItems(names) { _, which ->
-            index[0] = which
-        }
-        .setPositiveButton("OK") { _, _ ->
-            // handled
-        }
-        .setNegativeButton("Отмена", null)
-        .show()
-
-    return if (index[0] >= 0) files[index[0]] else null
     // ============================================================
     // ВЫХОД
     // ============================================================
+
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
@@ -513,7 +499,7 @@ private fun pickBackupFile(files: List<File>): File? {
     private fun logout() {
         try {
             tokenStorage.clear()
-            
+
             lifecycleScope.launch {
                 try {
                     val db = AppDatabase.getInstance(this@SettingsActivity)
@@ -522,7 +508,7 @@ private fun pickBackupFile(files: List<File>): File? {
                     db.lockDao().deleteAllLocks()
                     db.syncQueueDao().clearAll()
                     Logger.log(TAG, "Database cleared")
-                    
+
                     val imagesDir = java.io.File(filesDir, "images")
                     if (imagesDir.exists()) {
                         imagesDir.deleteRecursively()
@@ -538,7 +524,7 @@ private fun pickBackupFile(files: List<File>): File? {
             }
             startActivity(intent)
             finish()
-            
+
             Logger.log(TAG, "Logout completed")
         } catch (e: Exception) {
             Logger.log(TAG, "Error during logout", e)
@@ -549,6 +535,7 @@ private fun pickBackupFile(files: List<File>): File? {
     // ============================================================
     // ПРОВЕРКА ОБНОВЛЕНИЙ
     // ============================================================
+
     private fun checkForUpdates() {
         val currentVersionCode = BuildConfig.VERSION_CODE
         val currentVersionName = BuildConfig.VERSION_NAME
@@ -607,8 +594,9 @@ private fun pickBackupFile(files: List<File>): File? {
     }
 
     // ============================================================
-    // ПОДЕЛИТЬСЯ ССЫЛКОЙ (НОВЫЙ МЕТОД)
+    // ПОДЕЛИТЬСЯ ССЫЛКОЙ
     // ============================================================
+
     private fun shareFolderLink() {
         val link = tokenStorage.getSharedFolderLink()
         if (link != null) {
