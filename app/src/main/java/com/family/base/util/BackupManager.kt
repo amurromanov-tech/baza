@@ -144,8 +144,8 @@ class BackupManager(private val context: Context) {
                 return@withContext false
             }
 
-            val items = listResponse.body()?.items ?: emptyList()
-            val backupFiles = items.filter { it.name.endsWith(".json") }
+            val diskItems = listResponse.body()?.items ?: emptyList()
+            val backupFiles = diskItems.filter { it.name.endsWith(".json") }
 
             if (backupFiles.isEmpty()) {
                 Logger.log("BackupManager", "No backup files found")
