@@ -78,7 +78,6 @@ class BackupManager(private val context: Context) {
             val auth = "OAuth $token"
             val path = "/${tokenStorage.getFolderName()}/backup/${localFile.name}"
 
-            // Создаём папку backup
             val backupFolderPath = "/${tokenStorage.getFolderName()}/backup"
             val createFolderResponse = api.createFolder(auth, backupFolderPath)
             if (!createFolderResponse.isSuccessful && createFolderResponse.code() != 409) {
@@ -86,7 +85,6 @@ class BackupManager(private val context: Context) {
                 return@withContext false
             }
 
-            // Загружаем файл
             val uploadResponse = DiskUploader.uploadFile(api, auth, path, bytes)
             if (uploadResponse) {
                 Logger.log("BackupManager", "Export to cloud: $path")
@@ -108,10 +106,8 @@ class BackupManager(private val context: Context) {
             val type = object : TypeToken<BackupData>() {}.type
             val backupData: BackupData = gson.fromJson(json, type)
 
-            // Очищаем текущие данные
             clearAllData(db)
 
-            // Вставляем новые
             backupData.folders.forEach { db.folderDao().insertFolder(it) }
             backupData.items.forEach { db.itemDao().insertItem(it) }
             backupData.history.forEach { db.historyDao().insertEntry(it) }
@@ -137,13 +133,13 @@ class BackupManager(private val context: Context) {
             val auth = "OAuth $token"
             val backupPath = "/${tokenStorage.getFolderName()}/backup"
 
-            // Получаем список файлов в папке backup
             val listResponse = api.getDiskResources(auth, backupPath)
             if (!listResponse.isSuccessful) {
                 Logger.log("BackupManager", "Failed to list backup files: ${listResponse.code()}")
                 return@withContext false
             }
 
+            // ===== ИСПРАВЛЕНО: diskItems вместо items =====
             val diskItems = listResponse.body()?.items ?: emptyList()
             val backupFiles = diskItems.filter { it.name.endsWith(".json") }
 
@@ -152,14 +148,12 @@ class BackupManager(private val context: Context) {
                 return@withContext false
             }
 
-            // Берём последний по дате
             val latest = backupFiles.maxByOrNull { it.modified }
             if (latest == null) {
                 Logger.log("BackupManager", "No backup files found")
                 return@withContext false
             }
 
-            // Скачиваем файл
             val downloadUrlResponse = api.getDiskDownloadUrl(auth, "$backupPath/${latest.name}")
             if (!downloadUrlResponse.isSuccessful) {
                 Logger.log("BackupManager", "Failed to get download URL: ${downloadUrlResponse.code()}")
@@ -184,7 +178,6 @@ class BackupManager(private val context: Context) {
                 return@withContext false
             }
 
-            // Парсим и импортируем
             val type = object : TypeToken<BackupData>() {}.type
             val backupData: BackupData = gson.fromJson(json, type)
 
