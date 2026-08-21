@@ -21,9 +21,9 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
 
-    // ===== ОДИНАКОВАЯ ПОДПИСЬ ДЛЯ ВСЕХ =====
+    // ===== ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩУЮ КОНФИГУРАЦИЮ 'debug' =====
     signingConfigs {
-        create("debug") {
+        getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
