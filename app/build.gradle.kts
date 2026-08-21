@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-        buildFeatures {
+    buildFeatures {
         buildConfig = true
     }
     namespace = "com.family.base"
@@ -15,15 +15,27 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5   // увеличивать при каждом обновлении
-        versionName = "1.1.3"   // версия для пользователя
+        versionCode = 4   // увеличивать при каждом обновлении
+        versionName = "1.1.2"   // версия для пользователя
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
 
-   
+    // ===== ОДИНАКОВАЯ ПОДПИСЬ ДЛЯ ВСЕХ =====
+    signingConfigs {
+        create("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
-               release {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
