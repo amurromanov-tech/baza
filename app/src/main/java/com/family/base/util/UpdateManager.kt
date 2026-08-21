@@ -85,7 +85,13 @@ class UpdateManager(private val context: Context) {
         }
 
         val fileName = "baza_$versionName.apk"
-        val downloadDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val downloadDir = java.io.File(
+    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+    "BAZA"
+)
+if (!downloadDir.exists()) {
+    downloadDir.mkdirs()
+}
         val file = File(downloadDir, fileName)
 
         if (file.exists()) file.delete()
