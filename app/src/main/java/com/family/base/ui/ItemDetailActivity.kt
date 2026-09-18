@@ -238,7 +238,34 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
     }
+    private fun setupListeners() {
+    binding.btnBack.setOnClickListener {
+        Logger.log(TAG, "Back button clicked")
+        finish()
+    }
 
+    binding.btnSave.setOnClickListener {
+        Logger.log(TAG, "Save button clicked")
+        saveChanges()
+    }
+
+    // ===== НОВЫЕ КНОПКИ +/− =====
+    binding.btnPlus.setOnClickListener {
+        changeQuantity(+1)
+    }
+
+    binding.btnMinus.setOnClickListener {
+        changeQuantity(-1)
+    }
+}
+
+private fun changeQuantity(delta: Int) {
+    val currentText = binding.etQuantity.text.toString()
+    val currentQty = currentText.toIntOrNull() ?: 1
+    val newQty = (currentQty + delta).coerceAtLeast(0)
+    binding.etQuantity.setText(newQty.toString())
+    Logger.log(TAG, "Quantity changed: $currentQty -> $newQty (delta: $delta)")
+}
     private fun showHistory(itemId: String) {
         Logger.log(TAG, "Showing history for item: $itemId")
         lifecycleScope.launch {
