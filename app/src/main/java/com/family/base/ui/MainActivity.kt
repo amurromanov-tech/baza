@@ -450,23 +450,21 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showItemContextMenu(item: ItemEntity) {
-        Logger.log(TAG, "Item context menu: ${item.name}")
-        val items = arrayOf("Увеличить количество", "Уменьшить количество", "Редактировать", "Удалить", "История", "Переместить")
-        AlertDialog.Builder(this)
-            .setTitle("Действия с предметом")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> changeItemQuantity(item, +1)
-                    1 -> changeItemQuantity(item, -1)
-                    2 -> editItem(item)
-                    3 -> confirmDeleteItem(item)
-                    4 -> showItemHistory(item)
-                    5 -> showMoveItemDialog(item)
-                }
+   private fun showItemContextMenu(item: ItemEntity) {
+    Logger.log(TAG, "Item context menu: ${item.name}")
+    val items = arrayOf("Редактировать", "Удалить", "История", "Переместить")
+    AlertDialog.Builder(this)
+        .setTitle("Действия с предметом")
+        .setItems(items) { _, which ->
+            when (which) {
+                0 -> editItem(item)
+                1 -> confirmDeleteItem(item)
+                2 -> showItemHistory(item)
+                3 -> showMoveItemDialog(item)
             }
-            .show()
-    }
+        }
+        .show()
+}
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
         Logger.log(TAG, "Showing rename dialog for: ${folder.name}")
