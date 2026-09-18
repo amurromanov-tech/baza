@@ -32,8 +32,8 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var repository: CatalogRepository
     private val FOLDER_PATH = "/${Config.SHARED_FOLDER_NAME}"
 
-    // ===== ДОБАВЛЕНО ДЛЯ СМЕНЫ ФОТО =====
     private var newImageBytes: ByteArray? = null
+
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -98,6 +98,9 @@ class ItemDetailActivity : AppCompatActivity() {
         Logger.log(TAG, "=== ItemDetailActivity onCreate FINISHED ===")
     }
 
+    // ============================================================
+    // СЛУШАТЕЛИ (ТОЛЬКО ОДНА ФУНКЦИЯ!)
+    // ============================================================
     private fun setupListeners() {
         binding.btnBack.setOnClickListener {
             Logger.log(TAG, "Back button clicked")
@@ -108,8 +111,29 @@ class ItemDetailActivity : AppCompatActivity() {
             Logger.log(TAG, "Save button clicked")
             saveChanges()
         }
+
+        // ===== КНОПКИ +/− =====
+        binding.btnPlus.setOnClickListener {
+            changeQuantity(+1)
+        }
+
+        binding.btnMinus.setOnClickListener {
+            changeQuantity(-1)
+        }
     }
 
+    // ===== ИЗМЕНЕНИЕ КОЛИЧЕСТВА =====
+    private fun changeQuantity(delta: Int) {
+        val currentText = binding.etQuantity.text.toString()
+        val currentQty = currentText.toIntOrNull() ?: 1
+        val newQty = (currentQty + delta).coerceAtLeast(0)
+        binding.etQuantity.setText(newQty.toString())
+        Logger.log(TAG, "Quantity changed: $currentQty -> $newQty (delta: $delta)")
+    }
+
+    // ============================================================
+    // ПРОСМОТР ДЕТАЛЕЙ
+    // ============================================================
     private fun showDetails(itemId: String) {
         Logger.log(TAG, "Showing details for item: $itemId")
         lifecycleScope.launch {
@@ -140,17 +164,21 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
                     binding.etExpiry.isEnabled = false
 
-                    // ===== ЦЕНА: отображение =====
                     if (item.price != null && item.price != 0.0) {
                         binding.tvPrice.visibility = View.VISIBLE
                         binding.tvPrice.text = "Цена: ${item.price} ₽"
                         binding.etPrice.visibility = View.GONE
+                        binding.tilPrice.visibility = View.GONE
                     } else {
                         binding.tvPrice.visibility = View.GONE
                         binding.etPrice.visibility = View.GONE
+                        binding.tilPrice.visibility = View.GONE
                     }
 
-                    // ===== ЗАГРУЗКА ФОТО =====
+                    // Скрываем кнопки +/− в режиме просмотра
+                    binding.btnPlus.visibility = View.GONE
+                    binding.btnMinus.visibility = View.GONE
+
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -176,6 +204,9 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // РЕЖИМ РЕДАКТИРОВАНИЯ
+    // ============================================================
     private fun showEditMode(itemId: String) {
         Logger.log(TAG, "Showing edit mode for item: $itemId")
         lifecycleScope.launch {
@@ -204,17 +235,19 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.etExpiry.setText(dateStr)
                     }
                     binding.etExpiry.isEnabled = true
-                    // Календарь для даты
                     binding.etExpiry.setOnClickListener {
                         showDatePickerDialog()
                     }
 
-                    // ===== ЦЕНА: редактирование =====
                     binding.tvPrice.visibility = View.GONE
                     binding.etPrice.visibility = View.VISIBLE
+                    binding.tilPrice.visibility = View.VISIBLE
                     binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
 
-                    // ===== ЗАГРУЗКА ФОТО =====
+                    // Показываем кнопки +/− в режиме редактирования
+                    binding.btnPlus.visibility = View.VISIBLE
+                    binding.btnMinus.visibility = View.VISIBLE
+
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -225,7 +258,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhoto.visibility = View.GONE
                     }
 
-                    // ===== ДОБАВЛЕНО: клик по фото для смены =====
                     binding.ivPhoto.setOnClickListener { selectNewPhoto() }
 
                     binding.btnSave.visibility = View.VISIBLE
@@ -238,34 +270,10 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
     }
-    private fun setupListeners() {
-    binding.btnBack.setOnClickListener {
-        Logger.log(TAG, "Back button clicked")
-        finish()
-    }
 
-    binding.btnSave.setOnClickListener {
-        Logger.log(TAG, "Save button clicked")
-        saveChanges()
-    }
-
-    // ===== НОВЫЕ КНОПКИ +/− =====
-    binding.btnPlus.setOnClickListener {
-        changeQuantity(+1)
-    }
-
-    binding.btnMinus.setOnClickListener {
-        changeQuantity(-1)
-    }
-}
-
-private fun changeQuantity(delta: Int) {
-    val currentText = binding.etQuantity.text.toString()
-    val currentQty = currentText.toIntOrNull() ?: 1
-    val newQty = (currentQty + delta).coerceAtLeast(0)
-    binding.etQuantity.setText(newQty.toString())
-    Logger.log(TAG, "Quantity changed: $currentQty -> $newQty (delta: $delta)")
-}
+    // ============================================================
+    // ИСТОРИЯ
+    // ============================================================
     private fun showHistory(itemId: String) {
         Logger.log(TAG, "Showing history for item: $itemId")
         lifecycleScope.launch {
@@ -281,8 +289,11 @@ private fun changeQuantity(delta: Int) {
                     binding.etExpiry.visibility = View.GONE
                     binding.tvPrice.visibility = View.GONE
                     binding.etPrice.visibility = View.GONE
+                    binding.tilPrice.visibility = View.GONE
                     binding.btnSave.visibility = View.GONE
                     binding.btnEdit.visibility = View.GONE
+                    binding.btnPlus.visibility = View.GONE
+                    binding.btnMinus.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) {
                         "История пуста"
@@ -311,12 +322,16 @@ private fun changeQuantity(delta: Int) {
         }
     }
 
-    // ===== МЕТОД ДЛЯ ВЫБОРА НОВОГО ФОТО =====
+    // ============================================================
+    // ВЫБОР ФОТО
+    // ============================================================
     private fun selectNewPhoto() {
         pickImageLauncher.launch("image/*")
     }
 
-    // ===== МЕТОД ДЛЯ КАЛЕНДАРЯ =====
+    // ============================================================
+    // КАЛЕНДАРЬ
+    // ============================================================
     private fun showDatePickerDialog() {
         val calendar = Calendar.getInstance()
         val currentText = binding.etExpiry.text.toString()
@@ -339,6 +354,9 @@ private fun changeQuantity(delta: Int) {
         ).show()
     }
 
+    // ============================================================
+    // СОХРАНЕНИЕ
+    // ============================================================
     private fun saveChanges() {
         Logger.log(TAG, "saveChanges called")
         val itemId = intent.getStringExtra("item_id") ?: return
@@ -379,17 +397,14 @@ private fun changeQuantity(delta: Int) {
                 updatedItem.computeExpiryFields()
 
                 withContext(Dispatchers.IO) {
-                    // Обновляем предмет в БД
                     db.itemDao().updateItem(updatedItem)
 
-                    // ===== ДОБАВЛЕНО: загрузка нового фото =====
                     newImageBytes?.let { bytes ->
                         repository.uploadItemImage(itemId, bytes)
                         ImageUtils.saveImageLocally(applicationContext, itemId, bytes)
                         newImageBytes = null
                     }
 
-                    // Запись в историю
                     val history = HistoryEntry(
                         itemId = itemId,
                         action = "update",
