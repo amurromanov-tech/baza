@@ -1,3 +1,7 @@
+- name: Clean
+  run: |
+    rm -rf ~/.gradle/caches/
+    ./gradlew clean
 name: Android CI
 
 on:
