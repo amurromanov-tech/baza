@@ -17,7 +17,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-class BackupManager(private val context: Context) {
+class BackupManagerV2(private val context: Context) {
 
     private val gson = Gson()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())

@@ -14,7 +14,7 @@ import com.family.base.data.remote.AppVersion
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.databinding.ActivitySettingsBinding
 import com.family.base.ui.viewmodel.MainViewModel
-import com.family.base.util.BackupManager
+import com.family.base.util.BackupManagerV2
 import com.family.base.util.Logger
 import com.family.base.util.UpdateManager
 import kotlinx.coroutines.Dispatchers
@@ -145,7 +145,7 @@ class SettingsActivity : AppCompatActivity() {
             try {
                 Toast.makeText(this@SettingsActivity, "Создание бэкапа...", Toast.LENGTH_SHORT).show()
                 val db = AppDatabase.getInstance(this@SettingsActivity)
-                val backupManager = BackupManager(this@SettingsActivity)
+                val backupManager = BackupManagerV2(this@SettingsActivity)
                 val folderName = tokenStorage.getFolderName()
 
                 val success = if (local) {
@@ -183,7 +183,7 @@ class SettingsActivity : AppCompatActivity() {
             try {
                 Toast.makeText(this@SettingsActivity, "Восстановление...", Toast.LENGTH_SHORT).show()
                 val db = AppDatabase.getInstance(this@SettingsActivity)
-                val backupManager = BackupManager(this@SettingsActivity)
+                val backupManager = BackupManagerV2(this@SettingsActivity)
 
                 val success = if (local) {
                     val backups = backupManager.getLocalBackups()
