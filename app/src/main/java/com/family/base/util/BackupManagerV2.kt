@@ -55,10 +55,10 @@ class BackupManagerV2(private val context: Context) {
             val backupFile = File(getBackupDir(), getBackupFileName())
             backupFile.writeText(json)
 
-            Logger.log("BackupManager", "Export to local: ${backupFile.absolutePath}")
+            Logger.log("BackupManagerV2", "Export to local: ${backupFile.absolutePath}")
             return@withContext backupFile
         } catch (e: Exception) {
-            Logger.log("BackupManager", "Export to local failed", e)
+            Logger.log("BackupManagerV2", "Export to local failed", e)
             return@withContext null
         }
     }
@@ -70,7 +70,7 @@ class BackupManagerV2(private val context: Context) {
 
             val token = tokenStorage.getAccessToken()
             if (token == null) {
-                Logger.log("BackupManager", "No token, cannot upload to cloud")
+                Logger.log("BackupManagerV2", "No token, cannot upload to cloud")
                 return@withContext false
             }
 
@@ -81,20 +81,20 @@ class BackupManagerV2(private val context: Context) {
             val backupFolderPath = "/${tokenStorage.getFolderName()}/backup"
             val createFolderResponse = api.createFolder(auth, backupFolderPath)
             if (!createFolderResponse.isSuccessful && createFolderResponse.code() != 409) {
-                Logger.log("BackupManager", "Failed to create backup folder: ${createFolderResponse.code()}")
+                Logger.log("BackupManagerV2", "Failed to create backup folder: ${createFolderResponse.code()}")
                 return@withContext false
             }
 
             val uploadResponse = DiskUploader.uploadFile(api, auth, path, bytes)
             if (uploadResponse) {
-                Logger.log("BackupManager", "Export to cloud: $path")
+                Logger.log("BackupManagerV2", "Export to cloud: $path")
                 return@withContext true
             }
 
-            Logger.log("BackupManager", "Export to cloud failed")
+            Logger.log("BackupManagerV2", "Export to cloud failed")
             return@withContext false
         } catch (e: Exception) {
-            Logger.log("BackupManager", "Export to cloud failed", e)
+            Logger.log("BackupManagerV2", "Export to cloud failed", e)
             return@withContext false
         }
     }
@@ -113,10 +113,10 @@ class BackupManagerV2(private val context: Context) {
             backupData.history.forEach { db.historyDao().insertEntry(it) }
             backupData.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
-            Logger.log("BackupManager", "Import from local: ${file.name}")
+            Logger.log("BackupManagerV2", "Import from local: ${file.name}")
             return@withContext true
         } catch (e: Exception) {
-            Logger.log("BackupManager", "Import from local failed", e)
+            Logger.log("BackupManagerV2", "Import from local failed", e)
             return@withContext false
         }
     }
@@ -125,7 +125,7 @@ class BackupManagerV2(private val context: Context) {
         try {
             val token = tokenStorage.getAccessToken()
             if (token == null) {
-                Logger.log("BackupManager", "No token, cannot import from cloud")
+                Logger.log("BackupManagerV2", "No token, cannot import from cloud")
                 return@withContext false
             }
 
@@ -135,46 +135,47 @@ class BackupManagerV2(private val context: Context) {
 
             val listResponse = api.getDiskResources(auth, backupPath)
             if (!listResponse.isSuccessful) {
-                Logger.log("BackupManager", "Failed to list backup files: ${listResponse.code()}")
+                Logger.log("BackupManagerV2", "Failed to list backup files: ${listResponse.code()}")
                 return@withContext false
             }
 
-            // ===== ИСПРАВЛЕНО: diskItems вместо items =====
-            val diskItems = listResponse.body()?.items ?: emptyList()
+            // ===== ИСПРАВЛЕНО: embedded.items вместо items =====
+            val diskItems = listResponse.body()?.embedded?.items ?: emptyList()
             val backupFiles = diskItems.filter { it.name.endsWith(".json") }
 
             if (backupFiles.isEmpty()) {
-                Logger.log("BackupManager", "No backup files found")
+                Logger.log("BackupManagerV2", "No backup files found")
                 return@withContext false
             }
 
-            val latest = backupFiles.maxByOrNull { it.modified }
+            // ===== ИСПРАВЛЕНО: сортировка по имени (дата в имени файла) =====
+            val latest = backupFiles.maxByOrNull { it.name }
             if (latest == null) {
-                Logger.log("BackupManager", "No backup files found")
+                Logger.log("BackupManagerV2", "No backup files found")
                 return@withContext false
             }
 
             val downloadUrlResponse = api.getDiskDownloadUrl(auth, "$backupPath/${latest.name}")
             if (!downloadUrlResponse.isSuccessful) {
-                Logger.log("BackupManager", "Failed to get download URL: ${downloadUrlResponse.code()}")
+                Logger.log("BackupManagerV2", "Failed to get download URL: ${downloadUrlResponse.code()}")
                 return@withContext false
             }
 
             val downloadUrl = downloadUrlResponse.body()?.href
             if (downloadUrl == null) {
-                Logger.log("BackupManager", "Download URL is null")
+                Logger.log("BackupManagerV2", "Download URL is null")
                 return@withContext false
             }
 
             val downloadResponse = api.downloadFile(downloadUrl)
             if (!downloadResponse.isSuccessful) {
-                Logger.log("BackupManager", "Failed to download backup: ${downloadResponse.code()}")
+                Logger.log("BackupManagerV2", "Failed to download backup: ${downloadResponse.code()}")
                 return@withContext false
             }
 
             val json = downloadResponse.body()?.string()
             if (json == null) {
-                Logger.log("BackupManager", "Downloaded backup is empty")
+                Logger.log("BackupManagerV2", "Downloaded backup is empty")
                 return@withContext false
             }
 
@@ -188,10 +189,10 @@ class BackupManagerV2(private val context: Context) {
             backupData.history.forEach { db.historyDao().insertEntry(it) }
             backupData.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
-            Logger.log("BackupManager", "Import from cloud: ${latest.name}")
+            Logger.log("BackupManagerV2", "Import from cloud: ${latest.name}")
             return@withContext true
         } catch (e: Exception) {
-            Logger.log("BackupManager", "Import from cloud failed", e)
+            Logger.log("BackupManagerV2", "Import from cloud failed", e)
             return@withContext false
         }
     }
