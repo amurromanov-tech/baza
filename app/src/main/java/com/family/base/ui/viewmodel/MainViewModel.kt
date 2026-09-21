@@ -11,8 +11,10 @@ import com.family.base.data.local.entity.*
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,6 +47,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var allItems: List<ItemEntity> = emptyList()
     private var searchQuery: String? = null
+
+    // ============================================================
+    // ГЛОБАЛЬНЫЙ СКОУП ДЛЯ СИНХРОНИЗАЦИИ (НЕ ОТМЕНЯЕТСЯ ПРИ ЗАКРЫТИИ ACTIVITY)
+    // ============================================================
+    private val globalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         Logger.log(TAG, "MainViewModel initialized")
@@ -108,7 +115,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     currentFolderId = folder?.parentId
                     loadContents()
                     viewModelScope.launch { updateCurrentPath() }
-                    
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in navigateUp: ${e.message}")
@@ -118,7 +124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ЗАГРУЗКА ДАННЫХ (С ЛОГАМИ ВРЕМЕНИ)
+    // ЗАГРУЗКА ДАННЫХ
     // ============================================================
 
     fun loadContents() {
@@ -156,25 +162,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-private suspend fun updateCurrentPath() {
-    try {
-        val pathParts = mutableListOf<String>()
-        var id = currentFolderId
-        while (id != null) {
-            val folder = db.folderDao().getFolderById(id)
-            if (folder != null) {
-                pathParts.add(folder.name)
-                id = folder.parentId
-            } else break
+    private suspend fun updateCurrentPath() {
+        try {
+            val pathParts = mutableListOf<String>()
+            var id = currentFolderId
+            while (id != null) {
+                val folder = db.folderDao().getFolderById(id)
+                if (folder != null) {
+                    pathParts.add(folder.name)
+                    id = folder.parentId
+                } else break
+            }
+            val path = if (pathParts.isEmpty()) "/" else pathParts.reversed().joinToString("/")
+            Logger.log(TAG, "Updated path: $path")
+            currentPath.postValue(path)
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error in updateCurrentPath: ${e.message}")
+            e.printStackTrace()
         }
-        val path = if (pathParts.isEmpty()) "/" else pathParts.reversed().joinToString("/")
-        Logger.log(TAG, "Updated path: $path")
-        currentPath.postValue(path)
-    } catch (e: Exception) {
-        Logger.log(TAG, "Error in updateCurrentPath: ${e.message}")
-        e.printStackTrace()
     }
-}
 
     // ============================================================
     // СИНХРОНИЗАЦИЯ
@@ -258,7 +264,6 @@ private suspend fun updateCurrentPath() {
         }
 
         Logger.log(TAG, "Images synced: $downloadedCount new images")
-        // Обновляем UI после загрузки изображений
         loadContents()
     }
 
@@ -454,14 +459,14 @@ private suspend fun updateCurrentPath() {
             loadContents()
             Logger.log(TAG, "createFolder: after loadContents()")
 
-            launch {
+            // ===== СИНХРОНИЗАЦИЯ В ГЛОБАЛЬНОМ СКОУПЕ =====
+            globalScope.launch {
                 try {
                     if (isInternetAvailable()) {
                         Logger.log(TAG, "createFolder: starting sync to disk")
                         repository.createFolderOnDisk(folder)
                         syncInfoDao.setLastModified(System.currentTimeMillis())
                         Logger.log(TAG, "createFolder: sync to disk completed")
-                        syncWithDisk() // немедленная синхронизация
                     } else {
                         Logger.log(TAG, "createFolder: no internet, queuing")
                         syncQueueDao.addToQueue(
@@ -512,25 +517,39 @@ private suspend fun updateCurrentPath() {
                     db.folderDao().updateFolder(updated)
                     Logger.log(TAG, "Folder renamed locally: $folderId")
 
-                    if (isInternetAvailable()) {
-                        repository.updateFolderOnDisk(updated)
-                        syncInfoDao.setLastModified(System.currentTimeMillis())
-                        Logger.log(TAG, "Folder rename synced to disk: $folderId")
-                        syncWithDisk()
-                    } else {
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "folder",
-                                entityId = folderId,
-                                action = "update",
-                                parentId = folder.parentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                repository.updateFolderOnDisk(updated)
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
+                                Logger.log(TAG, "Folder rename synced to disk: $folderId")
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "folder",
+                                        entityId = folderId,
+                                        action = "update",
+                                        parentId = folder.parentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Folder rename sync failed: ${e.message}")
+                            syncQueueDao.addToQueue(
+                                SyncQueueEntity(
+                                    entityType = "folder",
+                                    entityId = folderId,
+                                    action = "update",
+                                    parentId = folder.parentId,
+                                    data = null,
+                                    timestamp = System.currentTimeMillis()
+                                )
                             )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                        Logger.log(TAG, "Folder rename queued for sync: $folderId")
+                        }
                     }
 
                     loadContents()
@@ -542,7 +561,6 @@ private suspend fun updateCurrentPath() {
         }
     }
 
-    // getFolderStats
     fun getFolderStats(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
@@ -556,7 +574,6 @@ private suspend fun updateCurrentPath() {
         }
     }
 
-    // deleteFolder
     fun deleteFolder(folderId: String) {
         Logger.log(TAG, "deleteFolder: $folderId")
         viewModelScope.launch {
@@ -564,14 +581,44 @@ private suspend fun updateCurrentPath() {
                 db.folderDao().deleteFolderById(folderId)
                 Logger.log(TAG, "Folder deleted locally: $folderId")
 
-                if (isInternetAvailable()) {
-                    val success = repository.deleteFolderOnDisk(folderId)
-                    if (success) {
-                        syncInfoDao.setLastModified(System.currentTimeMillis())
-                        Logger.log(TAG, "Folder delete synced to disk: $folderId")
-                        syncWithDisk()
-                    } else {
-                        Logger.log(TAG, "Failed to delete folder on disk, queuing")
+                globalScope.launch {
+                    try {
+                        if (isInternetAvailable()) {
+                            val success = repository.deleteFolderOnDisk(folderId)
+                            if (success) {
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
+                                Logger.log(TAG, "Folder delete synced to disk: $folderId")
+                            } else {
+                                Logger.log(TAG, "Failed to delete folder on disk, queuing")
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "folder",
+                                        entityId = folderId,
+                                        action = "delete",
+                                        parentId = null,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } else {
+                            syncQueueDao.addToQueue(
+                                SyncQueueEntity(
+                                    entityType = "folder",
+                                    entityId = folderId,
+                                    action = "delete",
+                                    parentId = null,
+                                    data = null,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            )
+                            syncStatus.postValue(SyncStatus.PENDING)
+                            startPeriodicSync()
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "Folder delete sync failed: ${e.message}")
                         syncQueueDao.addToQueue(
                             SyncQueueEntity(
                                 entityType = "folder",
@@ -582,23 +629,7 @@ private suspend fun updateCurrentPath() {
                                 timestamp = System.currentTimeMillis()
                             )
                         )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
                     }
-                } else {
-                    syncQueueDao.addToQueue(
-                        SyncQueueEntity(
-                            entityType = "folder",
-                            entityId = folderId,
-                            action = "delete",
-                            parentId = null,
-                            data = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                    syncStatus.postValue(SyncStatus.PENDING)
-                    startPeriodicSync()
-                    Logger.log(TAG, "Folder delete queued for sync: $folderId")
                 }
                 loadContents()
             } catch (e: Exception) {
@@ -622,14 +653,43 @@ private suspend fun updateCurrentPath() {
                     db.folderDao().updateFolder(updated)
                     Logger.log(TAG, "Folder moved locally: $folderId to $newParentId")
 
-                    if (isInternetAvailable()) {
-                        val success = repository.updateFolderOnDisk(updated)
-                        if (success) {
-                            syncInfoDao.setLastModified(System.currentTimeMillis())
-                            Logger.log(TAG, "Folder move synced to disk: $folderId")
-                            syncWithDisk()
-                        } else {
-                            Logger.log(TAG, "Failed to sync folder move, queuing")
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                val success = repository.updateFolderOnDisk(updated)
+                                if (success) {
+                                    syncInfoDao.setLastModified(System.currentTimeMillis())
+                                    Logger.log(TAG, "Folder move synced to disk: $folderId")
+                                } else {
+                                    syncQueueDao.addToQueue(
+                                        SyncQueueEntity(
+                                            entityType = "folder",
+                                            entityId = folderId,
+                                            action = "update",
+                                            parentId = newParentId,
+                                            data = null,
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                    syncStatus.postValue(SyncStatus.PENDING)
+                                    startPeriodicSync()
+                                }
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "folder",
+                                        entityId = folderId,
+                                        action = "update",
+                                        parentId = newParentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Folder move sync failed: ${e.message}")
                             syncQueueDao.addToQueue(
                                 SyncQueueEntity(
                                     entityType = "folder",
@@ -640,23 +700,7 @@ private suspend fun updateCurrentPath() {
                                     timestamp = System.currentTimeMillis()
                                 )
                             )
-                            syncStatus.postValue(SyncStatus.PENDING)
-                            startPeriodicSync()
                         }
-                    } else {
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "folder",
-                                entityId = folderId,
-                                action = "update",
-                                parentId = newParentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                        Logger.log(TAG, "Folder move queued for sync: $folderId")
                     }
                     loadContents()
                 }
@@ -682,14 +726,43 @@ private suspend fun updateCurrentPath() {
                     db.itemDao().updateItem(updated)
                     Logger.log(TAG, "Item moved locally: $itemId to $newParentId")
 
-                    if (isInternetAvailable()) {
-                        val success = repository.updateItemOnDisk(updated)
-                        if (success) {
-                            syncInfoDao.setLastModified(System.currentTimeMillis())
-                            Logger.log(TAG, "Item move synced to disk: $itemId")
-                            syncWithDisk()
-                        } else {
-                            Logger.log(TAG, "Failed to sync item move, queuing")
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                val success = repository.updateItemOnDisk(updated)
+                                if (success) {
+                                    syncInfoDao.setLastModified(System.currentTimeMillis())
+                                    Logger.log(TAG, "Item move synced to disk: $itemId")
+                                } else {
+                                    syncQueueDao.addToQueue(
+                                        SyncQueueEntity(
+                                            entityType = "item",
+                                            entityId = itemId,
+                                            action = "update",
+                                            parentId = newParentId,
+                                            data = null,
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                    syncStatus.postValue(SyncStatus.PENDING)
+                                    startPeriodicSync()
+                                }
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "item",
+                                        entityId = itemId,
+                                        action = "update",
+                                        parentId = newParentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Item move sync failed: ${e.message}")
                             syncQueueDao.addToQueue(
                                 SyncQueueEntity(
                                     entityType = "item",
@@ -700,23 +773,7 @@ private suspend fun updateCurrentPath() {
                                     timestamp = System.currentTimeMillis()
                                 )
                             )
-                            syncStatus.postValue(SyncStatus.PENDING)
-                            startPeriodicSync()
                         }
-                    } else {
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "item",
-                                entityId = itemId,
-                                action = "update",
-                                parentId = newParentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                        Logger.log(TAG, "Item move queued for sync: $itemId")
                     }
                     loadContents()
                 }
@@ -728,7 +785,7 @@ private suspend fun updateCurrentPath() {
     }
 
     // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ (ИСПРАВЛЕНО)
+    // СОЗДАНИЕ ПРЕДМЕТОВ (С ГЛОБАЛЬНЫМ СКОУПОМ)
     // ============================================================
 
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
@@ -745,7 +802,8 @@ private suspend fun updateCurrentPath() {
             loadContents()
             Logger.log(TAG, "createItem: after loadContents()")
 
-            launch {
+            // ===== СИНХРОНИЗАЦИЯ В ГЛОБАЛЬНОМ СКОУПЕ (НЕ ОТМЕНЯЕТСЯ) =====
+            globalScope.launch {
                 try {
                     if (isInternetAvailable()) {
                         Logger.log(TAG, "createItem: starting sync to disk")
@@ -755,13 +813,8 @@ private suspend fun updateCurrentPath() {
                             val success = repository.uploadItemImage(item.id, it)
                             if (success) {
                                 Logger.log(TAG, "createItem: image uploaded successfully")
-                                // ===== СОХРАНЯЕМ ЛОКАЛЬНО И ОБНОВЛЯЕМ СПИСОК =====
                                 val appContext = getApplication<Application>().applicationContext
                                 ImageUtils.saveImageLocally(appContext, item.id, it)
-                                // === ВАЖНО: обновляем UI после сохранения фото ===
-                                loadContents()
-                                // ================================================
-                                syncWithDisk()
                             } else {
                                 Logger.log(TAG, "createItem: image upload failed")
                             }
@@ -803,7 +856,7 @@ private suspend fun updateCurrentPath() {
             Logger.log(TAG, "createItem END: ${System.currentTimeMillis()}")
         }
     }
-    
+
     // ============================================================
     // РЕДАКТИРОВАНИЕ ПРЕДМЕТОВ
     // ============================================================
@@ -823,13 +876,43 @@ private suspend fun updateCurrentPath() {
                     db.itemDao().updateItem(updated)
                     Logger.log(TAG, "Item quantity updated locally: $itemId")
 
-                    if (isInternetAvailable()) {
-                        val success = repository.updateItemOnDisk(updated)
-                        if (success) {
-                            syncInfoDao.setLastModified(System.currentTimeMillis())
-                            Logger.log(TAG, "Item quantity synced to disk: $itemId")
-                            syncWithDisk()
-                        } else {
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                val success = repository.updateItemOnDisk(updated)
+                                if (success) {
+                                    syncInfoDao.setLastModified(System.currentTimeMillis())
+                                    Logger.log(TAG, "Item quantity synced to disk: $itemId")
+                                } else {
+                                    syncQueueDao.addToQueue(
+                                        SyncQueueEntity(
+                                            entityType = "item",
+                                            entityId = itemId,
+                                            action = "update",
+                                            parentId = item.parentId,
+                                            data = null,
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                    syncStatus.postValue(SyncStatus.PENDING)
+                                    startPeriodicSync()
+                                }
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "item",
+                                        entityId = itemId,
+                                        action = "update",
+                                        parentId = item.parentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Item quantity sync failed: ${e.message}")
                             syncQueueDao.addToQueue(
                                 SyncQueueEntity(
                                     entityType = "item",
@@ -840,24 +923,7 @@ private suspend fun updateCurrentPath() {
                                     timestamp = System.currentTimeMillis()
                                 )
                             )
-                            syncStatus.postValue(SyncStatus.PENDING)
-                            startPeriodicSync()
-                            Logger.log(TAG, "Item quantity queued for sync: $itemId")
                         }
-                    } else {
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "item",
-                                entityId = itemId,
-                                action = "update",
-                                parentId = item.parentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                        Logger.log(TAG, "Item quantity queued for sync: $itemId")
                     }
 
                     loadContents()
@@ -869,29 +935,55 @@ private suspend fun updateCurrentPath() {
         }
     }
 
-    // ========== ИСПРАВЛЕНИЕ: удаление предмета с проверкой и синхронизацией ==========
     fun deleteItem(itemId: String) {
         Logger.log(TAG, "deleteItem: $itemId")
         viewModelScope.launch {
             try {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
-                    // 1. Удаляем локально
                     db.itemDao().deleteItem(item)
                     val appContext = getApplication<Application>().applicationContext
                     val deleted = ImageUtils.deleteLocalImage(appContext, itemId)
                     Logger.log(TAG, "Local image deleted: $deleted, itemId=$itemId")
 
-                    // 2. Если интернет есть – пытаемся удалить на диске
-                    if (isInternetAvailable()) {
-                        val success = repository.deleteItemOnDisk(itemId)
-                        if (success) {
-                            syncInfoDao.setLastModified(System.currentTimeMillis())
-                            Logger.log(TAG, "Item delete synced to disk: $itemId")
-                            // НЕМЕДЛЕННАЯ СИНХРОНИЗАЦИЯ
-                            syncWithDisk()
-                        } else {
-                            Logger.log(TAG, "Failed to delete item on disk, queuing")
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                val success = repository.deleteItemOnDisk(itemId)
+                                if (success) {
+                                    syncInfoDao.setLastModified(System.currentTimeMillis())
+                                    Logger.log(TAG, "Item delete synced to disk: $itemId")
+                                } else {
+                                    Logger.log(TAG, "Failed to delete item on disk, queuing")
+                                    syncQueueDao.addToQueue(
+                                        SyncQueueEntity(
+                                            entityType = "item",
+                                            entityId = itemId,
+                                            action = "delete",
+                                            parentId = null,
+                                            data = null,
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                    syncStatus.postValue(SyncStatus.PENDING)
+                                    startPeriodicSync()
+                                }
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "item",
+                                        entityId = itemId,
+                                        action = "delete",
+                                        parentId = null,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                                startPeriodicSync()
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Item delete sync failed: ${e.message}")
                             syncQueueDao.addToQueue(
                                 SyncQueueEntity(
                                     entityType = "item",
@@ -902,31 +994,13 @@ private suspend fun updateCurrentPath() {
                                     timestamp = System.currentTimeMillis()
                                 )
                             )
-                            syncStatus.postValue(SyncStatus.PENDING)
-                            startPeriodicSync()
                         }
-                    } else {
-                        // Нет интернета – ставим в очередь
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "item",
-                                entityId = itemId,
-                                action = "delete",
-                                parentId = null,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                        Logger.log(TAG, "Item delete queued for sync: $itemId")
                     }
                     loadContents()
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleting item: ${e.message}")
                 e.printStackTrace()
-                // В случае исключения тоже ставим в очередь
                 syncQueueDao.addToQueue(
                     SyncQueueEntity(
                         entityType = "item",
@@ -945,7 +1019,7 @@ private suspend fun updateCurrentPath() {
     }
 
     // ============================================================
-    // СТАТИСТИКА
+    // ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ
     // ============================================================
 
     private var syncJob: Job? = null
@@ -994,21 +1068,3 @@ private suspend fun updateCurrentPath() {
         } else {
             val networkInfo = connectivityManager.activeNetworkInfo ?: return false
             return networkInfo.isConnected
-        }
-    }
-
-    // ============================================================
-    // ПОЛУЧЕНИЕ ВСЕХ ПАПОК (ДЛЯ ДИАЛОГА ПЕРЕМЕЩЕНИЯ)
-    // ============================================================
-
-    suspend fun getAllFolders(): List<FolderEntity> {
-        return withContext(Dispatchers.IO) {
-            repository.getAllFolders()
-        }
-    }
-
-suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
-    return repository.uploadFolderImage(folderId, imageBytes)
-}
-    
-}
