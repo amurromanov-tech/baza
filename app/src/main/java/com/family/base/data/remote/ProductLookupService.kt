@@ -2,7 +2,6 @@ package com.family.base.data.remote
 
 import com.family.base.data.remote.model.LookupResult
 import com.family.base.data.remote.model.ProductInfo
-import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -75,10 +74,13 @@ class ProductLookupService {
             val product = json.getAsJsonObject("product") ?: return null
 
             ProductInfo(
-                name = product.get("product_name")?.asString,
+                name = product.get("product_name_ru")?.asString
+                    ?: product.get("product_name")?.asString,
                 brand = product.get("brands")?.asString,
                 category = product.get("categories")?.asString,
-                description = product.get("generic_name")?.asString
+                description = product.get("generic_name_ru")?.asString
+                    ?: product.get("generic_name")?.asString
+                    ?: product.get("ingredients_text_ru")?.asString
                     ?: product.get("ingredients_text")?.asString,
                 imageUrl = product.get("image_url")?.asString,
                 source = "Open Food Facts"
@@ -89,7 +91,6 @@ class ProductLookupService {
     }
 
     // ===== UPCITEMDB (бесплатный, но нужен ключ) =====
-    // Для начала работаем без ключа (trial)
     private fun lookupUpcItemDb(barcode: String): ProductInfo? {
         return try {
             val url = URL("https://api.upcitemdb.com/prod/trial/lookup?upc=$barcode")
