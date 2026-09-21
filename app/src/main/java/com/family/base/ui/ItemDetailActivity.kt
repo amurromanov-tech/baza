@@ -98,9 +98,6 @@ class ItemDetailActivity : AppCompatActivity() {
         Logger.log(TAG, "=== ItemDetailActivity onCreate FINISHED ===")
     }
 
-    // ============================================================
-    // СЛУШАТЕЛИ (ТОЛЬКО ОДНА ФУНКЦИЯ!)
-    // ============================================================
     private fun setupListeners() {
         binding.btnBack.setOnClickListener {
             Logger.log(TAG, "Back button clicked")
@@ -112,7 +109,6 @@ class ItemDetailActivity : AppCompatActivity() {
             saveChanges()
         }
 
-        // ===== КНОПКИ +/− =====
         binding.btnPlus.setOnClickListener {
             changeQuantity(+1)
         }
@@ -122,7 +118,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ИЗМЕНЕНИЕ КОЛИЧЕСТВА =====
     private fun changeQuantity(delta: Int) {
         val currentText = binding.etQuantity.text.toString()
         val currentQty = currentText.toIntOrNull() ?: 1
@@ -131,9 +126,6 @@ class ItemDetailActivity : AppCompatActivity() {
         Logger.log(TAG, "Quantity changed: $currentQty -> $newQty (delta: $delta)")
     }
 
-    // ============================================================
-    // ПРОСМОТР ДЕТАЛЕЙ
-    // ============================================================
     private fun showDetails(itemId: String) {
         Logger.log(TAG, "Showing details for item: $itemId")
         lifecycleScope.launch {
@@ -158,6 +150,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = false
 
+                    // ===== ШТРИХ-КОД =====
+                    binding.etBarcode.setText(item.barcode ?: "")
+                    binding.etBarcode.isEnabled = false
+
                     item.expiryDate?.let {
                         val dateStr = dateFormat.format(Date(it))
                         binding.etExpiry.setText(dateStr)
@@ -175,7 +171,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.tilPrice.visibility = View.GONE
                     }
 
-                    // Скрываем кнопки +/− в режиме просмотра
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
 
@@ -204,9 +199,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // РЕЖИМ РЕДАКТИРОВАНИЯ
-    // ============================================================
     private fun showEditMode(itemId: String) {
         Logger.log(TAG, "Showing edit mode for item: $itemId")
         lifecycleScope.launch {
@@ -230,6 +222,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = true
 
+                    // ===== ШТРИХ-КОД =====
+                    binding.etBarcode.setText(item.barcode ?: "")
+                    binding.etBarcode.isEnabled = true
+
                     item.expiryDate?.let {
                         val dateStr = dateFormat.format(Date(it))
                         binding.etExpiry.setText(dateStr)
@@ -244,7 +240,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tilPrice.visibility = View.VISIBLE
                     binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
 
-                    // Показываем кнопки +/− в режиме редактирования
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
 
@@ -271,9 +266,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ИСТОРИЯ
-    // ============================================================
     private fun showHistory(itemId: String) {
         Logger.log(TAG, "Showing history for item: $itemId")
         lifecycleScope.launch {
@@ -287,6 +279,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etName.visibility = View.GONE
                     binding.etQuantity.visibility = View.GONE
                     binding.etExpiry.visibility = View.GONE
+                    binding.etBarcode.visibility = View.GONE
                     binding.tvPrice.visibility = View.GONE
                     binding.etPrice.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
@@ -322,16 +315,10 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ВЫБОР ФОТО
-    // ============================================================
     private fun selectNewPhoto() {
         pickImageLauncher.launch("image/*")
     }
 
-    // ============================================================
-    // КАЛЕНДАРЬ
-    // ============================================================
     private fun showDatePickerDialog() {
         val calendar = Calendar.getInstance()
         val currentText = binding.etExpiry.text.toString()
@@ -354,9 +341,6 @@ class ItemDetailActivity : AppCompatActivity() {
         ).show()
     }
 
-    // ============================================================
-    // СОХРАНЕНИЕ
-    // ============================================================
     private fun saveChanges() {
         Logger.log(TAG, "saveChanges called")
         val itemId = intent.getStringExtra("item_id") ?: return
@@ -385,9 +369,13 @@ class ItemDetailActivity : AppCompatActivity() {
                 val expiryDate = parseDate(binding.etExpiry.text.toString())
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
 
+                // ===== ШТРИХ-КОД =====
+                val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
+
                 val updatedItem = item.copy(
                     name = name,
                     quantity = quantity,
+                    barcode = barcode,
                     description = description,
                     expiryDate = expiryDate,
                     price = price,
