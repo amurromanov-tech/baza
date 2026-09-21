@@ -455,11 +455,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 db.folderDao().insertFolder(folder)
                 Logger.log(TAG, "createFolder: after insert into DB, id=${folder.id}")
             }
-            Logger.log(TAG, "createFolder: before loadContents()")
             loadContents()
-            Logger.log(TAG, "createFolder: after loadContents()")
 
-            // ===== СИНХРОНИЗАЦИЯ В ГЛОБАЛЬНОМ СКОУПЕ =====
             globalScope.launch {
                 try {
                     if (isInternetAvailable()) {
@@ -589,7 +586,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
                                 Logger.log(TAG, "Folder delete synced to disk: $folderId")
                             } else {
-                                Logger.log(TAG, "Failed to delete folder on disk, queuing")
                                 syncQueueDao.addToQueue(
                                     SyncQueueEntity(
                                         entityType = "folder",
@@ -1068,3 +1064,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             val networkInfo = connectivityManager.activeNetworkInfo ?: return false
             return networkInfo.isConnected
+        }
+    }
+
+    // ============================================================
+    // ПОЛУЧЕНИЕ ВСЕХ ПАПОК (ДЛЯ ДИАЛОГА ПЕРЕМЕЩЕНИЯ)
+    // ============================================================
+
+    suspend fun getAllFolders(): List<FolderEntity> {
+        return withContext(Dispatchers.IO) {
+            repository.getAllFolders()
+        }
+    }
+
+    suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
+        return repository.uploadFolderImage(folderId, imageBytes)
+    }
+}
