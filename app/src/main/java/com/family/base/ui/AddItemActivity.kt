@@ -14,6 +14,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
@@ -21,6 +22,7 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityAddItemBinding
+import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,7 @@ class AddItemActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAddItemBinding
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
+    private lateinit var viewModel: MainViewModel
     private val productLookupService = ProductLookupService()
 
     private val TAG = "AddItemActivity"
@@ -84,7 +87,7 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== СКАНЕР ШТРИХ-КОДА + ПОИСК ТОВАРА =====
+    // ===== СКАНЕР ШТРИХ-КОДА =====
     private val barcodeScannerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -92,7 +95,6 @@ class AddItemActivity : AppCompatActivity() {
             val scannedBarcode = result.data?.getStringExtra("barcode")
             if (!scannedBarcode.isNullOrEmpty()) {
                 barcode = scannedBarcode
-                // ===== ШТРИХ-КОД В ПОЛЕ ШТРИХ-КОДА =====
                 binding.etAutoBarcode.setText(scannedBarcode)
                 Logger.log(TAG, "Barcode scanned: $scannedBarcode")
                 lookupProduct(scannedBarcode)
@@ -117,9 +119,10 @@ class AddItemActivity : AppCompatActivity() {
         try {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
-            Logger.log(TAG, "Database and repository initialized")
+            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            Logger.log(TAG, "Database, repository and ViewModel initialized")
         } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to initialize database", e)
+            Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             finish()
             return
         }
@@ -175,7 +178,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ПОИСК ТОВАРА В БАЗАХ =====
     private fun lookupProduct(barcode: String) {
         Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
         binding.etAutoName.isEnabled = false
@@ -187,9 +189,8 @@ class AddItemActivity : AppCompatActivity() {
 
                 if (result.success && result.product != null) {
                     val product = result.product
-                    Logger.log(TAG, "Product found: name=${product.name}, brand=${product.brand}, source=${product.source}")
+                    Logger.log(TAG, "Product found: ${product.name} (${product.source})")
 
-                    // ===== НАЗВАНИЕ: product_name → brand → category → barcode =====
                     val displayName = when {
                         !product.name.isNullOrEmpty() -> product.name
                         !product.brand.isNullOrEmpty() -> product.brand
@@ -198,7 +199,6 @@ class AddItemActivity : AppCompatActivity() {
                     }
                     binding.etAutoName.setText(displayName)
 
-                    // ===== ОПИСАНИЕ: бренд + категория + описание + источник =====
                     val descriptionText = buildString {
                         if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
                             append("Бренд: ${product.brand}\n")
@@ -357,7 +357,6 @@ class AddItemActivity : AppCompatActivity() {
 
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // ===== ШТРИХ-КОД ИЗ ПОЛЯ =====
         val finalBarcode = if (isAutoMode) {
             binding.etAutoBarcode.text.toString().trim().ifEmpty { barcode }
         } else {
@@ -385,47 +384,13 @@ class AddItemActivity : AppCompatActivity() {
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType, barcode=$finalBarcode")
+        Logger.log(TAG, "Saving item via ViewModel: name=$name, barcode=$finalBarcode")
 
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    db.itemDao().insertItem(item)
-                }
+        // ===== ВЫЗЫВАЕМ VIEWMODEL ДЛЯ СИНХРОНИЗАЦИИ С ДИСКОМ =====
+        viewModel.createItem(item, imageBytes)
 
-                imageBytes?.let { bytes ->
-                    Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
-                    try {
-                        withContext(Dispatchers.IO) {
-                            repository.uploadItemImage(item.id, bytes)
-                            ImageUtils.saveImageLocally(applicationContext, item.id, bytes)
-                        }
-                        Logger.log(TAG, "Image uploaded successfully")
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "Failed to upload image", e)
-                        Toast.makeText(
-                            this@AddItemActivity,
-                            "Фото не загружено на диск, но предмет сохранён",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error saving item", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@AddItemActivity,
-                        "Ошибка сохранения: ${e.message}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
-        }
+        Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
+        finish()
     }
 
     override fun onDestroy() {
