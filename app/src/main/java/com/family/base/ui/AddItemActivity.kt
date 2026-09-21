@@ -92,7 +92,8 @@ class AddItemActivity : AppCompatActivity() {
             val scannedBarcode = result.data?.getStringExtra("barcode")
             if (!scannedBarcode.isNullOrEmpty()) {
                 barcode = scannedBarcode
-                binding.etAutoName.setText(scannedBarcode)
+                // ===== ШТРИХ-КОД В ПОЛЕ ШТРИХ-КОДА =====
+                binding.etAutoBarcode.setText(scannedBarcode)
                 Logger.log(TAG, "Barcode scanned: $scannedBarcode")
                 lookupProduct(scannedBarcode)
             }
@@ -188,8 +189,8 @@ class AddItemActivity : AppCompatActivity() {
                     val product = result.product
                     Logger.log(TAG, "Product found: ${product.name} (${product.source})")
 
-                    // Заполняем поля
-                    binding.etAutoName.setText(product.name ?: barcode)
+                    // ===== НАЗВАНИЕ В ПОЛЕ НАЗВАНИЯ =====
+                    binding.etAutoName.setText(product.name ?: "")
                     binding.etAutoDescription.setText(
                         buildString {
                             product.brand?.let { append("Бренд: $it\n") }
@@ -339,6 +340,13 @@ class AddItemActivity : AppCompatActivity() {
 
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
+        // ===== ШТРИХ-КОД ИЗ ПОЛЯ =====
+        val finalBarcode = if (isAutoMode) {
+            binding.etAutoBarcode.text.toString().trim().ifEmpty { barcode }
+        } else {
+            barcode
+        }
+
         val itemType = when (binding.rgType.checkedRadioButtonId) {
             R.id.rbFood -> "food"
             R.id.rbMedicine -> "medicine"
@@ -350,7 +358,7 @@ class AddItemActivity : AppCompatActivity() {
             name = name,
             parentId = parentFolderId,
             quantity = quantity,
-            barcode = barcode,
+            barcode = finalBarcode,
             description = description,
             price = price,
             expiryDate = expiryDate,
@@ -360,7 +368,7 @@ class AddItemActivity : AppCompatActivity() {
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType, barcode=$barcode")
+        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType, barcode=$finalBarcode")
 
         lifecycleScope.launch {
             try {
