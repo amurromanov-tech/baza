@@ -187,21 +187,38 @@ class AddItemActivity : AppCompatActivity() {
 
                 if (result.success && result.product != null) {
                     val product = result.product
-                    Logger.log(TAG, "Product found: ${product.name} (${product.source})")
+                    Logger.log(TAG, "Product found: name=${product.name}, brand=${product.brand}, source=${product.source}")
 
-                    // ===== НАЗВАНИЕ В ПОЛЕ НАЗВАНИЯ =====
-                    binding.etAutoName.setText(product.name ?: "")
-                    binding.etAutoDescription.setText(
-                        buildString {
-                            product.brand?.let { append("Бренд: $it\n") }
-                            product.category?.let { append("Категория: $it\n") }
-                            product.description?.let { append(it) }
-                        }.trim()
-                    )
+                    // ===== НАЗВАНИЕ: product_name → brand → category → barcode =====
+                    val displayName = when {
+                        !product.name.isNullOrEmpty() -> product.name
+                        !product.brand.isNullOrEmpty() -> product.brand
+                        !product.category.isNullOrEmpty() -> product.category
+                        else -> barcode
+                    }
+                    binding.etAutoName.setText(displayName)
+
+                    // ===== ОПИСАНИЕ: бренд + категория + описание + источник =====
+                    val descriptionText = buildString {
+                        if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
+                            append("Бренд: ${product.brand}\n")
+                        }
+                        if (!product.category.isNullOrEmpty()) {
+                            append("Категория: ${product.category}\n")
+                        }
+                        if (!product.description.isNullOrEmpty()) {
+                            append("\n${product.description}")
+                        }
+                        if (product.source != null) {
+                            append("\n\nИсточник: ${product.source}")
+                        }
+                    }.trim()
+
+                    binding.etAutoDescription.setText(descriptionText)
 
                     Toast.makeText(
                         this@AddItemActivity,
-                        "Найдено: ${product.name} (${product.source})",
+                        "Найдено: $displayName (${product.source})",
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
