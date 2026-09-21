@@ -41,6 +41,7 @@ class AddItemActivity : AppCompatActivity() {
     private var parentFolderId: String? = null
     private var imageBytes: ByteArray? = null
     private var expiryDate: Long? = null
+    private var barcode: String? = null
 
     private var photoUri: Uri? = null
 
@@ -77,6 +78,21 @@ class AddItemActivity : AppCompatActivity() {
             }
         } else {
             Toast.makeText(this, "Фото не сделано", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ===== СКАНЕР ШТРИХ-КОДА =====
+    private val barcodeScannerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val scannedBarcode = result.data?.getStringExtra("barcode")
+            if (!scannedBarcode.isNullOrEmpty()) {
+                barcode = scannedBarcode
+                binding.etAutoName.setText(scannedBarcode)
+                Toast.makeText(this, "Штрих-код: $scannedBarcode", Toast.LENGTH_SHORT).show()
+                Logger.log(TAG, "Barcode scanned: $scannedBarcode")
+            }
         }
     }
 
@@ -148,9 +164,11 @@ class AddItemActivity : AppCompatActivity() {
             showImageSourceDialog()
         }
 
+        // ===== РЕАЛЬНЫЙ СКАНЕР ШТРИХ-КОДА =====
         binding.btnScanBarcode.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
-            Toast.makeText(this, "Сканер штрих-кода будет доступен позже", Toast.LENGTH_SHORT).show()
+            val intent = Intent(this, BarcodeScannerActivity::class.java)
+            barcodeScannerLauncher.launch(intent)
         }
     }
 
@@ -248,14 +266,32 @@ class AddItemActivity : AppCompatActivity() {
     private fun saveItem() {
         Logger.log(TAG, "saveItem() called")
 
-        val name = binding.etManualName.text.toString().trim()
+        // Если открыт авто-режим — берём данные из него
+        val isAutoMode = binding.autoModeLayout.visibility == View.VISIBLE
+
+        val name = if (isAutoMode) {
+            binding.etAutoName.text.toString().trim()
+        } else {
+            binding.etManualName.text.toString().trim()
+        }
+
         if (name.isEmpty()) {
             Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val quantity = binding.etManualQuantity.text.toString().toIntOrNull() ?: 1
-        val description = binding.etManualDescription.text.toString().trim()
+        val quantity = if (isAutoMode) {
+            binding.etAutoQuantity.text.toString().toIntOrNull() ?: 1
+        } else {
+            binding.etManualQuantity.text.toString().toIntOrNull() ?: 1
+        }
+
+        val description = if (isAutoMode) {
+            binding.etAutoDescription.text.toString().trim()
+        } else {
+            binding.etManualDescription.text.toString().trim()
+        }
+
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
         val itemType = when (binding.rgType.checkedRadioButtonId) {
@@ -269,6 +305,7 @@ class AddItemActivity : AppCompatActivity() {
             name = name,
             parentId = parentFolderId,
             quantity = quantity,
+            barcode = barcode,
             description = description,
             price = price,
             expiryDate = expiryDate,
@@ -278,7 +315,7 @@ class AddItemActivity : AppCompatActivity() {
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType")
+        Logger.log(TAG, "Saving item: name=$name, quantity=$quantity, price=$price, type=$itemType, barcode=$barcode")
 
         lifecycleScope.launch {
             try {
