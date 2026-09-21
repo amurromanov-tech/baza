@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityAddItemBinding
 import com.family.base.util.ImageUtils
@@ -34,6 +35,8 @@ class AddItemActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAddItemBinding
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
+    private val productLookupService = ProductLookupService()
+
     private val TAG = "AddItemActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
     private val CAMERA_PERMISSION_REQUEST = 100
@@ -81,7 +84,7 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== СКАНЕР ШТРИХ-КОДА =====
+    // ===== СКАНЕР ШТРИХ-КОДА + ПОИСК ТОВАРА =====
     private val barcodeScannerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -90,8 +93,8 @@ class AddItemActivity : AppCompatActivity() {
             if (!scannedBarcode.isNullOrEmpty()) {
                 barcode = scannedBarcode
                 binding.etAutoName.setText(scannedBarcode)
-                Toast.makeText(this, "Штрих-код: $scannedBarcode", Toast.LENGTH_SHORT).show()
                 Logger.log(TAG, "Barcode scanned: $scannedBarcode")
+                lookupProduct(scannedBarcode)
             }
         }
     }
@@ -164,11 +167,54 @@ class AddItemActivity : AppCompatActivity() {
             showImageSourceDialog()
         }
 
-        // ===== РЕАЛЬНЫЙ СКАНЕР ШТРИХ-КОДА =====
         binding.btnScanBarcode.setOnClickListener {
             Logger.log(TAG, "Scan barcode clicked")
             val intent = Intent(this, BarcodeScannerActivity::class.java)
             barcodeScannerLauncher.launch(intent)
+        }
+    }
+
+    // ===== ПОИСК ТОВАРА В БАЗАХ =====
+    private fun lookupProduct(barcode: String) {
+        Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
+        binding.etAutoName.isEnabled = false
+
+        lifecycleScope.launch {
+            try {
+                val result = productLookupService.lookupProduct(barcode)
+                binding.etAutoName.isEnabled = true
+
+                if (result.success && result.product != null) {
+                    val product = result.product
+                    Logger.log(TAG, "Product found: ${product.name} (${product.source})")
+
+                    // Заполняем поля
+                    binding.etAutoName.setText(product.name ?: barcode)
+                    binding.etAutoDescription.setText(
+                        buildString {
+                            product.brand?.let { append("Бренд: $it\n") }
+                            product.category?.let { append("Категория: $it\n") }
+                            product.description?.let { append(it) }
+                        }.trim()
+                    )
+
+                    Toast.makeText(
+                        this@AddItemActivity,
+                        "Найдено: ${product.name} (${product.source})",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this@AddItemActivity,
+                        "Товар не найден. Введите название вручную.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (e: Exception) {
+                binding.etAutoName.isEnabled = true
+                Logger.log(TAG, "Error looking up product", e)
+                Toast.makeText(this@AddItemActivity, "Ошибка поиска: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -266,7 +312,6 @@ class AddItemActivity : AppCompatActivity() {
     private fun saveItem() {
         Logger.log(TAG, "saveItem() called")
 
-        // Если открыт авто-режим — берём данные из него
         val isAutoMode = binding.autoModeLayout.visibility == View.VISIBLE
 
         val name = if (isAutoMode) {
