@@ -1,12 +1,19 @@
 package com.family.base.ui
 
+import android.Manifest
 import android.app.DatePickerDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import coil.load
 import com.family.base.Config
@@ -20,6 +27,7 @@ import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -31,9 +39,12 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
     private val FOLDER_PATH = "/${Config.SHARED_FOLDER_NAME}"
+    private val CAMERA_PERMISSION_REQUEST = 200
 
     private var newImageBytes: ByteArray? = null
+    private var photoUri: Uri? = null
 
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -43,11 +54,31 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
-                Logger.log(TAG, "New image selected, size=${processedBytes.size}")
+                Logger.log(TAG, "Image selected from gallery, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
                 Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    // ===== ФОТО С КАМЕРЫ =====
+    private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && photoUri != null) {
+            try {
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, photoUri)
+                val processedBytes = ImageUtils.processImage(bitmap)
+                newImageBytes = processedBytes
+                binding.ivPhoto.setImageBitmap(bitmap)
+                binding.ivPhoto.visibility = View.VISIBLE
+                binding.btnAddPhoto.visibility = View.GONE
+                Logger.log(TAG, "Photo captured, size=${processedBytes.size}")
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error processing camera photo", e)
+                Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Фото не сделано", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -118,10 +149,9 @@ class ItemDetailActivity : AppCompatActivity() {
             changeQuantity(-1)
         }
 
-        // ===== КНОПКА ДОБАВЛЕНИЯ ФОТО =====
         binding.btnAddPhoto.setOnClickListener {
             Logger.log(TAG, "Add photo button clicked")
-            selectNewPhoto()
+            showImageSourceDialog()
         }
     }
 
@@ -180,7 +210,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
 
-                    // ===== ФОТО В ПРОСМОТРЕ =====
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -250,21 +279,19 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
 
-                    // ===== ЛОГИКА ДЛЯ ФОТО В РЕДАКТИРОВАНИИ =====
+                    // ===== ЛОГИКА ДЛЯ ФОТО =====
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
-                        // Фото есть — показываем
                         binding.ivPhoto.visibility = View.VISIBLE
                         binding.ivPhoto.load(localFile) {
                             crossfade(true)
                         }
                         binding.ivPhoto.setOnClickListener {
-                            Logger.log(TAG, "Photo clicked, opening picker")
-                            selectNewPhoto()
+                            Logger.log(TAG, "Photo clicked")
+                            showImageSourceDialog()
                         }
                         binding.btnAddPhoto.visibility = View.GONE
                     } else {
-                        // Фото нет — показываем кнопку "Добавить фото"
                         binding.ivPhoto.visibility = View.GONE
                         binding.btnAddPhoto.visibility = View.VISIBLE
                         Logger.log(TAG, "No photo, showing Add Photo button")
@@ -331,9 +358,71 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectNewPhoto() {
-        Logger.log(TAG, "selectNewPhoto called")
-        pickImageLauncher.launch("image/*")
+    // ===== ДИАЛОГ ВЫБОРА ИСТОЧНИКА ФОТО =====
+    private fun showImageSourceDialog() {
+        val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
+        AlertDialog.Builder(this)
+            .setTitle("Выберите источник фото")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        if (checkCameraPermission()) {
+                            openCamera()
+                        } else {
+                            requestCameraPermission()
+                        }
+                    }
+                    1 -> pickImageLauncher.launch("image/*")
+                }
+            }
+            .show()
+    }
+
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.CAMERA),
+            CAMERA_PERMISSION_REQUEST
+        )
+    }
+
+    private fun openCamera() {
+        try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
+            photoUri = androidx.core.content.FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                photoFile
+            )
+            takePhotoLauncher.launch(photoUri)
+            Logger.log(TAG, "Camera opened")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error opening camera", e)
+            Toast.makeText(this, "Ошибка открытия камеры: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                openCamera()
+            } else {
+                Toast.makeText(this, "Необходимо разрешение на использование камеры", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun showDatePickerDialog() {
