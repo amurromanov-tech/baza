@@ -2,6 +2,7 @@ package com.family.base.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -68,58 +69,81 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupListeners() {
         Logger.log(TAG, "Setting up listeners")
 
+        // Синхронизация
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
             Toast.makeText(this, "Синхронизация запущена...", Toast.LENGTH_SHORT).show()
             viewModel.forceSync()
         }
 
+        // Очистка кэша
         binding.btnClearCache.setOnClickListener {
             Logger.log(TAG, "Clear cache clicked")
             showClearCacheDialog()
         }
 
+        // Очистка логов
         binding.btnClearLogs.setOnClickListener {
             Logger.log(TAG, "Clear logs clicked")
             showClearLogsDialog()
         }
 
+        // Отправка логов
         binding.btnSendLog.setOnClickListener {
             Logger.log(TAG, "Send log clicked")
             sendLogs()
         }
 
+        // Выход
         binding.btnLogout.setOnClickListener {
             Logger.log(TAG, "Logout clicked")
             showLogoutDialog()
         }
 
+        // Полная очистка
         binding.btnClearAllData.setOnClickListener {
             Logger.log(TAG, "Clear all data clicked")
             showClearAllDataDialog()
         }
 
+        // Логирование
         binding.switchLogging.setOnCheckedChangeListener { _, isChecked ->
             Logger.log(TAG, "Logging enabled: $isChecked")
             Logger.setEnabled(isChecked)
             saveSettings()
         }
 
+        // Проверка обновлений
         binding.btnCheckUpdate.setOnClickListener {
             Logger.log(TAG, "Check for updates clicked")
             checkForUpdates()
         }
 
+        // Поделиться ссылкой
         binding.btnShareLink.setOnClickListener {
             Logger.log(TAG, "Share link clicked")
             shareFolderLink()
         }
 
-        // ===== КНОПКА СТАТИСТИКИ =====
+        // Статистика
         binding.btnStatistics.setOnClickListener {
             Logger.log(TAG, "Statistics clicked")
             val intent = Intent(this, StatisticsActivity::class.java)
             startActivity(intent)
+        }
+
+        // ===== СВОРАЧИВАНИЕ ОПАСНОЙ ЗОНЫ =====
+        binding.dangerZoneHeader.setOnClickListener {
+            val isVisible = binding.dangerZoneContent.visibility == View.VISIBLE
+            if (isVisible) {
+                binding.dangerZoneContent.visibility = View.GONE
+                binding.dangerZoneArrow.text = "▼"
+                Logger.log(TAG, "Danger zone collapsed")
+            } else {
+                binding.dangerZoneContent.visibility = View.VISIBLE
+                binding.dangerZoneArrow.text = "▲"
+                Logger.log(TAG, "Danger zone expanded")
+            }
         }
     }
 
@@ -225,9 +249,7 @@ class SettingsActivity : AppCompatActivity() {
             .setItems(names) { _, which ->
                 selectedIndex = which
             }
-            .setPositiveButton("OK") { _, _ ->
-                // handled
-            }
+            .setPositiveButton("OK") { _, _ -> }
             .setNegativeButton("Отмена", null)
             .show()
         return if (selectedIndex >= 0) files[selectedIndex] else null
