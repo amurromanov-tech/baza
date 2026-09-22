@@ -11,7 +11,7 @@
         android:padding="16dp">
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 1: СИНХРОНИЗАЦИЯ -->
+        <!-- СЕКЦИЯ 1: СИНХРОНИЗАЦИЯ  И СТАТИСТИКА -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
@@ -28,6 +28,22 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="🔄 Синхронизировать сейчас" />
+ 
+        <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:text="СТАТИСТИКА"
+    android:textSize="12sp"
+    android:textStyle="bold"
+    android:textColor="@android:color/darker_gray"
+    android:layout_marginTop="24dp"
+    android:layout_marginBottom="8dp" />
+
+<Button
+    android:id="@+id/btnStatistics"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:text="📊 Статистика расходов" />
 
         <!-- ============================================================ -->
         <!-- СЕКЦИЯ 2: ОБЩАЯ ПАПКА -->
