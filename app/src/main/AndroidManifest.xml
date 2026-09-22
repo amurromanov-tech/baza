@@ -47,6 +47,7 @@
         <activity android:name=".ui.ItemDetailActivity" />
         <activity android:name=".ui.SettingsActivity" />
         <activity android:name=".ui.ConnectFamilyActivity" />
+        <activity android:name=".ui.StatisticsActivity" />
 
         <!-- OAuth redirect -->
         <activity
