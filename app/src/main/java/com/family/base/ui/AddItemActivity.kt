@@ -51,11 +51,11 @@ class AddItemActivity : AppCompatActivity() {
 
     private var photoUri: Uri? = null
 
-    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ (С УЧЁТОМ EXIF) =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
                 binding.ivManualPhoto.setImageBitmap(bitmap)
@@ -68,11 +68,11 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ФОТО С КАМЕРЫ =====
+    // ===== ФОТО С КАМЕРЫ (С УЧЁТОМ EXIF) =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && photoUri != null) {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, photoUri)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, photoUri) ?: return@registerForActivityResult
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
                 binding.ivManualPhoto.setImageBitmap(bitmap)
@@ -92,12 +92,27 @@ class AddItemActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            val scannedBarcode = result.data?.getStringExtra("barcode")
-            if (!scannedBarcode.isNullOrEmpty()) {
-                barcode = scannedBarcode
-                binding.etAutoBarcode.setText(scannedBarcode)
-                Logger.log(TAG, "Barcode scanned: $scannedBarcode")
-                lookupProduct(scannedBarcode)
+            val scannedValue = result.data?.getStringExtra("barcode")
+            if (!scannedValue.isNullOrEmpty()) {
+                Logger.log(TAG, "Scanned value: $scannedValue")
+
+                // ===== ЕСЛИ ЭТО ЦИФРЫ (штрих-код) =====
+                if (scannedValue.all { it.isDigit() }) {
+                    barcode = scannedValue
+                    binding.etAutoBarcode.setText(scannedValue)
+                    Logger.log(TAG, "Numeric barcode: $scannedValue, searching...")
+                    lookupProduct(scannedValue)
+                }
+                // ===== ЕСЛИ ЭТО ТЕКСТ (QR-код) =====
+                else {
+                    Logger.log(TAG, "Text QR code: $scannedValue")
+                    binding.etAutoName.setText(scannedValue)
+                    Toast.makeText(
+                        this,
+                        "QR-код распознан: $scannedValue",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
@@ -178,6 +193,7 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
+    // ===== ПОИСК ТОВАРА В БАЗАХ =====
     private fun lookupProduct(barcode: String) {
         Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
         binding.etAutoName.isEnabled = false
@@ -189,8 +205,9 @@ class AddItemActivity : AppCompatActivity() {
 
                 if (result.success && result.product != null) {
                     val product = result.product
-                    Logger.log(TAG, "Product found: ${product.name} (${product.source})")
+                    Logger.log(TAG, "Product found: name=${product.name}, brand=${product.brand}, source=${product.source}")
 
+                    // ===== НАЗВАНИЕ: product_name → brand → category → barcode =====
                     val displayName = when {
                         !product.name.isNullOrEmpty() -> product.name
                         !product.brand.isNullOrEmpty() -> product.brand
@@ -199,6 +216,7 @@ class AddItemActivity : AppCompatActivity() {
                     }
                     binding.etAutoName.setText(displayName)
 
+                    // ===== ОПИСАНИЕ: бренд + категория + описание + источник =====
                     val descriptionText = buildString {
                         if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
                             append("Бренд: ${product.brand}\n")
@@ -242,7 +260,13 @@ class AddItemActivity : AppCompatActivity() {
             .setTitle("Выберите источник фото")
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> openCamera()
+                    0 -> {
+                        if (checkCameraPermission()) {
+                            openCamera()
+                        } else {
+                            requestCameraPermission()
+                        }
+                    }
                     1 -> pickImageLauncher.launch("image/*")
                 }
             }
@@ -265,11 +289,6 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     private fun openCamera() {
-        if (!checkCameraPermission()) {
-            requestCameraPermission()
-            return
-        }
-
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
@@ -279,6 +298,7 @@ class AddItemActivity : AppCompatActivity() {
                 photoFile
             )
             takePhotoLauncher.launch(photoUri)
+            Logger.log(TAG, "Camera opened")
         } catch (e: Exception) {
             Logger.log(TAG, "Error opening camera", e)
             Toast.makeText(this, "Ошибка открытия камеры: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -357,6 +377,7 @@ class AddItemActivity : AppCompatActivity() {
 
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
+        // ===== ШТРИХ-КОД ИЗ ПОЛЯ =====
         val finalBarcode = if (isAutoMode) {
             binding.etAutoBarcode.text.toString().trim().ifEmpty { barcode }
         } else {
@@ -386,7 +407,7 @@ class AddItemActivity : AppCompatActivity() {
 
         Logger.log(TAG, "Saving item via ViewModel: name=$name, barcode=$finalBarcode")
 
-        // ===== ВЫЗЫВАЕМ VIEWMODEL ДЛЯ СИНХРОНИЗАЦИИ С ДИСКОМ =====
+        // ===== ВЫЗЫВАЕМ VIEWMODEL ДЛЯ СОХРАНЕНИЯ (ТОЛЬКО ЛОКАЛЬНО) =====
         viewModel.createItem(item, imageBytes)
 
         Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
