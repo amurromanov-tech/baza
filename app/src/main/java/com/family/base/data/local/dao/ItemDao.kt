@@ -11,6 +11,8 @@ interface ItemDao {
      */
     @Query("SELECT * FROM items WHERE (parentId IS NULL AND :parentId IS NULL) OR parentId = :parentId ORDER BY name ASC")
     suspend fun getItemsByParent(parentId: String?): List<ItemEntity>
+    @Query("SELECT * FROM items WHERE addedDate BETWEEN :startDate AND :endDate")
+    suspend fun getItemsByDateRange(startDate: Long, endDate: Long): List<ItemEntity>
 
     @Query("SELECT * FROM items WHERE id = :id")
     suspend fun getItemById(id: String): ItemEntity?
