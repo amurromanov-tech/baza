@@ -47,11 +47,11 @@ class ItemDetailActivity : AppCompatActivity() {
     // Флаг: сейчас режим редактирования?
     private var isEditMode = false
 
-    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ (С УЧЁТОМ EXIF) =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
                 val processedBytes = ImageUtils.processImage(bitmap)
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
@@ -74,11 +74,11 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ФОТО С КАМЕРЫ =====
+    // ===== ФОТО С КАМЕРЫ (С УЧЁТОМ EXIF) =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && photoUri != null) {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, photoUri)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, photoUri) ?: return@registerForActivityResult
                 val processedBytes = ImageUtils.processImage(bitmap)
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
@@ -475,7 +475,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СОХРАНЕНИЕ — ТОЛЬКО ЛОКАЛЬНО, БЕЗ ЗАГРУЗКИ НА ДИСК
+    // СОХРАНЕНИЕ — ТОЛЬКО ЛОКАЛЬНО
     // ============================================================
     private fun saveChanges() {
         Logger.log(TAG, "saveChanges called")
