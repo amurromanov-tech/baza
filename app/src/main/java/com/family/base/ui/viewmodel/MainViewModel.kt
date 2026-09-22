@@ -1,1083 +1,684 @@
-package com.family.base.ui.viewmodel
+package com.family.base.ui
 
-import com.family.base.util.ImageUtils
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.viewModelScope
+import android.content.Intent
+import android.os.Bundle
+import android.provider.MediaStore
+import android.view.animation.Animation
+import android.view.animation.LinearInterpolator
+import android.view.animation.RotateAnimation
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.ActionBar
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.entity.*
-import com.family.base.data.repository.CatalogRepository
-import com.family.base.ui.SyncStatus
+import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.ItemEntity
+import com.family.base.databinding.ActivityMainBinding
+import com.family.base.ui.adapter.CatalogAdapter
+import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.lifecycle.LiveData
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val _searchQuery = MutableLiveData<String?>(null)
-    val searchQueryLiveData: LiveData<String?> = _searchQuery
-    
-    private val db = AppDatabase.getInstance(application)
-    private val repository = CatalogRepository(db)
-    private val tokenStorage = TokenStorage(application)
-    private val lockDao = db.lockDao()
-    private val syncQueueDao = db.syncQueueDao()
-    private val syncInfoDao = db.syncInfoDao()
-    private val settingsDao = db.settingsDao()
+class MainActivity : AppCompatActivity() {
 
-    val currentEntries = MutableLiveData<List<Any>>()
-    val currentPath = MutableLiveData<String>()
-    val syncStatus = MutableLiveData<SyncStatus>(SyncStatus.SYNCED)
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var viewModel: MainViewModel
+    private lateinit var adapter: CatalogAdapter
+    private lateinit var tokenStorage: TokenStorage
+    private var syncRotationAnim: RotateAnimation? = null
+    private var pathTextView: TextView? = null
 
-    private var currentFolderId: String? = null
-    private val currentUser: String
-        get() = tokenStorage.getUserEmail() ?: "unknown_user"
-    private val currentUserDisplayName: String
-        get() = tokenStorage.getUserDisplayName() ?: "User"
+    private val TAG = "MainActivity"
+    private val db by lazy { AppDatabase.getInstance(this) }
 
-    private val TAG = "MainViewModel"
-    private var syncRetryJob: Job? = null
+    // Для иконки папки при создании
+    private var newFolderImageBytes: ByteArray? = null
 
-    private var allItems: List<ItemEntity> = emptyList()
-    private var searchQuery: String? = null
+    // Для смены иконки существующей папки
+    private var currentFolderForImage: FolderEntity? = null
 
-    // ============================================================
-    // ГЛОБАЛЬНЫЙ СКОУП ДЛЯ СИНХРОНИЗАЦИИ (НЕ ОТМЕНЯЕТСЯ ПРИ ЗАКРЫТИИ ACTIVITY)
-    // ============================================================
-    private val globalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    init {
-        Logger.log(TAG, "MainViewModel initialized")
-        viewModelScope.launch {
-            checkFirstLaunch()
-            syncWithDisk()
-        }
-    }
-
-    fun getCurrentFolderId(): String? = currentFolderId
-
-    // ============================================================
-    // ПРОВЕРКА ПЕРВОГО ЗАПУСКА
-    // ============================================================
-
-    private suspend fun checkFirstLaunch() {
-        try {
-            val settings = settingsDao.getSettings()
-            if (settings == null || settings.isFirstLaunch) {
-                Logger.log(TAG, "First launch detected - initializing")
-                settingsDao.insertOrUpdateSettings(
-                    SettingsEntity(
-                        id = 1,
-                        isFirstLaunch = false
-                    )
-                )
-                Logger.log(TAG, "First launch flag saved")
-            } else {
-                Logger.log(TAG, "Not first launch")
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error checking first launch: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-
-    // ============================================================
-    // НАВИГАЦИЯ
-    // ============================================================
-
-    fun navigateToFolder(folderId: String?) {
-        Logger.log(TAG, "navigateToFolder: folderId=$folderId")
-        currentFolderId = folderId
-        loadContents()
-        viewModelScope.launch { updateCurrentPath() }
-    }
-
-    fun navigateToRoot() {
-        Logger.log(TAG, "navigateToRoot called")
-        currentFolderId = null
-        loadContents()
-        viewModelScope.launch { updateCurrentPath() }
-    }
-
-    fun navigateUp() {
-        Logger.log(TAG, "navigateUp called, currentFolderId=$currentFolderId")
-        viewModelScope.launch {
+    // ===== ВЫБОР ФОТО ДЛЯ НОВОЙ ПАПКИ =====
+    private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
             try {
-                currentFolderId?.let { id ->
-                    val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(id) }
-                    currentFolderId = folder?.parentId
-                    loadContents()
-                    viewModelScope.launch { updateCurrentPath() }
-                }
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val processedBytes = ImageUtils.processImage(bitmap)
+                newFolderImageBytes = processedBytes
+                Logger.log(TAG, "Folder image selected, size=${processedBytes.size}")
+                Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                Logger.log(TAG, "Error in navigateUp: ${e.message}")
-                e.printStackTrace()
+                Logger.log(TAG, "Error picking folder image", e)
+                Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // ============================================================
-    // ЗАГРУЗКА ДАННЫХ
-    // ============================================================
-
-    fun loadContents() {
-        Logger.log(TAG, "loadContents START, currentFolderId=$currentFolderId")
-        val start = System.currentTimeMillis()
-        viewModelScope.launch {
+    // ===== ВЫБОР ФОТО ДЛЯ СУЩЕСТВУЮЩЕЙ ПАПКИ =====
+    private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
             try {
-                val entries = mutableListOf<Any>()
-                withContext(Dispatchers.IO) {
-                    val folders = repository.getFolders(currentFolderId)
-                    val allItemsFromDb = db.itemDao().getAllItems()
-                    allItems = allItemsFromDb
-
-                    val items = if (searchQuery.isNullOrEmpty()) {
-                        repository.getItems(currentFolderId).sortedBy { item ->
-                            when {
-                                item.isExpired -> 0
-                                item.daysUntilExpiry in 0..3 -> 1
-                                else -> 2
-                            }
-                        }
-                    } else {
-                        allItemsFromDb.filter { it.name.contains(searchQuery!!, ignoreCase = true) }
-                            .sortedBy { it.name }
-                    }
-                    entries.addAll(folders)
-                    entries.addAll(items)
-                }
-                currentEntries.postValue(entries)
-                Logger.log(TAG, "loadContents END, took ${System.currentTimeMillis() - start} ms")
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error in loadContents: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-    }
-
-    private suspend fun updateCurrentPath() {
-        try {
-            val pathParts = mutableListOf<String>()
-            var id = currentFolderId
-            while (id != null) {
-                val folder = db.folderDao().getFolderById(id)
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val processedBytes = ImageUtils.processImage(bitmap)
+                val folder = currentFolderForImage
                 if (folder != null) {
-                    pathParts.add(folder.name)
-                    id = folder.parentId
-                } else break
-            }
-            val path = if (pathParts.isEmpty()) "/" else pathParts.reversed().joinToString("/")
-            Logger.log(TAG, "Updated path: $path")
-            currentPath.postValue(path)
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error in updateCurrentPath: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-
-    // ============================================================
-    // СИНХРОНИЗАЦИЯ
-    // ============================================================
-
-    fun syncWithDisk() {
-        Logger.log(TAG, "syncWithDisk called")
-        viewModelScope.launch {
-            try {
-                if (!ensureValidToken()) {
-                    Logger.log(TAG, "Token validation failed, cannot sync")
-                    syncStatus.postValue(SyncStatus.OFFLINE)
-                    return@launch
-                }
-                if (!isInternetAvailable()) {
-                    Logger.log(TAG, "No internet, setting OFFLINE status")
-                    syncStatus.postValue(SyncStatus.OFFLINE)
-                    checkPendingChanges()
-                    return@launch
-                }
-
-                syncStatus.postValue(SyncStatus.SYNCING)
-                Logger.log(TAG, "Internet available, starting sync")
-
-                val (diskFolders, diskItems) = repository.downloadDataFromDisk()
-                Logger.log(TAG, "Downloaded from disk: ${diskFolders.size} folders, ${diskItems.size} items")
-
-                mergeData(diskFolders, diskItems)
-                syncImages(diskItems)
-
-                val pendingCount = syncQueueDao.getPendingCount()
-                if (pendingCount > 0) {
-                    Logger.log(TAG, "Has $pendingCount pending changes")
-                    syncStatus.postValue(SyncStatus.PENDING)
-                    processPendingChanges()
-                    startPeriodicSync()
-                } else {
-                    syncStatus.postValue(SyncStatus.SYNCED)
-                }
-
-                loadContents()
-                Logger.log(TAG, "syncWithDisk finished")
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error in syncWithDisk: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-    }
-
-    private suspend fun syncImages(items: List<ItemEntity>) {
-        val appContext = getApplication<Application>().applicationContext
-        val itemsWithImages = items.filter { !it.imageUrl.isNullOrEmpty() }
-        if (itemsWithImages.isEmpty()) {
-            Logger.log(TAG, "No images to sync")
-            return
-        }
-
-        Logger.log(TAG, "Syncing ${itemsWithImages.size} images...")
-        var downloadedCount = 0
-
-        itemsWithImages.forEach { item ->
-            val imageId = item.id
-            val localFile = ImageUtils.getLocalImageFile(appContext, imageId)
-            if (localFile != null && localFile.exists()) {
-                return@forEach
-            }
-
-            try {
-                val bitmap = repository.downloadItemImage(imageId)
-                if (bitmap != null) {
-                    val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
-                    ImageUtils.saveImageLocally(appContext, imageId, bytes)
-                    downloadedCount++
-                    Logger.log(TAG, "Downloaded image: $imageId")
-                } else {
-                    Logger.log(TAG, "Image not found on disk: $imageId")
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Failed to download image $imageId: ${e.message}")
-            }
-        }
-
-        Logger.log(TAG, "Images synced: $downloadedCount new images")
-        loadContents()
-    }
-
-    private suspend fun ensureValidToken(): Boolean {
-        val token = tokenStorage.getAccessToken()
-        if (token == null) {
-            Logger.log(TAG, "No token available")
-            return false
-        }
-
-        Logger.log(TAG, "Checking token validity...")
-        val auth = "OAuth $token"
-        val api = com.family.base.data.remote.YandexDiskApi.getInstance()
-        return try {
-            val response = api.getDiskResources(auth, "/BAZA")
-            when (response.code()) {
-                200 -> {
-                    Logger.log(TAG, "Token is valid")
-                    true
-                }
-                401, 403 -> {
-                    Logger.log(TAG, "Token expired or invalid, refreshing...")
-                    val newToken = tokenStorage.refreshAccessToken()
-                    if (newToken != null) {
-                        Logger.log(TAG, "Token refreshed successfully")
-                        true
-                    } else {
-                        Logger.log(TAG, "Token refresh failed")
-                        false
-                    }
-                }
-                else -> {
-                    Logger.log(TAG, "Unexpected response: ${response.code()}")
-                    true
-                }
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error checking token: ${e.message}")
-            false
-        }
-    }
-
-    private suspend fun mergeData(diskFolders: List<FolderEntity>, diskItems: List<ItemEntity>) {
-        withContext(Dispatchers.IO) {
-            diskFolders.forEach { diskFolder ->
-                val local = db.folderDao().getFolderById(diskFolder.id)
-                if (local == null) {
-                    db.folderDao().insertFolder(diskFolder)
-                    Logger.log(TAG, "Added new folder: ${diskFolder.name}")
-                } else if (diskFolder.updatedAt > local.updatedAt) {
-                    db.folderDao().updateFolder(diskFolder)
-                    Logger.log(TAG, "Updated folder: ${diskFolder.name}")
-                }
-            }
-
-            diskItems.forEach { diskItem ->
-                val local = db.itemDao().getItemById(diskItem.id)
-                if (local == null) {
-                    db.itemDao().insertItem(diskItem)
-                    Logger.log(TAG, "Added new item: ${diskItem.name}")
-                } else if (diskItem.updatedDate > local.updatedDate) {
-                    db.itemDao().updateItem(diskItem)
-                    Logger.log(TAG, "Updated item: ${diskItem.name}")
-                }
-            }
-
-            val diskLastModified = repository.getDiskLastModified()
-            val localLastModified = syncInfoDao.getLastModified()
-            Logger.log(TAG, "Disk lastModified: $diskLastModified, Local: $localLastModified")
-            if (diskLastModified > localLastModified) {
-                syncInfoDao.setLastModified(diskLastModified)
-            }
-        }
-    }
-
-    private fun startPeriodicSync() {
-        syncRetryJob?.cancel()
-        syncRetryJob = viewModelScope.launch {
-            while (syncStatus.value == SyncStatus.PENDING) {
-                Logger.log(TAG, "Periodic sync retry in 60 seconds")
-                delay(60000)
-                if (isInternetAvailable()) {
-                    Logger.log(TAG, "Periodic sync retry triggered")
-                    syncWithDisk()
-                } else {
-                    Logger.log(TAG, "No internet, skipping periodic sync")
-                }
-            }
-        }
-    }
-
-    private fun stopPeriodicSync() {
-        syncRetryJob?.cancel()
-        syncRetryJob = null
-    }
-
-    private suspend fun processPendingChanges() {
-        Logger.log(TAG, "processPendingChanges called")
-        val pending = syncQueueDao.getAllPending()
-        if (pending.isEmpty()) return
-
-        if (!isInternetAvailable()) {
-            Logger.log(TAG, "No internet, cannot process pending")
-            syncStatus.postValue(SyncStatus.OFFLINE)
-            return
-        }
-
-        try {
-            Logger.log(TAG, "Processing ${pending.size} pending changes")
-            for (entry in pending) {
-                when (entry.entityType) {
-                    "folder" -> applyFolderChange(entry)
-                    "item" -> applyItemChange(entry)
-                }
-            }
-            syncQueueDao.clearAll()
-            syncStatus.postValue(SyncStatus.SYNCED)
-            stopPeriodicSync()
-            Logger.log(TAG, "Pending changes processed successfully")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error processing pending changes: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-
-    private suspend fun applyFolderChange(entry: SyncQueueEntity) {
-        when (entry.action) {
-            "create" -> {
-                val folder = db.folderDao().getFolderById(entry.entityId)
-                folder?.let { repository.createFolderOnDisk(it) }
-            }
-            "update" -> {
-                val folder = db.folderDao().getFolderById(entry.entityId)
-                folder?.let { repository.updateFolderOnDisk(it) }
-            }
-            "delete" -> {
-                repository.deleteFolderOnDisk(entry.entityId)
-            }
-        }
-    }
-
-    private suspend fun applyItemChange(entry: SyncQueueEntity) {
-        when (entry.action) {
-            "create" -> {
-                val item = db.itemDao().getItemById(entry.entityId)
-                item?.let { repository.createItemOnDisk(it) }
-            }
-            "update" -> {
-                val item = db.itemDao().getItemById(entry.entityId)
-                item?.let { repository.updateItemOnDisk(it) }
-            }
-            "delete" -> {
-                repository.deleteItemOnDisk(entry.entityId)
-            }
-        }
-    }
-
-    private suspend fun checkPendingChanges() {
-        val pendingCount = syncQueueDao.getPendingCount()
-        if (pendingCount > 0) {
-            Logger.log(TAG, "Has $pendingCount pending changes")
-            syncStatus.postValue(SyncStatus.PENDING)
-            startPeriodicSync()
-            processPendingChanges()
-        } else {
-            syncStatus.postValue(SyncStatus.SYNCED)
-            stopPeriodicSync()
-        }
-    }
-
-    // ============================================================
-    // СОЗДАНИЕ ПАПОК
-    // ============================================================
-
-    fun createFolder(name: String) {
-        Logger.log(TAG, "createFolder START: ${System.currentTimeMillis()}")
-        Logger.log(TAG, "createFolder: name=$name, parentId=$currentFolderId")
-
-        val folder = FolderEntity(
-            name = name,
-            parentId = currentFolderId,
-            createdBy = currentUser,
-            path = name
-        )
-
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                Logger.log(TAG, "createFolder: before insert into DB")
-                db.folderDao().insertFolder(folder)
-                Logger.log(TAG, "createFolder: after insert into DB, id=${folder.id}")
-            }
-            loadContents()
-
-            globalScope.launch {
-                try {
-                    if (isInternetAvailable()) {
-                        Logger.log(TAG, "createFolder: starting sync to disk")
-                        repository.createFolderOnDisk(folder)
-                        syncInfoDao.setLastModified(System.currentTimeMillis())
-                        Logger.log(TAG, "createFolder: sync to disk completed")
-                    } else {
-                        Logger.log(TAG, "createFolder: no internet, queuing")
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "folder",
-                                entityId = folder.id,
-                                action = "create",
-                                parentId = currentFolderId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "createFolder: sync failed: ${e.message}")
-                    e.printStackTrace()
-                    syncQueueDao.addToQueue(
-                        SyncQueueEntity(
-                            entityType = "folder",
-                            entityId = folder.id,
-                            action = "create",
-                            parentId = currentFolderId,
-                            data = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                    syncStatus.postValue(SyncStatus.PENDING)
-                    startPeriodicSync()
-                }
-            }
-            Logger.log(TAG, "createFolder END: ${System.currentTimeMillis()}")
-        }
-    }
-
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ ПАПОК
-    // ============================================================
-
-    fun renameFolder(folderId: String, newName: String) {
-        Logger.log(TAG, "renameFolder: $folderId -> $newName")
-        viewModelScope.launch {
-            try {
-                val folder = db.folderDao().getFolderById(folderId)
-                if (folder != null) {
-                    val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
-                    db.folderDao().updateFolder(updated)
-                    Logger.log(TAG, "Folder renamed locally: $folderId")
-
-                    globalScope.launch {
+                    lifecycleScope.launch {
                         try {
-                            if (isInternetAvailable()) {
-                                repository.updateFolderOnDisk(updated)
-                                syncInfoDao.setLastModified(System.currentTimeMillis())
-                                Logger.log(TAG, "Folder rename synced to disk: $folderId")
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "update",
-                                        parentId = folder.parentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
+                            // 1. Сохраняем локально
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
+                            // 2. Обновляем папку в БД
+                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                            withContext(Dispatchers.IO) {
+                                db.folderDao().updateFolder(updated)
                             }
+                            // 3. Загружаем на Яндекс.Диск
+                            viewModel.uploadFolderImage(folder.id, processedBytes)
+                            // 4. Синхронизация и обновление списка
+                            viewModel.syncWithDisk()
+                            viewModel.loadContents()
+                            Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
-                            Logger.log(TAG, "Folder rename sync failed: ${e.message}")
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "folder",
-                                    entityId = folderId,
-                                    action = "update",
-                                    parentId = folder.parentId,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
+                            Logger.log(TAG, "Error updating folder image", e)
+                            Toast.makeText(this@MainActivity, "Ошибка обновления иконки", Toast.LENGTH_SHORT).show()
                         }
                     }
-
-                    loadContents()
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error renaming folder: ${e.message}")
-                e.printStackTrace()
+                Logger.log(TAG, "Error picking folder image", e)
+                Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    fun getFolderStats(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
-        viewModelScope.launch {
+    private val connectFamilyLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "ConnectFamily result: resultCode=${result.resultCode}, data=${result.data}")
+        if (result.resultCode == RESULT_OK) {
+            Logger.log(TAG, "Public key saved, reloading contents")
+            viewModel.loadContents()
+        } else {
+            Logger.log(TAG, "ConnectFamily cancelled or failed")
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Logger.log(TAG, "=== MainActivity onCreate START ===")
+        Logger.log(TAG, "SavedInstanceState: ${savedInstanceState != null}")
+
+        try {
+            Logger.log(TAG, "Inflating layout...")
+            binding = ActivityMainBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+            Logger.log(TAG, "Binding inflated successfully")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+            return
+        }
+
+        Logger.init(applicationContext)
+
+        try {
+            Logger.log(TAG, "Initializing TokenStorage...")
+            tokenStorage = TokenStorage(this)
+            Logger.log(TAG, "TokenStorage initialized")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to initialize TokenStorage", e)
+            return
+        }
+
+        try {
+            Logger.log(TAG, "Creating ViewModel...")
+            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            Logger.log(TAG, "ViewModel created")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to create ViewModel", e)
+            return
+        }
+
+        val publicKey = tokenStorage.getPublicKey()
+        Logger.log(TAG, "Public key from storage: ${publicKey?.take(20) ?: "null"}")
+
+        if (publicKey == null) {
+            Logger.log(TAG, "No public key, launching ConnectFamilyActivity")
             try {
-                val itemCount = db.folderDao().getItemCountInFolder(folderId)
-                val folderCount = db.folderDao().getSubfolderCountInFolder(folderId)
-                callback(Pair(itemCount, folderCount))
+                val intent = Intent(this, ConnectFamilyActivity::class.java)
+                connectFamilyLauncher.launch(intent)
+                Logger.log(TAG, "ConnectFamilyActivity launched")
             } catch (e: Exception) {
-                Logger.log(TAG, "Error getting folder stats: ${e.message}")
-                callback(Pair(0, 0))
+                Logger.log(TAG, "CRITICAL: Failed to launch ConnectFamilyActivity", e)
             }
+        } else {
+            Logger.log(TAG, "Public key exists, proceeding with normal startup")
         }
+
+        try {
+            Logger.log(TAG, "Setting up toolbar...")
+            setSupportActionBar(binding.toolbar)
+            supportActionBar?.setDisplayHomeAsUpEnabled(false)
+
+            pathTextView = TextView(this).apply {
+                text = "BAZA"
+                textSize = 18f
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+                setPadding(0, 0, 0, 0)
+            }
+            supportActionBar?.setCustomView(pathTextView)
+            supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
+
+            Logger.log(TAG, "Toolbar set up")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error setting up toolbar", e)
+        }
+
+        try {
+            Logger.log(TAG, "Creating adapter...")
+            adapter = CatalogAdapter(
+                onFolderClick = { folder -> navigateToFolder(folder) },
+                onItemClick = { item -> openItemDetail(item) },
+                onFolderLongClick = { folder -> showFolderContextMenu(folder) },
+                onItemLongClick = { item -> showItemContextMenu(item) }
+            )
+            binding.rvCatalog.layoutManager = LinearLayoutManager(this)
+            binding.rvCatalog.adapter = adapter
+            Logger.log(TAG, "Adapter set up")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error setting up adapter", e)
+        }
+
+        try {
+            Logger.log(TAG, "Setting up observers...")
+            viewModel.currentEntries.observe(this) { entries ->
+                Logger.log(TAG, "Entries updated: ${entries.size} items")
+                try {
+                    adapter.submitList(entries)
+                    updatePathTitle()
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Error updating adapter", e)
+                }
+            }
+
+            viewModel.syncStatus.observe(this) { status ->
+                Logger.log(TAG, "Sync status changed: $status")
+                updateSyncStatusIcon(status)
+            }
+
+            viewModel.searchQueryLiveData.observe(this) { query ->
+                updateSearchIcon(query)
+            }
+
+            Logger.log(TAG, "Observers set up")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error setting up observers", e)
+        }
+
+        try {
+            Logger.log(TAG, "Setting up button listeners...")
+            binding.btnAddFolder.setOnClickListener {
+                Logger.log(TAG, "Add folder button clicked")
+                showCreateFolderDialog()
+            }
+
+            binding.btnAddItem.setOnClickListener {
+                Logger.log(TAG, "Add item button clicked")
+                val intent = Intent(this, AddItemActivity::class.java)
+                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                startActivity(intent)
+            }
+
+            binding.btnHome.setOnClickListener {
+                Logger.log(TAG, "Home button clicked")
+                viewModel.navigateToRoot()
+            }
+            binding.btnUp.setOnClickListener {
+                Logger.log(TAG, "Up button clicked")
+                viewModel.navigateUp()
+            }
+            binding.btnSearch.setOnClickListener {
+                Logger.log(TAG, "Search button clicked")
+                showSearchDialog()
+            }
+            binding.btnSettings.setOnClickListener {
+                Logger.log(TAG, "Settings button clicked")
+                startActivity(Intent(this, SettingsActivity::class.java))
+            }
+            Logger.log(TAG, "Button listeners set up")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error setting up button listeners", e)
+        }
+
+        try {
+            Logger.log(TAG, "Navigating to root folder...")
+            viewModel.navigateToFolder(null)
+            Logger.log(TAG, "Navigation started")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error navigating to root", e)
+        }
+
+        updateSearchIcon(viewModel.searchQueryLiveData.value)
+
+        Logger.log(TAG, "=== MainActivity onCreate FINISHED ===")
     }
 
-    fun deleteFolder(folderId: String) {
-        Logger.log(TAG, "deleteFolder: $folderId")
-        viewModelScope.launch {
-            try {
-                db.folderDao().deleteFolderById(folderId)
-                Logger.log(TAG, "Folder deleted locally: $folderId")
+    // ===== СИНХРОНИЗАЦИЯ ПРИ ВХОДЕ =====
+    override fun onResume() {
+        super.onResume()
+        Logger.log(TAG, "onResume called, syncing...")
+        viewModel.syncWithDisk()
+    }
 
-                globalScope.launch {
+    // ===== СИНХРОНИЗАЦИЯ ПРИ ВЫХОДЕ =====
+    override fun onPause() {
+        super.onPause()
+        Logger.log(TAG, "onPause called, syncing before exit...")
+        viewModel.syncWithDisk()
+        stopSyncAnimation()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Logger.log(TAG, "onDestroy called")
+        stopSyncAnimation()
+    }
+
+    private fun updatePathTitle() {
+        val path = viewModel.currentPath.value ?: "BAZA"
+        pathTextView?.text = path
+    }
+
+    private fun navigateToFolder(folder: FolderEntity) {
+        Logger.log(TAG, "Navigate to folder: id=${folder.id}, name=${folder.name}")
+        viewModel.navigateToFolder(folder.id)
+    }
+
+    private fun openItemDetail(item: ItemEntity) {
+        Logger.log(TAG, "Open item: id=${item.id}, name=${item.name}")
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        startActivity(intent)
+    }
+
+    private fun showSearchDialog() {
+        Logger.log(TAG, "Showing search dialog")
+        val editText = android.widget.EditText(this)
+        editText.hint = "Поиск предметов..."
+
+        val currentQuery = viewModel.searchQueryLiveData.value
+        if (!currentQuery.isNullOrEmpty()) {
+            editText.setText(currentQuery)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Поиск")
+            .setView(editText)
+            .setPositiveButton("Искать") { _, _ ->
+                val query = editText.text.toString().trim()
+                Logger.log(TAG, "Search query: $query")
+                if (query.isNotEmpty()) {
+                    viewModel.search(query)
+                } else {
+                    viewModel.clearSearch()
+                }
+            }
+            .setNegativeButton("Сбросить") { _, _ ->
+                Logger.log(TAG, "Search cleared")
+                viewModel.clearSearch()
+            }
+            .setNeutralButton("Отмена") { _, _ ->
+                // ничего не делаем
+            }
+            .show()
+    }
+
+    // ============================================================
+    // ДИАЛОГ СОЗДАНИЯ ПАПКИ
+    // ============================================================
+    private fun showCreateFolderDialog() {
+        Logger.log(TAG, "Showing create folder dialog")
+
+        val editText = android.widget.EditText(this)
+        editText.hint = "Название папки"
+
+        AlertDialog.Builder(this)
+            .setTitle("Новая папка")
+            .setView(editText)
+            .setPositiveButton("Создать") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    createFolderWithImage(name)
+                } else {
+                    Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNeutralButton("Выбрать иконку") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    newFolderImageBytes = null
+                    pickFolderImageLauncher.launch("image/*")
+                    Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Отмена") { _, _ ->
+                Logger.log(TAG, "Create folder cancelled")
+                newFolderImageBytes = null
+            }
+            .show()
+    }
+
+    private fun createFolderWithImage(name: String) {
+        Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
+
+        lifecycleScope.launch {
+            try {
+                viewModel.createFolder(name)
+
+                delay(100)
+
+                newFolderImageBytes?.let { bytes ->
                     try {
-                        if (isInternetAvailable()) {
-                            val success = repository.deleteFolderOnDisk(folderId)
-                            if (success) {
-                                syncInfoDao.setLastModified(System.currentTimeMillis())
-                                Logger.log(TAG, "Folder delete synced to disk: $folderId")
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "delete",
-                                        parentId = null,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
+                        val folders = withContext(Dispatchers.IO) {
+                            db.folderDao().getAllFolders()
+                        }
+                        val lastFolder = folders.maxByOrNull { it.createdAt }
+                        if (lastFolder != null) {
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
+                            val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
+                            withContext(Dispatchers.IO) {
+                                db.folderDao().updateFolder(updated)
                             }
-                        } else {
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "folder",
-                                    entityId = folderId,
-                                    action = "delete",
-                                    parentId = null,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                            syncStatus.postValue(SyncStatus.PENDING)
-                            startPeriodicSync()
+                            viewModel.uploadFolderImage(lastFolder.id, bytes)
+                            Logger.log(TAG, "Folder image uploaded")
                         }
                     } catch (e: Exception) {
-                        Logger.log(TAG, "Folder delete sync failed: ${e.message}")
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "folder",
-                                entityId = folderId,
-                                action = "delete",
-                                parentId = null,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
+                        Logger.log(TAG, "Failed to upload folder image", e)
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Иконка не загружена, но папка создана",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
+                    newFolderImageBytes = null
                 }
-                loadContents()
+
+                viewModel.syncWithDisk()
+                viewModel.loadContents()
+                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                Logger.log(TAG, "Error deleting folder: ${e.message}")
-                e.printStackTrace()
+                Logger.log(TAG, "Error creating folder", e)
+                Toast.makeText(this@MainActivity, "Ошибка создания папки: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПОК
+    // КОНТЕКСТНОЕ МЕНЮ ПАПКИ
     // ============================================================
+    private fun showFolderContextMenu(folder: FolderEntity) {
+        Logger.log(TAG, "Folder context menu: ${folder.name}")
+        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить (если пуста)", "Статистика", "Переместить")
+        AlertDialog.Builder(this)
+            .setTitle("Действия с папкой")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showRenameFolderDialog(folder)
+                    1 -> changeFolderImage(folder)
+                    2 -> confirmDeleteFolder(folder)
+                    3 -> showFolderStats(folder)
+                    4 -> showMoveFolderDialog(folder)
+                }
+            }
+            .show()
+    }
 
-    fun moveFolder(folderId: String, newParentId: String?) {
-        Logger.log(TAG, "moveFolder: $folderId -> newParentId=$newParentId")
-        viewModelScope.launch {
+    private fun showItemContextMenu(item: ItemEntity) {
+        Logger.log(TAG, "Item context menu: ${item.name}")
+        val items = arrayOf("Редактировать", "Удалить", "История", "Переместить")
+        AlertDialog.Builder(this)
+            .setTitle("Действия с предметом")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> editItem(item)
+                    1 -> confirmDeleteItem(item)
+                    2 -> showItemHistory(item)
+                    3 -> showMoveItemDialog(item)
+                }
+            }
+            .show()
+    }
+
+    private fun showRenameFolderDialog(folder: FolderEntity) {
+        Logger.log(TAG, "Showing rename dialog for: ${folder.name}")
+        val editText = android.widget.EditText(this).apply { setText(folder.name) }
+        AlertDialog.Builder(this)
+            .setTitle("Переименовать папку")
+            .setView(editText)
+            .setPositiveButton("OK") { _, _ ->
+                val newName = editText.text.toString().trim()
+                Logger.log(TAG, "Rename confirmed: ${folder.name} -> $newName")
+                viewModel.renameFolder(folder.id, newName)
+            }
+            .setNegativeButton("Отмена") { _, _ ->
+                Logger.log(TAG, "Rename cancelled")
+            }
+            .show()
+    }
+
+    private fun confirmDeleteFolder(folder: FolderEntity) {
+        Logger.log(TAG, "Confirming delete folder: ${folder.name}")
+        lifecycleScope.launch {
             try {
-                val folder = db.folderDao().getFolderById(folderId)
-                if (folder != null) {
-                    val updated = folder.copy(parentId = newParentId, updatedAt = System.currentTimeMillis())
-                    db.folderDao().updateFolder(updated)
-                    Logger.log(TAG, "Folder moved locally: $folderId to $newParentId")
-
-                    globalScope.launch {
-                        try {
-                            if (isInternetAvailable()) {
-                                val success = repository.updateFolderOnDisk(updated)
-                                if (success) {
-                                    syncInfoDao.setLastModified(System.currentTimeMillis())
-                                    Logger.log(TAG, "Folder move synced to disk: $folderId")
-                                } else {
-                                    syncQueueDao.addToQueue(
-                                        SyncQueueEntity(
-                                            entityType = "folder",
-                                            entityId = folderId,
-                                            action = "update",
-                                            parentId = newParentId,
-                                            data = null,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                    syncStatus.postValue(SyncStatus.PENDING)
-                                    startPeriodicSync()
-                                }
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "update",
-                                        parentId = newParentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
-                            }
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Folder move sync failed: ${e.message}")
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "folder",
-                                    entityId = folderId,
-                                    action = "update",
-                                    parentId = newParentId,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                    }
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error moving folder: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-    }
-
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТОВ
-    // ============================================================
-
-    fun moveItem(itemId: String, newParentId: String?) {
-        Logger.log(TAG, "moveItem: $itemId -> newParentId=$newParentId")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val updated = item.copy(parentId = newParentId, updatedDate = System.currentTimeMillis(), updatedBy = currentUser)
-                    updated.computeExpiryFields()
-                    db.itemDao().updateItem(updated)
-                    Logger.log(TAG, "Item moved locally: $itemId to $newParentId")
-
-                    globalScope.launch {
-                        try {
-                            if (isInternetAvailable()) {
-                                val success = repository.updateItemOnDisk(updated)
-                                if (success) {
-                                    syncInfoDao.setLastModified(System.currentTimeMillis())
-                                    Logger.log(TAG, "Item move synced to disk: $itemId")
-                                } else {
-                                    syncQueueDao.addToQueue(
-                                        SyncQueueEntity(
-                                            entityType = "item",
-                                            entityId = itemId,
-                                            action = "update",
-                                            parentId = newParentId,
-                                            data = null,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                    syncStatus.postValue(SyncStatus.PENDING)
-                                    startPeriodicSync()
-                                }
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "update",
-                                        parentId = newParentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
-                            }
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Item move sync failed: ${e.message}")
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "item",
-                                    entityId = itemId,
-                                    action = "update",
-                                    parentId = newParentId,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                    }
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error moving item: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-    }
-
-    // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ (С ГЛОБАЛЬНЫМ СКОУПОМ)
-    // ============================================================
-
-    fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
-        Logger.log(TAG, "createItem START: ${System.currentTimeMillis()}")
-        Logger.log(TAG, "createItem: name=${item.name}, id=${item.id}, parentId=${item.parentId}")
-
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                Logger.log(TAG, "createItem: before insert into DB")
-                db.itemDao().insertItem(item)
-                Logger.log(TAG, "createItem: after insert into DB, id=${item.id}")
-            }
-            Logger.log(TAG, "createItem: before loadContents()")
-            loadContents()
-            Logger.log(TAG, "createItem: after loadContents()")
-
-            // ===== СИНХРОНИЗАЦИЯ В ГЛОБАЛЬНОМ СКОУПЕ (НЕ ОТМЕНЯЕТСЯ) =====
-            globalScope.launch {
-                try {
-                    if (isInternetAvailable()) {
-                        Logger.log(TAG, "createItem: starting sync to disk")
-                        repository.createItemOnDisk(item)
-                        imageBytes?.let {
-                            Logger.log(TAG, "createItem: uploading image, size=${it.size}")
-                            val success = repository.uploadItemImage(item.id, it)
-                            if (success) {
-                                Logger.log(TAG, "createItem: image uploaded successfully")
-                                val appContext = getApplication<Application>().applicationContext
-                                ImageUtils.saveImageLocally(appContext, item.id, it)
-                            } else {
-                                Logger.log(TAG, "createItem: image upload failed")
-                            }
-                        }
-                        syncInfoDao.setLastModified(System.currentTimeMillis())
-                        Logger.log(TAG, "createItem: sync to disk completed")
+                viewModel.getFolderStats(folder.id) { stats ->
+                    val (itemCount, folderCount) = stats
+                    Logger.log(TAG, "Folder stats: items=$itemCount, subfolders=$folderCount")
+                    if (itemCount > 0 || folderCount > 0) {
+                        Toast.makeText(this@MainActivity, "Папка не пуста", Toast.LENGTH_SHORT).show()
                     } else {
-                        Logger.log(TAG, "createItem: no internet, queuing")
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "item",
-                                entityId = item.id,
-                                action = "create",
-                                parentId = item.parentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                        startPeriodicSync()
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "createItem: sync failed: ${e.message}")
-                    e.printStackTrace()
-                    syncQueueDao.addToQueue(
-                        SyncQueueEntity(
-                            entityType = "item",
-                            entityId = item.id,
-                            action = "create",
-                            parentId = item.parentId,
-                            data = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                    syncStatus.postValue(SyncStatus.PENDING)
-                    startPeriodicSync()
-                }
-            }
-            Logger.log(TAG, "createItem END: ${System.currentTimeMillis()}")
-        }
-    }
-
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ ПРЕДМЕТОВ
-    // ============================================================
-
-    fun updateItemQuantity(itemId: String, newQty: Int) {
-        Logger.log(TAG, "updateItemQuantity: $itemId -> $newQty")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val updated = item.copy(
-                        quantity = newQty,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
-                    updated.computeExpiryFields()
-                    db.itemDao().updateItem(updated)
-                    Logger.log(TAG, "Item quantity updated locally: $itemId")
-
-                    globalScope.launch {
-                        try {
-                            if (isInternetAvailable()) {
-                                val success = repository.updateItemOnDisk(updated)
-                                if (success) {
-                                    syncInfoDao.setLastModified(System.currentTimeMillis())
-                                    Logger.log(TAG, "Item quantity synced to disk: $itemId")
-                                } else {
-                                    syncQueueDao.addToQueue(
-                                        SyncQueueEntity(
-                                            entityType = "item",
-                                            entityId = itemId,
-                                            action = "update",
-                                            parentId = item.parentId,
-                                            data = null,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                    syncStatus.postValue(SyncStatus.PENDING)
-                                    startPeriodicSync()
-                                }
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "update",
-                                        parentId = item.parentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Удалить папку «${folder.name}»?")
+                            .setMessage("Вы уверены?")
+                            .setPositiveButton("Да") { _, _ ->
+                                viewModel.deleteFolder(folder.id)
                             }
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Item quantity sync failed: ${e.message}")
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "item",
-                                    entityId = itemId,
-                                    action = "update",
-                                    parentId = item.parentId,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                        }
+                            .setNegativeButton("Нет", null)
+                            .show()
                     }
-
-                    loadContents()
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error updating quantity: ${e.message}")
-                e.printStackTrace()
+                Logger.log(TAG, "Error in confirmDeleteFolder", e)
+                Toast.makeText(this@MainActivity, "Ошибка при проверке папки", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    fun deleteItem(itemId: String) {
-        Logger.log(TAG, "deleteItem: $itemId")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    db.itemDao().deleteItem(item)
-                    val appContext = getApplication<Application>().applicationContext
-                    val deleted = ImageUtils.deleteLocalImage(appContext, itemId)
-                    Logger.log(TAG, "Local image deleted: $deleted, itemId=$itemId")
+    private fun changeFolderImage(folder: FolderEntity) {
+        Logger.log(TAG, "Change image requested for folder: ${folder.name}")
+        currentFolderForImage = folder
+        pickExistingFolderImageLauncher.launch("image/*")
+    }
 
-                    globalScope.launch {
-                        try {
-                            if (isInternetAvailable()) {
-                                val success = repository.deleteItemOnDisk(itemId)
-                                if (success) {
-                                    syncInfoDao.setLastModified(System.currentTimeMillis())
-                                    Logger.log(TAG, "Item delete synced to disk: $itemId")
-                                } else {
-                                    Logger.log(TAG, "Failed to delete item on disk, queuing")
-                                    syncQueueDao.addToQueue(
-                                        SyncQueueEntity(
-                                            entityType = "item",
-                                            entityId = itemId,
-                                            action = "delete",
-                                            parentId = null,
-                                            data = null,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                    syncStatus.postValue(SyncStatus.PENDING)
-                                    startPeriodicSync()
-                                }
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "delete",
-                                        parentId = null,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                                startPeriodicSync()
-                            }
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Item delete sync failed: ${e.message}")
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "item",
-                                    entityId = itemId,
-                                    action = "delete",
-                                    parentId = null,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                    }
-                    loadContents()
+    private fun showFolderStats(folder: FolderEntity) {
+        Logger.log(TAG, "Showing stats for folder: ${folder.name}")
+        lifecycleScope.launch {
+            try {
+                viewModel.getFolderStats(folder.id) { stats ->
+                    val (itemCount, folderCount) = stats
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Статистика папки «${folder.name}»")
+                        .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
+                        .setPositiveButton("OK", null)
+                        .show()
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error deleting item: ${e.message}")
-                e.printStackTrace()
-                syncQueueDao.addToQueue(
-                    SyncQueueEntity(
-                        entityType = "item",
-                        entityId = itemId,
-                        action = "delete",
-                        parentId = null,
-                        data = null,
-                        timestamp = System.currentTimeMillis()
-                    )
-                )
-                syncStatus.postValue(SyncStatus.PENDING)
-                startPeriodicSync()
-                loadContents()
+                Logger.log(TAG, "Error in showFolderStats", e)
+                Toast.makeText(this@MainActivity, "Ошибка при получении статистики", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // ============================================================
-    // ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ
-    // ============================================================
+    private fun showMoveFolderDialog(folder: FolderEntity) {
+        Logger.log(TAG, "Show move folder dialog for: ${folder.name}")
+        lifecycleScope.launch {
+            try {
+                val allFolders = viewModel.getAllFolders().filter { it.id != folder.id }
+                val folderNames = allFolders.map { it.name }.toMutableList()
+                folderNames.add(0, "Корень")
 
-    private var syncJob: Job? = null
-
-    fun forceSync() {
-        Logger.log(TAG, "forceSync called")
-        if (syncJob?.isActive == true) {
-            Logger.log(TAG, "Sync already running, skipping")
-            return
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Переместить папку «${folder.name}»")
+                    .setItems(folderNames.toTypedArray()) { _, which ->
+                        val targetFolder = if (which == 0) null else allFolders[which - 1]
+                        val newParentId = targetFolder?.id
+                        Logger.log(TAG, "Moving folder to: ${targetFolder?.name ?: "корень"} (id=$newParentId)")
+                        viewModel.moveFolder(folder.id, newParentId)
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error showing move folder dialog", e)
+                Toast.makeText(this@MainActivity, "Ошибка загрузки списка папок", Toast.LENGTH_SHORT).show()
+            }
         }
-        syncJob = viewModelScope.launch {
-            syncWithDisk()
+    }
+
+    private fun showMoveItemDialog(item: ItemEntity) {
+        Logger.log(TAG, "Show move item dialog for: ${item.name}")
+        lifecycleScope.launch {
+            try {
+                val allFolders = viewModel.getAllFolders()
+                val folderNames = allFolders.map { it.name }.toMutableList()
+                folderNames.add(0, "Корень")
+
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Переместить предмет «${item.name}»")
+                    .setItems(folderNames.toTypedArray()) { _, which ->
+                        val targetFolder = if (which == 0) null else allFolders[which - 1]
+                        val newParentId = targetFolder?.id
+                        Logger.log(TAG, "Moving item to: ${targetFolder?.name ?: "корень"} (id=$newParentId)")
+                        viewModel.moveItem(item.id, newParentId)
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error showing move item dialog", e)
+                Toast.makeText(this@MainActivity, "Ошибка загрузки списка папок", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
-    // ============================================================
-    // ПОИСК
-    // ============================================================
-
-    fun search(query: String) {
-        Logger.log(TAG, "search: query='$query'")
-        searchQuery = query
-        _searchQuery.value = query
-        loadContents()
+    private fun changeItemQuantity(item: ItemEntity, delta: Int) {
+        val newQty = (item.quantity + delta).coerceAtLeast(0)
+        Logger.log(TAG, "Changing quantity of ${item.name}: ${item.quantity} -> $newQty (delta: $delta)")
+        viewModel.updateItemQuantity(item.id, newQty)
     }
 
-    fun clearSearch() {
-        Logger.log(TAG, "clearSearch")
-        searchQuery = null
-        _searchQuery.value = null
-        loadContents()
+    private fun editItem(item: ItemEntity) {
+        Logger.log(TAG, "Edit item: ${item.name}")
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        intent.putExtra("edit_mode", true)
+        startActivity(intent)
     }
 
-    fun getSearchQuery(): String? = searchQuery
+    private fun confirmDeleteItem(item: ItemEntity) {
+        Logger.log(TAG, "Confirming delete item: ${item.name}")
+        AlertDialog.Builder(this)
+            .setTitle("Удалить предмет «${item.name}»?")
+            .setPositiveButton("Да") { _, _ ->
+                Logger.log(TAG, "Delete item confirmed")
+                viewModel.deleteItem(item.id)
+            }
+            .setNegativeButton("Нет") { _, _ ->
+                Logger.log(TAG, "Delete item cancelled")
+            }
+            .show()
+    }
+
+    private fun showItemHistory(item: ItemEntity) {
+        Logger.log(TAG, "Show history for item: ${item.name}")
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        intent.putExtra("show_history", true)
+        startActivity(intent)
+    }
 
     // ============================================================
-    // ВСПОМОГАТЕЛЬНЫЕ
+    // ИКОНКА ПОИСКА С СОСТОЯНИЕМ
     // ============================================================
 
-    private fun isInternetAvailable(): Boolean {
-        val connectivityManager = getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            val network = connectivityManager.activeNetwork ?: return false
-            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-            return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    private fun updateSearchIcon(query: String?) {
+        if (query.isNullOrEmpty()) {
+            binding.btnSearch.setImageResource(R.drawable.ic_search)
+            binding.btnSearch.setOnClickListener {
+                Logger.log(TAG, "Search button clicked")
+                showSearchDialog()
+            }
         } else {
-            val networkInfo = connectivityManager.activeNetworkInfo ?: return false
-            return networkInfo.isConnected
+            binding.btnSearch.setImageResource(R.drawable.ic_close)
+            binding.btnSearch.setOnClickListener {
+                Logger.log(TAG, "Clear search clicked")
+                viewModel.clearSearch()
+            }
         }
     }
 
     // ============================================================
-    // ПОЛУЧЕНИЕ ВСЕХ ПАПОК (ДЛЯ ДИАЛОГА ПЕРЕМЕЩЕНИЯ)
+    // СТАТУС СИНХРОНИЗАЦИИ
     // ============================================================
 
-    suspend fun getAllFolders(): List<FolderEntity> {
-        return withContext(Dispatchers.IO) {
-            repository.getAllFolders()
+    private fun updateSyncStatusIcon(status: SyncStatus) {
+        when (status) {
+            SyncStatus.SYNCING -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_syncing)
+                startSyncAnimation()
+            }
+            SyncStatus.SYNCED -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
+                stopSyncAnimation()
+            }
+            SyncStatus.PENDING -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_pending)
+                stopSyncAnimation()
+            }
+            SyncStatus.OFFLINE -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_offline)
+                stopSyncAnimation()
+            }
         }
     }
 
-    suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
-        return repository.uploadFolderImage(folderId, imageBytes)
+    private fun startSyncAnimation() {
+        if (syncRotationAnim == null) {
+            syncRotationAnim = RotateAnimation(
+                0f, 360f,
+                Animation.RELATIVE_TO_SELF, 0.5f,
+                Animation.RELATIVE_TO_SELF, 0.5f
+            ).apply {
+                duration = 1000
+                interpolator = LinearInterpolator()
+                repeatCount = Animation.INFINITE
+                repeatMode = Animation.RESTART
+            }
+        }
+        binding.ivSyncStatus.startAnimation(syncRotationAnim)
+    }
+
+    private fun stopSyncAnimation() {
+        binding.ivSyncStatus.clearAnimation()
     }
 }
