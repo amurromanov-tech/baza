@@ -6,7 +6,7 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <!-- Верхняя панель: кнопка Назад + Заголовок -->
+    <!-- Верхняя панель -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -30,7 +30,7 @@
             android:gravity="center" />
     </LinearLayout>
 
-    <!-- ИЗОБРАЖЕНИЕ (занимает всю ширину, пропорционально) -->
+    <!-- ИЗОБРАЖЕНИЕ -->
     <ImageView
         android:id="@+id/ivPhoto"
         android:layout_width="match_parent"
@@ -41,7 +41,16 @@
         android:visibility="gone"
         android:contentDescription="Фото предмета" />
 
-    <!-- Поля ввода (просмотр и редактирование) -->
+    <!-- КНОПКА ДОБАВЛЕНИЯ ФОТО -->
+    <Button
+        android:id="@+id/btnAddPhoto"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="📷 Добавить фото"
+        android:layout_marginBottom="16dp"
+        android:visibility="gone" />
+
+    <!-- НАЗВАНИЕ -->
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -51,60 +60,64 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
     </com.google.android.material.textfield.TextInputLayout>
+
+    <!-- ШТРИХ-КОД -->
     <com.google.android.material.textfield.TextInputLayout
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:hint="Штрих-код">
-    <com.google.android.material.textfield.TextInputEditText
-        android:id="@+id/etBarcode"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:inputType="number" />
-</com.google.android.material.textfield.TextInputLayout>
-   <LinearLayout
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
-    android:layout_marginTop="8dp">
-
-    <Button
-        android:id="@+id/btnMinus"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:text="−"
-        android:textSize="20sp"
-        android:padding="0dp"
-        android:minWidth="0dp"
-        android:minHeight="0dp" />
-
-    <com.google.android.material.textfield.TextInputLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:hint="Количество">
-
+        android:hint="Штрих-код">
         <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/etQuantity"
+            android:id="@+id/etBarcode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:inputType="number"
-            android:gravity="center" />
+            android:inputType="number" />
     </com.google.android.material.textfield.TextInputLayout>
 
-    <Button
-        android:id="@+id/btnPlus"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:text="+"
-        android:textSize="20sp"
-        android:padding="0dp"
-        android:minWidth="0dp"
-        android:minHeight="0dp" />
-</LinearLayout>
+    <!-- КОЛИЧЕСТВО +/− -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp">
 
+        <Button
+            android:id="@+id/btnMinus"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:text="−"
+            android:textSize="20sp"
+            android:padding="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:hint="Количество">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etQuantity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:gravity="center" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/btnPlus"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:text="+"
+            android:textSize="20sp"
+            android:padding="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp" />
+    </LinearLayout>
+
+    <!-- СРОК ГОДНОСТИ -->
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -115,7 +128,7 @@
             android:layout_height="wrap_content" />
     </com.google.android.material.textfield.TextInputLayout>
 
-    <!-- ОТОБРАЖЕНИЕ ЦЕНЫ (только просмотр) -->
+    <!-- ЦЕНА (просмотр) -->
     <TextView
         android:id="@+id/tvPrice"
         android:layout_width="match_parent"
@@ -125,7 +138,7 @@
         android:visibility="gone"
         tools:text="Цена: 100 ₽" />
 
-    <!-- РЕДАКТИРОВАНИЕ ЦЕНЫ (только редактирование) -->
+    <!-- ЦЕНА (редактирование) -->
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tilPrice"
         android:layout_width="match_parent"
@@ -139,6 +152,7 @@
             android:inputType="numberDecimal" />
     </com.google.android.material.textfield.TextInputLayout>
 
+    <!-- ОПИСАНИЕ -->
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -150,7 +164,7 @@
             android:minLines="3" />
     </com.google.android.material.textfield.TextInputLayout>
 
-    <!-- Кнопки действий -->
+    <!-- КНОПКИ -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
