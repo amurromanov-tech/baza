@@ -324,7 +324,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         Logger.log(TAG, "No photo, showing Add Photo button")
                     }
 
-                    // ===== КНОПКИ РЕДАКТИРОВАНИЯ =====
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
                 }
@@ -387,7 +386,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ДИАЛОГ ВЫБОРА ИСТОЧНИКА ФОТО =====
     private fun showImageSourceDialog() {
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(this)
@@ -476,6 +474,9 @@ class ItemDetailActivity : AppCompatActivity() {
         ).show()
     }
 
+    // ============================================================
+    // СОХРАНЕНИЕ — ТОЛЬКО ЛОКАЛЬНО, БЕЗ ЗАГРУЗКИ НА ДИСК
+    // ============================================================
     private fun saveChanges() {
         Logger.log(TAG, "saveChanges called")
         val itemId = intent.getStringExtra("item_id") ?: return
@@ -517,16 +518,19 @@ class ItemDetailActivity : AppCompatActivity() {
                 )
                 updatedItem.computeExpiryFields()
 
+                // ===== СОХРАНЯЕМ ТОЛЬКО ЛОКАЛЬНО =====
                 withContext(Dispatchers.IO) {
+                    // 1. Обновляем предмет в БД
                     db.itemDao().updateItem(updatedItem)
+                    Logger.log(TAG, "Item updated locally: $itemId")
 
+                    // 2. Сохраняем фото ЛОКАЛЬНО (на телефон)
                     newImageBytes?.let { bytes ->
-                        Logger.log(TAG, "Uploading new image, size=${bytes.size}")
-                        repository.uploadItemImage(itemId, bytes)
                         ImageUtils.saveImageLocally(applicationContext, itemId, bytes)
-                        newImageBytes = null
+                        Logger.log(TAG, "Image saved locally: $itemId, size=${bytes.size}")
                     }
 
+                    // 3. Запись в историю
                     val history = HistoryEntry(
                         itemId = itemId,
                         action = "update",
@@ -537,9 +541,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     db.historyDao().insertEntry(history)
                 }
 
-                Logger.log(TAG, "Item updated successfully: $itemId")
+                Logger.log(TAG, "Item saved locally, closing screen: $itemId")
                 Toast.makeText(this@ItemDetailActivity, "Сохранено", Toast.LENGTH_SHORT).show()
                 finish()
+
             } catch (e: Exception) {
                 Logger.log(TAG, "Error saving changes", e)
                 Toast.makeText(this@ItemDetailActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
