@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,7 +58,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.btnAddPhoto.visibility = View.GONE
                 Logger.log(TAG, "Image selected from gallery, size=${processedBytes.size}")
 
-                // ===== ВАЖНО: восстанавливаем кнопки, если мы в режиме редактирования =====
                 if (isEditMode) {
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
@@ -76,9 +74,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
     // ===== ФОТО С КАМЕРЫ (С УЧЁТОМ EXIF) =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success && photoUri != null) {
+        if (success) {
+            val uri = photoUri ?: return@registerForActivityResult
             try {
-                val bitmap = ImageUtils.loadBitmapWithExif(this, photoUri) ?: return@registerForActivityResult
+                val bitmap = ImageUtils.loadBitmapWithExif(this, uri) ?: return@registerForActivityResult
                 val processedBytes = ImageUtils.processImage(bitmap)
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
@@ -86,7 +85,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.btnAddPhoto.visibility = View.GONE
                 Logger.log(TAG, "Photo captured, size=${processedBytes.size}")
 
-                // ===== ВОССТАНАВЛИВАЕМ КНОПКИ =====
                 if (isEditMode) {
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
@@ -306,7 +304,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
 
-                    // ===== ЛОГИКА ДЛЯ ФОТО =====
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -520,17 +517,14 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 // ===== СОХРАНЯЕМ ТОЛЬКО ЛОКАЛЬНО =====
                 withContext(Dispatchers.IO) {
-                    // 1. Обновляем предмет в БД
                     db.itemDao().updateItem(updatedItem)
                     Logger.log(TAG, "Item updated locally: $itemId")
 
-                    // 2. Сохраняем фото ЛОКАЛЬНО (на телефон)
                     newImageBytes?.let { bytes ->
                         ImageUtils.saveImageLocally(applicationContext, itemId, bytes)
                         Logger.log(TAG, "Image saved locally: $itemId, size=${bytes.size}")
                     }
 
-                    // 3. Запись в историю
                     val history = HistoryEntry(
                         itemId = itemId,
                         action = "update",
