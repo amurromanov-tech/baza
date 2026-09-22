@@ -44,6 +44,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private var newImageBytes: ByteArray? = null
     private var photoUri: Uri? = null
 
+    // Флаг: сейчас режим редактирования?
+    private var isEditMode = false
+
     // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -55,6 +58,15 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhoto.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
                 Logger.log(TAG, "Image selected from gallery, size=${processedBytes.size}")
+
+                // ===== ВАЖНО: восстанавливаем кнопки, если мы в режиме редактирования =====
+                if (isEditMode) {
+                    binding.btnSave.visibility = View.VISIBLE
+                    binding.btnEdit.visibility = View.GONE
+                    binding.btnPlus.visibility = View.VISIBLE
+                    binding.btnMinus.visibility = View.VISIBLE
+                    Logger.log(TAG, "Edit mode buttons restored after gallery pick")
+                }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
                 Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
@@ -73,6 +85,15 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhoto.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
                 Logger.log(TAG, "Photo captured, size=${processedBytes.size}")
+
+                // ===== ВОССТАНАВЛИВАЕМ КНОПКИ =====
+                if (isEditMode) {
+                    binding.btnSave.visibility = View.VISIBLE
+                    binding.btnEdit.visibility = View.GONE
+                    binding.btnPlus.visibility = View.VISIBLE
+                    binding.btnMinus.visibility = View.VISIBLE
+                    Logger.log(TAG, "Edit mode buttons restored after camera capture")
+                }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error processing camera photo", e)
                 Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
@@ -118,10 +139,13 @@ class ItemDetailActivity : AppCompatActivity() {
         }
 
         if (showHistory) {
+            isEditMode = false
             showHistory(itemId)
         } else if (editMode) {
+            isEditMode = true
             showEditMode(itemId)
         } else {
+            isEditMode = false
             showDetails(itemId)
         }
 
@@ -165,6 +189,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun showDetails(itemId: String) {
         Logger.log(TAG, "Showing details for item: $itemId")
+        isEditMode = false
         lifecycleScope.launch {
             try {
                 val item = withContext(Dispatchers.IO) {
@@ -225,6 +250,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnEdit.visibility = View.VISIBLE
                     binding.btnEdit.setOnClickListener {
                         Logger.log(TAG, "Edit button clicked")
+                        isEditMode = true
                         showEditMode(itemId)
                     }
                 }
@@ -238,6 +264,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun showEditMode(itemId: String) {
         Logger.log(TAG, "Showing edit mode for item: $itemId")
+        isEditMode = true
         lifecycleScope.launch {
             try {
                 val item = withContext(Dispatchers.IO) {
@@ -297,6 +324,7 @@ class ItemDetailActivity : AppCompatActivity() {
                         Logger.log(TAG, "No photo, showing Add Photo button")
                     }
 
+                    // ===== КНОПКИ РЕДАКТИРОВАНИЯ =====
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
                 }
@@ -310,6 +338,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun showHistory(itemId: String) {
         Logger.log(TAG, "Showing history for item: $itemId")
+        isEditMode = false
         lifecycleScope.launch {
             try {
                 val history = withContext(Dispatchers.IO) {
