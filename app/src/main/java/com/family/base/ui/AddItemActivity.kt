@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,9 +24,7 @@ import com.family.base.databinding.ActivityAddItemBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -70,9 +67,10 @@ class AddItemActivity : AppCompatActivity() {
 
     // ===== ФОТО С КАМЕРЫ (С УЧЁТОМ EXIF) =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success && photoUri != null) {
+        if (success) {
+            val uri = photoUri ?: return@registerForActivityResult
             try {
-                val bitmap = ImageUtils.loadBitmapWithExif(this, photoUri) ?: return@registerForActivityResult
+                val bitmap = ImageUtils.loadBitmapWithExif(this, uri) ?: return@registerForActivityResult
                 val processedBytes = ImageUtils.processImage(bitmap)
                 imageBytes = processedBytes
                 binding.ivManualPhoto.setImageBitmap(bitmap)
@@ -207,7 +205,6 @@ class AddItemActivity : AppCompatActivity() {
                     val product = result.product
                     Logger.log(TAG, "Product found: name=${product.name}, brand=${product.brand}, source=${product.source}")
 
-                    // ===== НАЗВАНИЕ: product_name → brand → category → barcode =====
                     val displayName = when {
                         !product.name.isNullOrEmpty() -> product.name
                         !product.brand.isNullOrEmpty() -> product.brand
@@ -216,7 +213,6 @@ class AddItemActivity : AppCompatActivity() {
                     }
                     binding.etAutoName.setText(displayName)
 
-                    // ===== ОПИСАНИЕ: бренд + категория + описание + источник =====
                     val descriptionText = buildString {
                         if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
                             append("Бренд: ${product.brand}\n")
@@ -377,7 +373,6 @@ class AddItemActivity : AppCompatActivity() {
 
         val price = binding.etPrice.text.toString().toDoubleOrNull()
 
-        // ===== ШТРИХ-КОД ИЗ ПОЛЯ =====
         val finalBarcode = if (isAutoMode) {
             binding.etAutoBarcode.text.toString().trim().ifEmpty { barcode }
         } else {
@@ -407,7 +402,7 @@ class AddItemActivity : AppCompatActivity() {
 
         Logger.log(TAG, "Saving item via ViewModel: name=$name, barcode=$finalBarcode")
 
-        // ===== ВЫЗЫВАЕМ VIEWMODEL ДЛЯ СОХРАНЕНИЯ (ТОЛЬКО ЛОКАЛЬНО) =====
+        // ===== СОХРАНЯЕМ ТОЛЬКО ЛОКАЛЬНО =====
         viewModel.createItem(item, imageBytes)
 
         Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
