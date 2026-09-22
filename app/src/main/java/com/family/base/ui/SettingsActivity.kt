@@ -54,7 +54,7 @@ class SettingsActivity : AppCompatActivity() {
         setupListeners()
         loadSettings()
         showCurrentVersion()
-        setupBackupListeners() // <-- ДОБАВЛЕН ВЫЗОВ
+        setupBackupListeners()
 
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
     }
@@ -113,6 +113,13 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnShareLink.setOnClickListener {
             Logger.log(TAG, "Share link clicked")
             shareFolderLink()
+        }
+
+        // ===== КНОПКА СТАТИСТИКИ =====
+        binding.btnStatistics.setOnClickListener {
+            Logger.log(TAG, "Statistics clicked")
+            val intent = Intent(this, StatisticsActivity::class.java)
+            startActivity(intent)
         }
     }
 
