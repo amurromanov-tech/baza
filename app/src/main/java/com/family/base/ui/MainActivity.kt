@@ -13,6 +13,7 @@ import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -24,6 +25,7 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityMainBinding
 import com.family.base.ui.adapter.CatalogAdapter
 import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.util.AppLifecycleObserver
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -75,16 +77,12 @@ class MainActivity : AppCompatActivity() {
                 if (folder != null) {
                     lifecycleScope.launch {
                         try {
-                            // 1. Сохраняем локально
                             ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
-                            // 2. Обновляем папку в БД
                             val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
                             withContext(Dispatchers.IO) {
                                 db.folderDao().updateFolder(updated)
                             }
-                            // 3. Загружаем на Яндекс.Диск
                             viewModel.uploadFolderImage(folder.id, processedBytes)
-                            // 4. Синхронизация и обновление списка
                             viewModel.syncWithDisk()
                             viewModel.loadContents()
                             Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
@@ -117,7 +115,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         Logger.log(TAG, "=== MainActivity onCreate START ===")
         Logger.log(TAG, "SavedInstanceState: ${savedInstanceState != null}")
-        
+
         try {
             Logger.log(TAG, "Inflating layout...")
             binding = ActivityMainBinding.inflate(layoutInflater)
@@ -148,9 +146,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // ===== РЕГИСТРАЦИЯ LIFECYCLE OBSERVER =====
+        // Синхронизация только при реальном входе/выходе из приложения
+        try {
+            val appLifecycleObserver = AppLifecycleObserver(viewModel)
+            ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
+            Logger.log(TAG, "AppLifecycleObserver registered")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error registering AppLifecycleObserver", e)
+        }
+        // ==========================================
+
         val publicKey = tokenStorage.getPublicKey()
         Logger.log(TAG, "Public key from storage: ${publicKey?.take(20) ?: "null"}")
-        
+
         if (publicKey == null) {
             Logger.log(TAG, "No public key, launching ConnectFamilyActivity")
             try {
@@ -211,7 +220,7 @@ class MainActivity : AppCompatActivity() {
                     Logger.log(TAG, "Error updating adapter", e)
                 }
             }
-            
+
             viewModel.syncStatus.observe(this) { status ->
                 Logger.log(TAG, "Sync status changed: $status")
                 updateSyncStatusIcon(status)
@@ -220,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             viewModel.searchQueryLiveData.observe(this) { query ->
                 updateSearchIcon(query)
             }
-            
+
             Logger.log(TAG, "Observers set up")
         } catch (e: Exception) {
             Logger.log(TAG, "Error setting up observers", e)
@@ -228,23 +237,23 @@ class MainActivity : AppCompatActivity() {
 
         try {
             Logger.log(TAG, "Setting up button listeners...")
-            binding.btnAddFolder.setOnClickListener { 
+            binding.btnAddFolder.setOnClickListener {
                 Logger.log(TAG, "Add folder button clicked")
-                showCreateFolderDialog() 
+                showCreateFolderDialog()
             }
-            
-            binding.btnAddItem.setOnClickListener { 
+
+            binding.btnAddItem.setOnClickListener {
                 Logger.log(TAG, "Add item button clicked")
                 val intent = Intent(this, AddItemActivity::class.java)
                 intent.putExtra("parent_id", viewModel.getCurrentFolderId())
                 startActivity(intent)
             }
-            
-            binding.btnHome.setOnClickListener { 
+
+            binding.btnHome.setOnClickListener {
                 Logger.log(TAG, "Home button clicked")
                 viewModel.navigateToRoot()
             }
-            binding.btnUp.setOnClickListener { 
+            binding.btnUp.setOnClickListener {
                 Logger.log(TAG, "Up button clicked")
                 viewModel.navigateUp()
             }
@@ -274,15 +283,16 @@ class MainActivity : AppCompatActivity() {
         Logger.log(TAG, "=== MainActivity onCreate FINISHED ===")
     }
 
+    // ===== onResume: БЕЗ СИНХРОНИЗАЦИИ =====
     override fun onResume() {
         super.onResume()
-        Logger.log(TAG, "onResume called, publicKey: ${tokenStorage.getPublicKey()?.take(20)}")
-        viewModel.syncWithDisk()
+        Logger.log(TAG, "onResume called (без синхронизации)")
     }
 
+    // ===== onPause: БЕЗ СИНХРОНИЗАЦИИ =====
     override fun onPause() {
         super.onPause()
-        Logger.log(TAG, "onPause called")
+        Logger.log(TAG, "onPause called (без синхронизации)")
         stopSyncAnimation()
     }
 
@@ -346,7 +356,7 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
     private fun showCreateFolderDialog() {
         Logger.log(TAG, "Showing create folder dialog")
-        
+
         val editText = android.widget.EditText(this)
         editText.hint = "Название папки"
 
@@ -380,32 +390,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun createFolderWithImage(name: String) {
         Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
-        
+
         lifecycleScope.launch {
             try {
-                // Создаём папку через ViewModel
                 viewModel.createFolder(name)
-                
-                // Даём время на сохранение в БД
+
                 delay(100)
-                
-                // Если есть иконка — пытаемся загрузить её
+
                 newFolderImageBytes?.let { bytes ->
                     try {
-                        // Получаем список папок и берём последнюю по createdAt
                         val folders = withContext(Dispatchers.IO) {
                             db.folderDao().getAllFolders()
                         }
                         val lastFolder = folders.maxByOrNull { it.createdAt }
                         if (lastFolder != null) {
-                            // Сохраняем локально
                             ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
-                            // Обновляем папку
                             val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
                             withContext(Dispatchers.IO) {
                                 db.folderDao().updateFolder(updated)
                             }
-                            // Загружаем на диск
                             viewModel.uploadFolderImage(lastFolder.id, bytes)
                             Logger.log(TAG, "Folder image uploaded")
                         }
@@ -419,7 +422,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     newFolderImageBytes = null
                 }
-                
+
                 viewModel.syncWithDisk()
                 viewModel.loadContents()
                 Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
@@ -450,21 +453,21 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-   private fun showItemContextMenu(item: ItemEntity) {
-    Logger.log(TAG, "Item context menu: ${item.name}")
-    val items = arrayOf("Редактировать", "Удалить", "История", "Переместить")
-    AlertDialog.Builder(this)
-        .setTitle("Действия с предметом")
-        .setItems(items) { _, which ->
-            when (which) {
-                0 -> editItem(item)
-                1 -> confirmDeleteItem(item)
-                2 -> showItemHistory(item)
-                3 -> showMoveItemDialog(item)
+    private fun showItemContextMenu(item: ItemEntity) {
+        Logger.log(TAG, "Item context menu: ${item.name}")
+        val items = arrayOf("Редактировать", "Удалить", "История", "Переместить")
+        AlertDialog.Builder(this)
+            .setTitle("Действия с предметом")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> editItem(item)
+                    1 -> confirmDeleteItem(item)
+                    2 -> showItemHistory(item)
+                    3 -> showMoveItemDialog(item)
+                }
             }
-        }
-        .show()
-}
+            .show()
+    }
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
         Logger.log(TAG, "Showing rename dialog for: ${folder.name}")
