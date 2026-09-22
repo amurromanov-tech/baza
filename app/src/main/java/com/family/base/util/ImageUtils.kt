@@ -1,124 +1,174 @@
 package com.family.base.util
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 
 object ImageUtils {
 
     private const val TAG = "ImageUtils"
-    private const val TARGET_SIZE = 1024
-    private const val JPEG_QUALITY = 85
 
-    // ============================================================
-    // ОСНОВНЫЕ МЕТОДЫ ОБРАБОТКИ
-    // ============================================================
-
+    // ===== ОБРАБОТКА ИЗОБРАЖЕНИЯ (МАСШТАБИРОВАНИЕ + СЖАТИЕ) =====
     fun processImage(bitmap: Bitmap): ByteArray {
-        Logger.log(TAG, "Processing image: ${bitmap.width}x${bitmap.height}")
-        val cropped = cropToSquare(bitmap)
-        val resized = resize(cropped, TARGET_SIZE)
-        val bytes = compressToJpeg(resized, JPEG_QUALITY)
-        if (cropped != bitmap) cropped.recycle()
-        if (resized != cropped) resized.recycle()
-        return bytes
-    }
+        // Максимальный размер по большей стороне
+        val maxSize = 1024
 
-    fun cropToSquare(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
-        if (width == height) return bitmap
-        val size = minOf(width, height)
-        val x = (width - size) / 2
-        val y = (height - size) / 2
-        return Bitmap.createBitmap(bitmap, x, y, size, size)
+
+        val scale = if (width > height) {
+            maxSize.toFloat() / width
+        } else {
+            maxSize.toFloat() / height
+        }
+
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (width * scale).toInt().coerceAtLeast(1),
+                (height * scale).toInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            bitmap
+        }
+
+        val stream = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+        return stream.toByteArray()
     }
 
-    fun resize(bitmap: Bitmap, targetSize: Int): Bitmap {
-        val width = bitmap.width
-        val height = bitmap.height
-        if (width == targetSize && height == targetSize) return bitmap
-        val scale = targetSize.toFloat() / maxOf(width, height)
-        val newWidth = (width * scale).toInt()
-        val newHeight = (height * scale).toInt()
-        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+    // ===== ЗАГРУЗКА BITMAP С УЧЁТОМ EXIF =====
+    fun loadBitmapWithExif(context: Context, uri: Uri): Bitmap? {
+        return try {
+            // 1. Читаем EXIF
+            var orientation = ExifInterface.ORIENTATION_NORMAL
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                inputStream?.let {
+                    val exif = ExifInterface(it)
+                    orientation = exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                    it.close()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error reading EXIF: ${e.message}")
+            }
+
+            // 2. Загружаем bitmap
+            val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            } ?: return null
+
+            // 3. Поворачиваем по EXIF
+            return rotateBitmap(bitmap, orientation)
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error loading bitmap with EXIF", e)
+            null
+        }
     }
 
-    fun compressToJpeg(bitmap: Bitmap, quality: Int): ByteArray {
+    // ===== ЗАГРУЗКА BITMAP ИЗ ФАЙЛА С УЧЁТОМ EXIF =====
+    fun loadBitmapFromFileWithExif(file: File): Bitmap? {
+        return try {
+            var orientation = ExifInterface.ORIENTATION_NORMAL
+            try {
+                val exif = ExifInterface(file.absolutePath)
+                orientation = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error reading EXIF from file: ${e.message}")
+            }
+
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+            return rotateBitmap(bitmap, orientation)
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error loading bitmap from file", e)
+            null
+        }
+    }
+
+    // ===== ПОВОРОТ BITMAP ПО EXIF =====
+    private fun rotateBitmap(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            else -> return bitmap // ORIENTATION_NORMAL или ORIENTATION_UNDEFINED
+        }
+
+        return try {
+            Bitmap.createBitmap(
+                bitmap,
+                0, 0,
+                bitmap.width, bitmap.height,
+                matrix,
+                true
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error rotating bitmap", e)
+            bitmap
+        }
+    }
+
+    // ===== СОХРАНЕНИЕ ЛОКАЛЬНО =====
+    fun saveImageLocally(context: Context, imageId: String, bytes: ByteArray): File {
+        val imagesDir = File(context.filesDir, "images")
+        if (!imagesDir.exists()) imagesDir.mkdirs()
+        val file = File(imagesDir, "$imageId.jpg")
+        FileOutputStream(file).use { it.write(bytes) }
+        Logger.log(TAG, "Image saved locally: ${file.absolutePath}")
+        return file
+    }
+
+    // ===== ПОЛУЧЕНИЕ ЛОКАЛЬНОГО ФАЙЛА =====
+    fun getLocalImageFile(context: Context, imageId: String): File? {
+        val file = File(File(context.filesDir, "images"), "$imageId.jpg")
+        return if (file.exists()) file else null
+    }
+
+    // ===== УДАЛЕНИЕ ЛОКАЛЬНОГО ИЗОБРАЖЕНИЯ =====
+    fun deleteLocalImage(context: Context, imageId: String): Boolean {
+        val file = File(File(context.filesDir, "images"), "$imageId.jpg")
+        return if (file.exists()) file.delete() else false
+    }
+
+    // ===== BITMAP → JPEG BYTES =====
+    fun bitmapToJpegBytes(bitmap: Bitmap, quality: Int = 85): ByteArray {
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
         return stream.toByteArray()
     }
 
-    fun bitmapToJpegBytes(bitmap: Bitmap, quality: Int = 80): ByteArray {
-        return compressToJpeg(bitmap, quality)
-    }
-
-    fun fitIntoSquere(source: Bitmap, targetSize: Int): Bitmap {
-        val result = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(result)
-        canvas.drawColor(Color.WHITE)
-        val srcWidth = source.width
-        val srcHeight = source.height
-        val scale = minOf(targetSize.toFloat() / srcWidth, targetSize.toFloat() / srcHeight)
-        val newWidth = (srcWidth * scale).toInt()
-        val newHeight = (srcHeight * scale).toInt()
-        val left = (targetSize - newWidth) / 2
-        val top = (targetSize - newHeight) / 2
-        val scaledBitmap = Bitmap.createScaledBitmap(source, newWidth, newHeight, true)
-        canvas.drawBitmap(scaledBitmap, left.toFloat(), top.toFloat(), null)
-        scaledBitmap.recycle()
-        return result
-    }
-
-    // ============================================================
-    // ДЕКОДИРОВАНИЕ И ПОВОРОТ
-    // ============================================================
-
-    fun decodeByteArray(bytes: ByteArray): Bitmap? {
+    // ===== BYTES → BITMAP =====
+    fun bytesToBitmap(bytes: ByteArray): Bitmap? {
         return try {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } catch (e: Exception) {
-            Logger.log(TAG, "Error decoding byte array: ${e.message}")
+            Logger.log(TAG, "Error converting bytes to bitmap", e)
             null
         }
-    }
-
-    fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
-        val matrix = Matrix()
-        matrix.postRotate(degrees)
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-    }
-
-    // ============================================================
-    // РАБОТА С ЛОКАЛЬНЫМИ ИЗОБРАЖЕНИЯМИ
-    // ============================================================
-
-    fun saveImageLocally(context: Context, itemId: String, imageBytes: ByteArray): Boolean {
-        return try {
-            val dir = File(context.filesDir, "images")
-            if (!dir.exists()) {
-                dir.mkdirs()
-            }
-            val file = File(dir, "$itemId.jpg")
-            file.writeBytes(imageBytes)
-            Logger.log(TAG, "Image saved locally: ${file.absolutePath}")
-            true
-        } catch (e: Exception) {
-            Logger.log(TAG, "Failed to save image locally: ${e.message}")
-            false
-        }
-    }
-
-    fun getLocalImageFile(context: Context, itemId: String): File? {
-        val dir = File(context.filesDir, "images")
-        val file = File(dir, "$itemId.jpg")
-        return if (file.exists()) file else null
-    }
-
-    fun deleteLocalImage(context: Context, itemId: String): Boolean {
-        val file = getLocalImageFile(context, itemId) ?: return false
-        return file.delete()
     }
 }
