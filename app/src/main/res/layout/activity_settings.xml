@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -9,234 +10,177 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Уведомления -->
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 1: СИНХРОНИЗАЦИЯ -->
+        <!-- ============================================================ -->
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Уведомления о сроке годности"
-            android:textAppearance="?attr/textAppearanceHeadline6"
-            android:layout_marginBottom="8dp" />
-
-        <Switch
-            android:id="@+id/switchNotifications"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Включить уведомления" />
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Дней до просрочки"
-            android:layout_marginTop="8dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etDaysBefore"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="number"
-                android:text="1" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Час уведомления (0-23)">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etNotificationHour"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="number"
-                android:text="9" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <Button
-    android:id="@+id/btnCheckUpdate"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="Проверить обновления"
-    android:layout_marginTop="16dp" />
-
-<TextView
-    android:id="@+id/tvVersion"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="Версия: 1.1.0"
-    android:layout_marginTop="8dp" />
-        
-        <Button
-            android:id="@+id/btnSaveNotifications"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Сохранить настройки уведомлений"
-            android:layout_marginTop="8dp" />
-
-        <!-- Разделитель -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?attr/colorControlHighlight"
-            android:layout_marginVertical="16dp" />
-
-        <!-- Синхронизация -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Синхронизация"
-            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:text="СИНХРОНИЗАЦИЯ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp" />
 
         <Button
             android:id="@+id/btnSyncNow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Синхронизировать сейчас" />
+            android:text="🔄 Синхронизировать сейчас" />
 
-        <!-- Разделитель -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?attr/colorControlHighlight"
-            android:layout_marginVertical="16dp" />
-
-        <!-- Логирование -->
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 2: ОБЩАЯ ПАПКА -->
+        <!-- ============================================================ -->
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Логирование"
-            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:text="ОБЩАЯ ПАПКА"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="24dp"
             android:layout_marginBottom="8dp" />
 
-        <Switch
+        <Button
+            android:id="@+id/btnShareLink"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔗 Поделиться ссылкой" />
+
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 3: РЕЗЕРВНОЕ КОПИРОВАНИЕ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="РЕЗЕРВНОЕ КОПИРОВАНИЕ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnExportLocal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📤 Экспорт локально" />
+
+        <Button
+            android:id="@+id/btnExportCloud"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="☁️ Экспорт в облако" />
+
+        <Button
+            android:id="@+id/btnImportLocal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📥 Импорт из локального" />
+
+        <Button
+            android:id="@+id/btnImportCloud"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="☁️ Импорт из облака" />
+
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 4: ЛОГИ И ДИАГНОСТИКА -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ЛОГИ И ДИАГНОСТИКА"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/switchLogging"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Включить логирование"
-            android:checked="true" />
+            android:text="Вести логи" />
 
         <Button
             android:id="@+id/btnClearLogs"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Очистить логи"
-            android:layout_marginTop="8dp" />
+            android:text="🗑 Очистить логи" />
 
         <Button
             android:id="@+id/btnSendLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Отправить логи разработчику"
-            android:layout_marginTop="8dp" />
+            android:text="📩 Отправить логи" />
 
-        <!-- Разделитель -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?attr/colorControlHighlight"
-            android:layout_marginVertical="16dp" />
-
-        <!-- Хранилище -->
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 5: ОБНОВЛЕНИЯ -->
+        <!-- ============================================================ -->
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Хранилище"
-            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:text="ОБНОВЛЕНИЯ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnCheckUpdate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔍 Проверить обновления" />
+
+        <TextView
+            android:id="@+id/tvVersion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Версия 1.0.0"
+            android:textSize="14sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:gravity="center" />
+
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ 6: ОПАСНАЯ ЗОНА -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ОПАСНАЯ ЗОНА"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#D32F2F"
+            android:layout_marginTop="24dp"
             android:layout_marginBottom="8dp" />
 
         <Button
             android:id="@+id/btnClearCache"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Очистить кэш изображений" />
-
-        <!-- Разделитель -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?attr/colorControlHighlight"
-            android:layout_marginVertical="16dp" />
-
-        <!-- О программе -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="О программе"
-            android:textAppearance="?attr/textAppearanceHeadline6"
-            android:layout_marginBottom="8dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="БАЗА v1.0\nСемейный каталог"
-            android:layout_marginBottom="8dp" />
-
-<TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="Резервное копирование"
-    android:textAppearance="?attr/textAppearanceSubtitle1"
-    android:layout_marginTop="16dp"
-    android:layout_marginBottom="8dp" />
-
-<Button
-    android:id="@+id/btnExportLocal"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="📤 Экспорт локально" />
-
-<Button
-    android:id="@+id/btnExportCloud"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="☁️ Экспорт в облако" />
-
-<Button
-    android:id="@+id/btnImportLocal"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="📥 Импорт из локального файла" />
-
-<Button
-    android:id="@+id/btnImportCloud"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="☁️ Импорт из облака" />
-    <!-- ===== ОЧИСТКА ДАННЫХ ===== -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?attr/colorControlHighlight"
-            android:layout_marginVertical="16dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Очистка данных"
-            android:textAppearance="?attr/textAppearanceHeadline6"
-            android:layout_marginBottom="8dp" />
+            android:text="🧹 Очистить кэш" />
 
         <Button
             android:id="@+id/btnClearAllData"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Полная очистка БД + Яндекс.Диск"
+            android:text="⚠️ Полная очистка данных"
             android:backgroundTint="#D32F2F"
-            android:layout_marginBottom="16dp" />
-        
-<Button
-    android:id="@+id/btnShareLink"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:text="🔗 Поделиться ссылкой"
-    android:layout_marginTop="8dp" />
-        
+            android:textColor="@android:color/white" />
 
-        <!-- Выход -->
         <Button
             android:id="@+id/btnLogout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Выйти"
-            android:layout_marginTop="16dp"
-            style="@style/Widget.MaterialComponents.Button.TextButton" />
+            android:text="🚪 Выход"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="#D32F2F"
+            android:textColor="@android:color/white" />
 
     </LinearLayout>
 </ScrollView>
