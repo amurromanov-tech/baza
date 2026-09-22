@@ -104,7 +104,10 @@ class BarcodeScannerActivity : AppCompatActivity() {
                 Barcode.FORMAT_UPC_E,
                 Barcode.FORMAT_QR_CODE,
                 Barcode.FORMAT_CODE_128,
-                Barcode.FORMAT_CODE_39
+                Barcode.FORMAT_CODE_39,
+                Barcode.FORMAT_DATA_MATRIX,
+                Barcode.FORMAT_PDF417,
+                Barcode.FORMAT_AZTEC
             )
             .build()
 
@@ -116,13 +119,12 @@ class BarcodeScannerActivity : AppCompatActivity() {
                     isScanning = false
                     val barcode = barcodes.first()
                     val value = barcode.rawValue ?: ""
-                    Log.d(TAG, "Штрих-код распознан: $value")
+                    Log.d(TAG, "Распознано: $value")
 
                     runOnUiThread {
-                        Toast.makeText(this, "Штрих-код: $value", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Код: $value", Toast.LENGTH_SHORT).show()
                     }
 
-                    // Возвращаем результат в AddItemActivity
                     val resultIntent = android.content.Intent()
                     resultIntent.putExtra("barcode", value)
                     setResult(RESULT_OK, resultIntent)
