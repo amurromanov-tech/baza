@@ -56,7 +56,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             checkFirstLaunch()
             // Автоматическая синхронизация ОТКЛЮЧЕНА
-            // syncWithDisk() вызывается только из MainActivity (onResume/onPause) и по кнопке
+            // syncWithDisk() вызывается только из AppLifecycleObserver (вход/выход) и по кнопке
         }
     }
 
@@ -182,7 +182,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // СИНХРОНИЗАЦИЯ (только по вызову извне)
+    // СИНХРОНИЗАЦИЯ
     // ============================================================
 
     fun syncWithDisk() {
@@ -204,18 +204,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncStatus.postValue(SyncStatus.SYNCING)
                 Logger.log(TAG, "Internet available, starting sync")
 
+                // 1. Скачиваем данные с диска
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
                 Logger.log(TAG, "Downloaded from disk: ${diskFolders.size} folders, ${diskItems.size} items")
 
+                // 2. Объединяем с локальными
                 mergeData(diskFolders, diskItems)
+
+                // 3. Загружаем несинхронизированные фото (локальные → на диск)
+                uploadUnsyncedImages()
+
+                // 4. Скачиваем фото с диска, которых нет локально
                 syncImages(diskItems)
 
+                // 5. Обрабатываем очередь
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     Logger.log(TAG, "Has $pendingCount pending changes")
                     syncStatus.postValue(SyncStatus.PENDING)
                     processPendingChanges()
-                    // Периодическая синхронизация ОТКЛЮЧЕНА
                 } else {
                     syncStatus.postValue(SyncStatus.SYNCED)
                 }
@@ -229,22 +236,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ЗАГРУЗКА НЕСИНХРОНИЗИРОВАННЫХ ФОТО (ЛОКАЛЬНЫЕ → НА ДИСК)
+    // ============================================================
+    private suspend fun uploadUnsyncedImages() {
+        val appContext = getApplication<Application>().applicationContext
+        val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItems() }
+
+        var uploadedCount = 0
+
+        allItems.forEach { item ->
+            // Проверяем, есть ли локальное фото
+            val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+            if (localFile == null || !localFile.exists()) {
+                return@forEach  // Фото нет — пропускаем
+            }
+
+            // Если imageUrl пустой — фото не загружено на диск
+            if (item.imageUrl.isNullOrEmpty()) {
+                try {
+                    val bytes = localFile.readBytes()
+                    Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
+                    val success = repository.uploadItemImage(item.id, bytes)
+                    if (success) {
+                        // Обновляем imageUrl в БД
+                        val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                        withContext(Dispatchers.IO) {
+                            db.itemDao().updateItem(updated)
+                        }
+                        uploadedCount++
+                        Logger.log(TAG, "Image uploaded: ${item.id}")
+                    } else {
+                        Logger.log(TAG, "Image upload failed: ${item.id}")
+                    }
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
+                }
+            }
+        }
+
+        Logger.log(TAG, "Uploaded $uploadedCount images")
+    }
+
+    // ============================================================
+    // СКАЧИВАНИЕ ФОТО С ДИСКА (ЕСЛИ НЕТ ЛОКАЛЬНО)
+    // ============================================================
     private suspend fun syncImages(items: List<ItemEntity>) {
         val appContext = getApplication<Application>().applicationContext
         val itemsWithImages = items.filter { !it.imageUrl.isNullOrEmpty() }
         if (itemsWithImages.isEmpty()) {
-            Logger.log(TAG, "No images to sync")
+            Logger.log(TAG, "No images to sync (download)")
             return
         }
 
-        Logger.log(TAG, "Syncing ${itemsWithImages.size} images...")
+        Logger.log(TAG, "Syncing ${itemsWithImages.size} images (download)...")
         var downloadedCount = 0
 
         itemsWithImages.forEach { item ->
             val imageId = item.id
             val localFile = ImageUtils.getLocalImageFile(appContext, imageId)
             if (localFile != null && localFile.exists()) {
-                return@forEach
+                return@forEach  // Фото уже есть локально
             }
 
             try {
@@ -262,7 +314,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        Logger.log(TAG, "Images synced: $downloadedCount new images")
+        Logger.log(TAG, "Images downloaded: $downloadedCount")
         loadContents()
     }
 
@@ -397,14 +449,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (entry.action) {
             "create" -> {
                 val item = db.itemDao().getItemById(entry.entityId)
-                item?.let { repository.createItemOnDisk(it) }
+                item?.let {
+                    repository.createItemOnDisk(it)
+                    uploadItemImageIfExists(it)
+                }
             }
             "update" -> {
                 val item = db.itemDao().getItemById(entry.entityId)
-                item?.let { repository.updateItemOnDisk(it) }
+                item?.let {
+                    repository.updateItemOnDisk(it)
+                    uploadItemImageIfExists(it)
+                }
             }
             "delete" -> {
                 repository.deleteItemOnDisk(entry.entityId)
+            }
+        }
+    }
+
+    private suspend fun uploadItemImageIfExists(item: ItemEntity) {
+        val appContext = getApplication<Application>().applicationContext
+        val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+        if (localFile != null && localFile.exists() && item.imageUrl.isNullOrEmpty()) {
+            try {
+                val bytes = localFile.readBytes()
+                val success = repository.uploadItemImage(item.id, bytes)
+                if (success) {
+                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                    db.itemDao().updateItem(updated)
+                    Logger.log(TAG, "Image uploaded for ${item.id}")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
         }
     }
@@ -759,7 +835,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ
+    // СОЗДАНИЕ ПРЕДМЕТОВ (ТОЛЬКО ЛОКАЛЬНО, БЕЗ ЗАГРУЗКИ НА ДИСК)
     // ============================================================
 
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
@@ -767,63 +843,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "createItem: name=${item.name}, id=${item.id}, parentId=${item.parentId}")
 
         viewModelScope.launch {
+            // 1. Сохраняем предмет ЛОКАЛЬНО
             withContext(Dispatchers.IO) {
-                Logger.log(TAG, "createItem: before insert into DB")
                 db.itemDao().insertItem(item)
-                Logger.log(TAG, "createItem: after insert into DB, id=${item.id}")
+                Logger.log(TAG, "createItem: item inserted locally")
             }
-            Logger.log(TAG, "createItem: before loadContents()")
-            loadContents()
-            Logger.log(TAG, "createItem: after loadContents()")
 
-            globalScope.launch {
-                try {
-                    if (isInternetAvailable()) {
-                        Logger.log(TAG, "createItem: starting sync to disk")
-                        repository.createItemOnDisk(item)
-                        imageBytes?.let {
-                            Logger.log(TAG, "createItem: uploading image, size=${it.size}")
-                            val success = repository.uploadItemImage(item.id, it)
-                            if (success) {
-                                Logger.log(TAG, "createItem: image uploaded successfully")
-                                val appContext = getApplication<Application>().applicationContext
-                                ImageUtils.saveImageLocally(appContext, item.id, it)
-                            } else {
-                                Logger.log(TAG, "createItem: image upload failed")
-                            }
-                        }
-                        syncInfoDao.setLastModified(System.currentTimeMillis())
-                        Logger.log(TAG, "createItem: sync to disk completed")
-                    } else {
-                        Logger.log(TAG, "createItem: no internet, queuing")
-                        syncQueueDao.addToQueue(
-                            SyncQueueEntity(
-                                entityType = "item",
-                                entityId = item.id,
-                                action = "create",
-                                parentId = item.parentId,
-                                data = null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                        syncStatus.postValue(SyncStatus.PENDING)
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "createItem: sync failed: ${e.message}")
-                    e.printStackTrace()
-                    syncQueueDao.addToQueue(
-                        SyncQueueEntity(
-                            entityType = "item",
-                            entityId = item.id,
-                            action = "create",
-                            parentId = item.parentId,
-                            data = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                    syncStatus.postValue(SyncStatus.PENDING)
-                }
+            // 2. Сохраняем фото ЛОКАЛЬНО
+            imageBytes?.let { bytes ->
+                val appContext = getApplication<Application>().applicationContext
+                ImageUtils.saveImageLocally(appContext, item.id, bytes)
+                Logger.log(TAG, "createItem: image saved locally, size=${bytes.size}")
             }
+
+            // 3. Обновляем UI
+            loadContents()
+
+            // 4. Добавляем в очередь на синхронизацию
+            syncQueueDao.addToQueue(
+                SyncQueueEntity(
+                    entityType = "item",
+                    entityId = item.id,
+                    action = "create",
+                    parentId = item.parentId,
+                    data = null,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            syncStatus.postValue(SyncStatus.PENDING)
             Logger.log(TAG, "createItem END: ${System.currentTimeMillis()}")
         }
     }
