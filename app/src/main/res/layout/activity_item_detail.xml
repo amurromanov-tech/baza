@@ -41,6 +41,7 @@
             android:id="@+id/ivPhoto"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:maxHeight="300dp"
             android:adjustViewBounds="true"
             android:scaleType="centerCrop"
             android:layout_marginBottom="16dp"
