@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 class ProductLookupService {
 
@@ -45,6 +46,28 @@ class ProductLookupService {
                 return@withContext LookupResult(success = true, product = it)
             }
 
+            // ===== НОВЫЕ БАЗЫ =====
+
+            // 7. RxNorm (лекарства, международные)
+            lookupRxNorm(barcode)?.let {
+                return@withContext LookupResult(success = true, product = it)
+            }
+
+            // 8. mcp-pharma (лекарства РФ)
+            lookupMcpPharma(barcode)?.let {
+                return@withContext LookupResult(success = true, product = it)
+            }
+
+            // 9. Open Library (книги)
+            lookupOpenLibrary(barcode)?.let {
+                return@withContext LookupResult(success = true, product = it)
+            }
+
+            // 10. Google Books (книги)
+            lookupGoogleBooks(barcode)?.let {
+                return@withContext LookupResult(success = true, product = it)
+            }
+
             // Если ничего не найдено
             LookupResult(success = false, error = "Товар не найден ни в одной базе")
         } catch (e: Exception) {
@@ -67,7 +90,6 @@ class ProductLookupService {
             val text = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JsonParser.parseString(text).asJsonObject
 
-            // Проверяем статус
             val status = json.get("status")?.asInt ?: 0
             if (status != 1) return null
 
@@ -90,7 +112,7 @@ class ProductLookupService {
         }
     }
 
-    // ===== UPCITEMDB (бесплатный, но нужен ключ) =====
+    // ===== UPCITEMDB =====
     private fun lookupUpcItemDb(barcode: String): ProductInfo? {
         return try {
             val url = URL("https://api.upcitemdb.com/prod/trial/lookup?upc=$barcode")
@@ -122,7 +144,7 @@ class ProductLookupService {
         }
     }
 
-    // ===== BROCODE.IO (открытая база GTIN) =====
+    // ===== BROCODE.IO =====
     private fun lookupBrocade(barcode: String): ProductInfo? {
         return try {
             val url = URL("https://www.brocade.io/api/items/$barcode")
@@ -144,6 +166,164 @@ class ProductLookupService {
                 description = json.get("description")?.asString,
                 imageUrl = json.get("image_url")?.asString,
                 source = "Brocade.io"
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ===== RxNorm (лекарства, международные) =====
+    // Публичный API, без ключа. Поиск по названию или коду.
+    private fun lookupRxNorm(query: String): ProductInfo? {
+        return try {
+            // Пробуем найти по названию (если это не цифры) или по коду
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            
+            // 1. Получаем RxCUI по названию
+            val rxcuiUrl = URL("https://rxnav.nlm.nih.gov/REST/rxcui.json?name=$encodedQuery")
+            val rxcuiConn = rxcuiUrl.openConnection() as HttpURLConnection
+            rxcuiConn.requestMethod = "GET"
+            rxcuiConn.connectTimeout = 10000
+            rxcuiConn.readTimeout = 10000
+            rxcuiConn.setRequestProperty("User-Agent", "BAZA/1.0")
+
+            if (rxcuiConn.responseCode != 200) return null
+
+            val rxcuiText = rxcuiConn.inputStream.bufferedReader().use { it.readText() }
+            val rxcuiJson = JsonParser.parseString(rxcuiText).asJsonObject
+            val idGroup = rxcuiJson.getAsJsonObject("idGroup") ?: return null
+            val rxnormId = idGroup.getAsJsonArray("rxnormId")?.firstOrNull()?.asString ?: return null
+
+            // 2. Получаем свойства по RxCUI
+            val propsUrl = URL("https://rxnav.nlm.nih.gov/REST/rxcui/$rxnormId/properties.json")
+            val propsConn = propsUrl.openConnection() as HttpURLConnection
+            propsConn.requestMethod = "GET"
+            propsConn.connectTimeout = 10000
+            propsConn.readTimeout = 10000
+            propsConn.setRequestProperty("User-Agent", "BAZA/1.0")
+
+            if (propsConn.responseCode != 200) return null
+
+            val propsText = propsConn.inputStream.bufferedReader().use { it.readText() }
+            val propsJson = JsonParser.parseString(propsText).asJsonObject
+            val props = propsJson.getAsJsonObject("properties") ?: return null
+
+            ProductInfo(
+                name = props.get("name")?.asString,
+                brand = null,
+                category = "Лекарство (RxNorm)",
+                description = "RxCUI: $rxnormId",
+                imageUrl = null,
+                source = "RxNorm"
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ===== mcp-pharma (лекарства РФ) =====
+    // Требуется API-ключ для Pro-доступа. Без ключа возвращает null.
+    private fun lookupMcpPharma(query: String): ProductInfo? {
+        return try {
+            // mcp-pharma требует API-ключ (X-API-Key)
+            // Без ключа запрос не пройдёт, поэтому возвращаем null
+            // Когда получите ключ, раскомментируйте код ниже и добавьте ключ
+            
+            /*
+            val apiKey = "ВАШ_КЛЮЧ_MCP_PHARMA" // Замените на реальный ключ
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            
+            val url = URL("https://api.mcp-pharma.com/search?name=$encodedQuery")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("User-Agent", "BAZA/1.0")
+            connection.setRequestProperty("X-API-Key", apiKey)
+            
+            if (connection.responseCode != 200) return null
+            
+            val text = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JsonParser.parseString(text).asJsonObject
+            
+            ProductInfo(
+                name = json.get("name")?.asString,
+                brand = json.get("manufacturer")?.asString,
+                category = "Лекарство (ГРЛС)",
+                description = json.get("description")?.asString,
+                imageUrl = null,
+                source = "mcp-pharma (ГРЛС)"
+            )
+            */
+            
+            null // Пока без ключа возвращаем null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ===== Open Library (книги) =====
+    private fun lookupOpenLibrary(isbn: String): ProductInfo? {
+        return try {
+            val url = URL("https://openlibrary.org/search.json?isbn=$isbn")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("User-Agent", "BAZA/1.0")
+
+            if (connection.responseCode != 200) return null
+
+            val text = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JsonParser.parseString(text).asJsonObject
+            val docs = json.getAsJsonArray("docs") ?: return null
+            if (docs.size() == 0) return null
+
+            val book = docs[0].asJsonObject
+            val title = book.get("title")?.asString ?: return null
+            val author = book.getAsJsonArray("author_name")?.firstOrNull()?.asString
+            val year = book.get("first_publish_year")?.asInt
+
+            ProductInfo(
+                name = title,
+                brand = author,
+                category = "Книга",
+                description = "Год: ${year ?: "неизвестен"}",
+                imageUrl = null,
+                source = "Open Library"
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ===== Google Books (книги) =====
+    private fun lookupGoogleBooks(isbn: String): ProductInfo? {
+        return try {
+            val url = URL("https://www.googleapis.com/books/v1/volumes?q=isbn:$isbn")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("User-Agent", "BAZA/1.0")
+
+            if (connection.responseCode != 200) return null
+
+            val text = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JsonParser.parseString(text).asJsonObject
+            val totalItems = json.get("totalItems")?.asInt ?: 0
+            if (totalItems == 0) return null
+
+            val items = json.getAsJsonArray("items") ?: return null
+            val volume = items[0].asJsonObject.getAsJsonObject("volumeInfo") ?: return null
+
+            ProductInfo(
+                name = volume.get("title")?.asString,
+                brand = volume.getAsJsonArray("authors")?.firstOrNull()?.asString,
+                category = "Книга",
+                description = volume.get("description")?.asString,
+                imageUrl = volume.getAsJsonObject("imageLinks")?.get("thumbnail")?.asString,
+                source = "Google Books"
             )
         } catch (e: Exception) {
             null
