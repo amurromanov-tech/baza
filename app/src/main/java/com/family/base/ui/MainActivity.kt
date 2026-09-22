@@ -147,7 +147,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ===== РЕГИСТРАЦИЯ LIFECYCLE OBSERVER =====
-        // Синхронизация только при реальном входе/выходе из приложения
         try {
             val appLifecycleObserver = AppLifecycleObserver(viewModel)
             ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
@@ -283,16 +282,17 @@ class MainActivity : AppCompatActivity() {
         Logger.log(TAG, "=== MainActivity onCreate FINISHED ===")
     }
 
-    // ===== onResume: БЕЗ СИНХРОНИЗАЦИИ =====
+    // ===== onResume: ОБНОВЛЯЕМ СПИСОК ПРИ ВОЗВРАТЕ =====
     override fun onResume() {
         super.onResume()
-        Logger.log(TAG, "onResume called (без синхронизации)")
+        Logger.log(TAG, "onResume called, reloading contents...")
+        // Обновляем список — это подтянет новые иконки предметов
+        viewModel.loadContents()
     }
 
-    // ===== onPause: БЕЗ СИНХРОНИЗАЦИИ =====
     override fun onPause() {
         super.onPause()
-        Logger.log(TAG, "onPause called (без синхронизации)")
+        Logger.log(TAG, "onPause called")
         stopSyncAnimation()
     }
 
