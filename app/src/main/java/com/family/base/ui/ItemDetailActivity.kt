@@ -42,6 +42,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
+                binding.btnAddPhoto.visibility = View.GONE
                 Logger.log(TAG, "New image selected, size=${processedBytes.size}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -116,6 +117,12 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnMinus.setOnClickListener {
             changeQuantity(-1)
         }
+
+        // ===== КНОПКА ДОБАВЛЕНИЯ ФОТО =====
+        binding.btnAddPhoto.setOnClickListener {
+            Logger.log(TAG, "Add photo button clicked")
+            selectNewPhoto()
+        }
     }
 
     private fun changeQuantity(delta: Int) {
@@ -150,7 +157,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = false
 
-                    // ===== ШТРИХ-КОД =====
                     binding.etBarcode.setText(item.barcode ?: "")
                     binding.etBarcode.isEnabled = false
 
@@ -174,6 +180,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
 
+                    // ===== ФОТО В ПРОСМОТРЕ =====
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -183,6 +190,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     } else {
                         binding.ivPhoto.visibility = View.GONE
                     }
+                    binding.btnAddPhoto.visibility = View.GONE
 
                     binding.btnSave.visibility = View.GONE
                     binding.btnEdit.visibility = View.VISIBLE
@@ -222,7 +230,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = true
 
-                    // ===== ШТРИХ-КОД =====
                     binding.etBarcode.setText(item.barcode ?: "")
                     binding.etBarcode.isEnabled = true
 
@@ -243,17 +250,25 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
 
+                    // ===== ЛОГИКА ДЛЯ ФОТО В РЕДАКТИРОВАНИИ =====
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
+                        // Фото есть — показываем
                         binding.ivPhoto.visibility = View.VISIBLE
                         binding.ivPhoto.load(localFile) {
                             crossfade(true)
                         }
+                        binding.ivPhoto.setOnClickListener {
+                            Logger.log(TAG, "Photo clicked, opening picker")
+                            selectNewPhoto()
+                        }
+                        binding.btnAddPhoto.visibility = View.GONE
                     } else {
+                        // Фото нет — показываем кнопку "Добавить фото"
                         binding.ivPhoto.visibility = View.GONE
+                        binding.btnAddPhoto.visibility = View.VISIBLE
+                        Logger.log(TAG, "No photo, showing Add Photo button")
                     }
-
-                    binding.ivPhoto.setOnClickListener { selectNewPhoto() }
 
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
@@ -287,6 +302,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnEdit.visibility = View.GONE
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
+                    binding.btnAddPhoto.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) {
                         "История пуста"
@@ -316,6 +332,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun selectNewPhoto() {
+        Logger.log(TAG, "selectNewPhoto called")
         pickImageLauncher.launch("image/*")
     }
 
@@ -368,8 +385,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 val description = binding.etDescription.text.toString()
                 val expiryDate = parseDate(binding.etExpiry.text.toString())
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
-
-                // ===== ШТРИХ-КОД =====
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
                 val updatedItem = item.copy(
@@ -388,6 +403,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     db.itemDao().updateItem(updatedItem)
 
                     newImageBytes?.let { bytes ->
+                        Logger.log(TAG, "Uploading new image, size=${bytes.size}")
                         repository.uploadItemImage(itemId, bytes)
                         ImageUtils.saveImageLocally(applicationContext, itemId, bytes)
                         newImageBytes = null
