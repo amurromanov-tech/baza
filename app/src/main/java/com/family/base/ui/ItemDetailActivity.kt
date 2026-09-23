@@ -278,6 +278,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.btnSave.visibility = View.GONE
                     binding.btnEdit.visibility = View.GONE
+                    binding.btnScanBarcode.visibility = View.GONE
 
                     // ===== БЛОК ЗАЙМА =====
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
@@ -353,6 +354,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
+                    binding.btnScanBarcode.visibility = View.VISIBLE
 
                     binding.cardLentInfo.visibility = View.GONE
                 }
@@ -385,6 +387,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnMinus.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
                     binding.cardLentInfo.visibility = View.GONE
+                    binding.btnScanBarcode.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) {
                         "История пуста"
