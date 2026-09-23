@@ -12,12 +12,15 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Верхняя панель: кнопка Назад + Заголовок -->
+        <!-- ============================================================ -->
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ: НАЗАД + ЗАГОЛОВОК -->
+        <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="16dp"
+            android:gravity="center_vertical">
 
             <Button
                 android:id="@+id/btnBack"
@@ -36,14 +39,16 @@
                 android:gravity="center" />
         </LinearLayout>
 
+        <!-- ============================================================ -->
         <!-- ИЗОБРАЖЕНИЕ -->
+        <!-- ============================================================ -->
         <ImageView
             android:id="@+id/ivPhoto"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="300dp"
             android:adjustViewBounds="true"
             android:scaleType="centerCrop"
+            android:maxHeight="300dp"
             android:layout_marginBottom="16dp"
             android:visibility="gone"
             android:contentDescription="Фото предмета" />
@@ -57,7 +62,9 @@
             android:layout_marginBottom="16dp"
             android:visibility="gone" />
 
+        <!-- ============================================================ -->
         <!-- НАЗВАНИЕ -->
+        <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -68,7 +75,9 @@
                 android:layout_height="wrap_content" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- ============================================================ -->
         <!-- ШТРИХ-КОД -->
+        <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -80,7 +89,9 @@
                 android:inputType="number" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- КОЛИЧЕСТВО +/− -->
+        <!-- ============================================================ -->
+        <!-- КОЛИЧЕСТВО С КНОПКАМИ +/− -->
+        <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -124,7 +135,9 @@
                 android:minHeight="0dp" />
         </LinearLayout>
 
+        <!-- ============================================================ -->
         <!-- СРОК ГОДНОСТИ -->
+        <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -135,7 +148,9 @@
                 android:layout_height="wrap_content" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- ЦЕНА (просмотр) -->
+        <!-- ============================================================ -->
+        <!-- ЦЕНА (ПРОСМОТР) -->
+        <!-- ============================================================ -->
         <TextView
             android:id="@+id/tvPrice"
             android:layout_width="match_parent"
@@ -145,7 +160,9 @@
             android:visibility="gone"
             tools:text="Цена: 100 ₽" />
 
-        <!-- ЦЕНА (редактирование) -->
+        <!-- ============================================================ -->
+        <!-- ЦЕНА (РЕДАКТИРОВАНИЕ) -->
+        <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilPrice"
             android:layout_width="match_parent"
@@ -159,7 +176,9 @@
                 android:inputType="numberDecimal" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- ============================================================ -->
         <!-- ОПИСАНИЕ -->
+        <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -171,7 +190,9 @@
                 android:minLines="3" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- КНОПКИ -->
+        <!-- ============================================================ -->
+        <!-- КНОПКИ РЕЖИМА РЕДАКТИРОВАНИЯ -->
+        <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -194,6 +215,97 @@
                 android:layout_weight="1"
                 android:text="Редактировать"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- ============================================================ -->
+        <!-- СЕКЦИЯ: ДЕЙСТВИЯ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Действия"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="?android:attr/textColorSecondary"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Ряд 1: Редактировать, Выдать -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionEdit"
+                style="@style/ActionButton.Edit"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="✏️ Редактировать" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionLend"
+                style="@style/ActionButton.Lend"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="🤝 Выдать" />
+        </LinearLayout>
+
+        <!-- Ряд 2: Перенести, Копировать -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionMove"
+                style="@style/ActionButton.Move"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="📁 Перенести" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionCopy"
+                style="@style/ActionButton.Copy"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="📋 Копировать" />
+        </LinearLayout>
+
+        <!-- Ряд 3: Архивировать, Удалить -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionArchive"
+                style="@style/ActionButton.Archive"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="📦 Архивировать" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActionDelete"
+                style="@style/ActionButton.Delete"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="🗑 Удалить" />
         </LinearLayout>
 
     </LinearLayout>
