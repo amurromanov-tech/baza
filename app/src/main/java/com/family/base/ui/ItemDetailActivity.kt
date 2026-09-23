@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,14 +14,17 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import coil.load
 import com.family.base.Config
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.HistoryEntry
+import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityItemDetailBinding
+import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -37,11 +41,13 @@ class ItemDetailActivity : AppCompatActivity() {
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
+    private lateinit var viewModel: MainViewModel
     private val FOLDER_PATH = "/${Config.SHARED_FOLDER_NAME}"
     private val CAMERA_PERMISSION_REQUEST = 200
 
     private var newImageBytes: ByteArray? = null
     private var photoUri: Uri? = null
+    private var itemId: String? = null
 
     // Флаг: сейчас режим редактирования?
     private var isEditMode = false
@@ -63,7 +69,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnEdit.visibility = View.GONE
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
-                    Logger.log(TAG, "Edit mode buttons restored after gallery pick")
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -90,7 +95,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnEdit.visibility = View.GONE
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
-                    Logger.log(TAG, "Edit mode buttons restored after camera capture")
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error processing camera photo", e)
@@ -117,20 +121,18 @@ class ItemDetailActivity : AppCompatActivity() {
         try {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
-            Logger.log(TAG, "Database and repository initialized")
+            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            Logger.log(TAG, "Database, repository and ViewModel initialized")
         } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to initialize database", e)
+            Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             return
         }
 
-        val itemId = intent.getStringExtra("item_id")
+        itemId = intent.getStringExtra("item_id")
         val editMode = intent.getBooleanExtra("edit_mode", false)
         val showHistory = intent.getBooleanExtra("show_history", false)
 
-        Logger.log(TAG, "itemId: $itemId, editMode: $editMode, showHistory: $showHistory")
-
         if (itemId == null) {
-            Logger.log(TAG, "No item_id provided")
             Toast.makeText(this, "Ошибка: предмет не найден", Toast.LENGTH_SHORT).show()
             finish()
             return
@@ -138,13 +140,13 @@ class ItemDetailActivity : AppCompatActivity() {
 
         if (showHistory) {
             isEditMode = false
-            showHistory(itemId)
+            showHistory(itemId!!)
         } else if (editMode) {
             isEditMode = true
-            showEditMode(itemId)
+            showEditMode(itemId!!)
         } else {
             isEditMode = false
-            showDetails(itemId)
+            showDetails(itemId!!)
         }
 
         setupListeners()
@@ -153,27 +155,47 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        binding.btnBack.setOnClickListener {
-            Logger.log(TAG, "Back button clicked")
-            finish()
+        // Назад
+        binding.btnBack.setOnClickListener { finish() }
+
+        // Кнопки режима редактирования
+        binding.btnSave.setOnClickListener { saveChanges() }
+        binding.btnEdit.setOnClickListener {
+            itemId?.let {
+                isEditMode = true
+                showEditMode(it)
+            }
+        }
+        binding.btnPlus.setOnClickListener { changeQuantity(+1) }
+        binding.btnMinus.setOnClickListener { changeQuantity(-1) }
+        binding.btnAddPhoto.setOnClickListener { showImageSourceDialog() }
+
+        // ===== НОВЫЕ КНОПКИ ДЕЙСТВИЙ =====
+        binding.btnActionEdit.setOnClickListener {
+            itemId?.let {
+                isEditMode = true
+                showEditMode(it)
+            }
         }
 
-        binding.btnSave.setOnClickListener {
-            Logger.log(TAG, "Save button clicked")
-            saveChanges()
+        binding.btnActionLend.setOnClickListener {
+            showLendDialog()
         }
 
-        binding.btnPlus.setOnClickListener {
-            changeQuantity(+1)
+        binding.btnActionMove.setOnClickListener {
+            showMoveDialog()
         }
 
-        binding.btnMinus.setOnClickListener {
-            changeQuantity(-1)
+        binding.btnActionCopy.setOnClickListener {
+            showCopyDialog()
         }
 
-        binding.btnAddPhoto.setOnClickListener {
-            Logger.log(TAG, "Add photo button clicked")
-            showImageSourceDialog()
+        binding.btnActionArchive.setOnClickListener {
+            showArchiveDialog()
+        }
+
+        binding.btnActionDelete.setOnClickListener {
+            showDeleteDialog()
         }
     }
 
@@ -182,20 +204,17 @@ class ItemDetailActivity : AppCompatActivity() {
         val currentQty = currentText.toIntOrNull() ?: 1
         val newQty = (currentQty + delta).coerceAtLeast(0)
         binding.etQuantity.setText(newQty.toString())
-        Logger.log(TAG, "Quantity changed: $currentQty -> $newQty (delta: $delta)")
     }
 
+    // ============================================================
+    // ПРОСМОТР ДЕТАЛЕЙ
+    // ============================================================
     private fun showDetails(itemId: String) {
-        Logger.log(TAG, "Showing details for item: $itemId")
         isEditMode = false
         lifecycleScope.launch {
             try {
-                val item = withContext(Dispatchers.IO) {
-                    db.itemDao().getItemById(itemId)
-                }
-
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) {
-                    Logger.log(TAG, "Item not found: $itemId")
                     Toast.makeText(this@ItemDetailActivity, "Предмет не найден", Toast.LENGTH_SHORT).show()
                     finish()
                     return@launch
@@ -209,13 +228,11 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etQuantity.isEnabled = false
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = false
-
                     binding.etBarcode.setText(item.barcode ?: "")
                     binding.etBarcode.isEnabled = false
 
                     item.expiryDate?.let {
-                        val dateStr = dateFormat.format(Date(it))
-                        binding.etExpiry.setText(dateStr)
+                        binding.etExpiry.setText(dateFormat.format(Date(it)))
                     }
                     binding.etExpiry.isEnabled = false
 
@@ -236,41 +253,30 @@ class ItemDetailActivity : AppCompatActivity() {
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
-                        binding.ivPhoto.load(localFile) {
-                            crossfade(true)
-                        }
+                        binding.ivPhoto.load(localFile) { crossfade(true) }
                     } else {
                         binding.ivPhoto.visibility = View.GONE
                     }
                     binding.btnAddPhoto.visibility = View.GONE
 
                     binding.btnSave.visibility = View.GONE
-                    binding.btnEdit.visibility = View.VISIBLE
-                    binding.btnEdit.setOnClickListener {
-                        Logger.log(TAG, "Edit button clicked")
-                        isEditMode = true
-                        showEditMode(itemId)
-                    }
+                    binding.btnEdit.visibility = View.GONE
                 }
-
-                Logger.log(TAG, "Details shown for item: ${item.name}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing details", e)
             }
         }
     }
 
+    // ============================================================
+    // РЕЖИМ РЕДАКТИРОВАНИЯ
+    // ============================================================
     private fun showEditMode(itemId: String) {
-        Logger.log(TAG, "Showing edit mode for item: $itemId")
         isEditMode = true
         lifecycleScope.launch {
             try {
-                val item = withContext(Dispatchers.IO) {
-                    db.itemDao().getItemById(itemId)
-                }
-
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) {
-                    Logger.log(TAG, "Item not found: $itemId")
                     finish()
                     return@launch
                 }
@@ -283,18 +289,14 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etQuantity.isEnabled = true
                     binding.etDescription.setText(item.description ?: "")
                     binding.etDescription.isEnabled = true
-
                     binding.etBarcode.setText(item.barcode ?: "")
                     binding.etBarcode.isEnabled = true
 
                     item.expiryDate?.let {
-                        val dateStr = dateFormat.format(Date(it))
-                        binding.etExpiry.setText(dateStr)
+                        binding.etExpiry.setText(dateFormat.format(Date(it)))
                     }
                     binding.etExpiry.isEnabled = true
-                    binding.etExpiry.setOnClickListener {
-                        showDatePickerDialog()
-                    }
+                    binding.etExpiry.setOnClickListener { showDatePickerDialog() }
 
                     binding.tvPrice.visibility = View.GONE
                     binding.etPrice.visibility = View.VISIBLE
@@ -307,33 +309,27 @@ class ItemDetailActivity : AppCompatActivity() {
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
-                        binding.ivPhoto.load(localFile) {
-                            crossfade(true)
-                        }
-                        binding.ivPhoto.setOnClickListener {
-                            Logger.log(TAG, "Photo clicked")
-                            showImageSourceDialog()
-                        }
+                        binding.ivPhoto.load(localFile) { crossfade(true) }
+                        binding.ivPhoto.setOnClickListener { showImageSourceDialog() }
                         binding.btnAddPhoto.visibility = View.GONE
                     } else {
                         binding.ivPhoto.visibility = View.GONE
                         binding.btnAddPhoto.visibility = View.VISIBLE
-                        Logger.log(TAG, "No photo, showing Add Photo button")
                     }
 
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
                 }
-
-                Logger.log(TAG, "Edit mode shown for item: ${item.name}")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing edit mode", e)
             }
         }
     }
 
+    // ============================================================
+    // ИСТОРИЯ
+    // ============================================================
     private fun showHistory(itemId: String) {
-        Logger.log(TAG, "Showing history for item: $itemId")
         isEditMode = false
         lifecycleScope.launch {
             try {
@@ -375,14 +371,15 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etDescription.isEnabled = false
                     binding.etDescription.visibility = View.VISIBLE
                 }
-
-                Logger.log(TAG, "History shown, ${history.size} entries")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing history", e)
             }
         }
     }
 
+    // ============================================================
+    // ФОТО
+    // ============================================================
     private fun showImageSourceDialog() {
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(this)
@@ -390,11 +387,8 @@ class ItemDetailActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> {
-                        if (checkCameraPermission()) {
-                            openCamera()
-                        } else {
-                            requestCameraPermission()
-                        }
+                        if (checkCameraPermission()) openCamera()
+                        else requestCameraPermission()
                     }
                     1 -> pickImageLauncher.launch("image/*")
                 }
@@ -403,18 +397,11 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun checkCameraPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun requestCameraPermission() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(Manifest.permission.CAMERA),
-            CAMERA_PERMISSION_REQUEST
-        )
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
     }
 
     private fun openCamera() {
@@ -422,12 +409,9 @@ class ItemDetailActivity : AppCompatActivity() {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
             photoUri = androidx.core.content.FileProvider.getUriForFile(
-                this,
-                "${packageName}.fileprovider",
-                photoFile
+                this, "${packageName}.fileprovider", photoFile
             )
             takePhotoLauncher.launch(photoUri)
-            Logger.log(TAG, "Camera opened")
         } catch (e: Exception) {
             Logger.log(TAG, "Error opening camera", e)
             Toast.makeText(this, "Ошибка открытия камеры: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -444,7 +428,7 @@ class ItemDetailActivity : AppCompatActivity() {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 openCamera()
             } else {
-                Toast.makeText(this, "Необходимо разрешение на использование камеры", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Необходимо разрешение на камеру", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -454,16 +438,14 @@ class ItemDetailActivity : AppCompatActivity() {
         val currentText = binding.etExpiry.text.toString()
         if (currentText.isNotEmpty()) {
             try {
-                val date = dateFormat.parse(currentText)
-                date?.let { calendar.time = it }
-            } catch (e: Exception) { /* ignore */ }
+                dateFormat.parse(currentText)?.let { calendar.time = it }
+            } catch (e: Exception) { }
         }
 
         DatePickerDialog(
             this,
-            { _, selectedYear, selectedMonth, selectedDay ->
-                val dateStr = "${selectedDay.toString().padStart(2, '0')}.${(selectedMonth + 1).toString().padStart(2, '0')}.$selectedYear"
-                binding.etExpiry.setText(dateStr)
+            { _, year, month, day ->
+                binding.etExpiry.setText("${day.toString().padStart(2, '0')}.${(month + 1).toString().padStart(2, '0')}.$year")
             },
             calendar.get(Calendar.YEAR),
             calendar.get(Calendar.MONTH),
@@ -472,20 +454,132 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СОХРАНЕНИЕ — ТОЛЬКО ЛОКАЛЬНО
+    // ДЕЙСТВИЯ С ПРЕДМЕТОМ
+    // ============================================================
+
+    // ===== ВЫДАТЬ =====
+    private fun showLendDialog() {
+        val id = itemId ?: return
+
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+
+        val etPerson = android.widget.EditText(this).apply {
+            hint = "Кому выдать (имя)"
+        }
+        val etNote = android.widget.EditText(this).apply {
+            hint = "Заметка (необязательно)"
+        }
+
+        container.addView(etPerson)
+        container.addView(etNote)
+
+        AlertDialog.Builder(this)
+            .setTitle("🤝 Выдать предмет")
+            .setView(container)
+            .setPositiveButton("Выдать") { _, _ ->
+                val person = etPerson.text.toString().trim()
+                val note = etNote.text.toString().trim().ifEmpty { null }
+                if (person.isNotEmpty()) {
+                    viewModel.lendItem(id, person, note)
+                    Toast.makeText(this, "Выдан: $person", Toast.LENGTH_SHORT).show()
+                    finish()
+                } else {
+                    Toast.makeText(this, "Введите имя", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ===== ПЕРЕНЕСТИ =====
+    private fun showMoveDialog() {
+        val id = itemId ?: return
+        lifecycleScope.launch {
+            try {
+                val allFolders = viewModel.getAllFolders()
+                val names = allFolders.map { it.name }.toMutableList()
+                names.add(0, "Корень")
+
+                AlertDialog.Builder(this@ItemDetailActivity)
+                    .setTitle("📁 Переместить предмет")
+                    .setItems(names.toTypedArray()) { _, which ->
+                        val target = if (which == 0) null else allFolders[which - 1]
+                        viewModel.moveItem(id, target?.id)
+                        Toast.makeText(this@ItemDetailActivity, "Перемещено: ${target?.name ?: "Корень"}", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error showing move dialog", e)
+            }
+        }
+    }
+
+    // ===== КОПИРОВАТЬ =====
+    private fun showCopyDialog() {
+        val id = itemId ?: return
+        AlertDialog.Builder(this)
+            .setTitle("📋 Копировать предмет?")
+            .setMessage("Будет создана копия предмета в текущей папке.")
+            .setPositiveButton("Копировать") { _, _ ->
+                viewModel.copyItem(id)
+                Toast.makeText(this, "Предмет скопирован", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ===== АРХИВИРОВАТЬ =====
+    private fun showArchiveDialog() {
+        val id = itemId ?: return
+        val reasons = arrayOf(
+            "🍽 Съедено", "🔧 Сломано", "🗑 Выброшено",
+            "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое"
+        )
+        val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
+
+        AlertDialog.Builder(this)
+            .setTitle("📦 В архив: ${binding.etName.text}")
+            .setItems(reasons) { _, which ->
+                viewModel.archiveItem(id, reasonKeys[which], null)
+                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ===== УДАЛИТЬ =====
+    private fun showDeleteDialog() {
+        val id = itemId ?: return
+        AlertDialog.Builder(this)
+            .setTitle("🗑 Удалить предмет?")
+            .setMessage("Это действие нельзя отменить. Возможно, лучше переместить в архив?")
+            .setPositiveButton("Удалить") { _, _ ->
+                viewModel.deleteItem(id)
+                Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNeutralButton("В архив") { _, _ -> showArchiveDialog() }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // СОХРАНЕНИЕ
     // ============================================================
     private fun saveChanges() {
-        Logger.log(TAG, "saveChanges called")
-        val itemId = intent.getStringExtra("item_id") ?: return
+        val id = itemId ?: return
 
         lifecycleScope.launch {
             try {
-                val item = withContext(Dispatchers.IO) {
-                    db.itemDao().getItemById(itemId)
-                }
-
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
                 if (item == null) {
-                    Logger.log(TAG, "Item not found: $itemId")
                     Toast.makeText(this@ItemDetailActivity, "Предмет не найден", Toast.LENGTH_SHORT).show()
                     finish()
                     return@launch
@@ -503,7 +597,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
-                val updatedItem = item.copy(
+                val updated = item.copy(
                     name = name,
                     quantity = quantity,
                     barcode = barcode,
@@ -513,32 +607,27 @@ class ItemDetailActivity : AppCompatActivity() {
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = "user"
                 )
-                updatedItem.computeExpiryFields()
+                updated.computeExpiryFields()
 
-                // ===== СОХРАНЯЕМ ТОЛЬКО ЛОКАЛЬНО =====
                 withContext(Dispatchers.IO) {
-                    db.itemDao().updateItem(updatedItem)
-                    Logger.log(TAG, "Item updated locally: $itemId")
+                    db.itemDao().updateItem(updated)
 
                     newImageBytes?.let { bytes ->
-                        ImageUtils.saveImageLocally(applicationContext, itemId, bytes)
-                        Logger.log(TAG, "Image saved locally: $itemId, size=${bytes.size}")
+                        ImageUtils.saveImageLocally(applicationContext, id, bytes)
                     }
 
                     val history = HistoryEntry(
-                        itemId = itemId,
+                        itemId = id,
                         action = "update",
                         oldValue = "Изменены поля",
-                        newValue = "Название: $name, Количество: $quantity, Цена: $price",
+                        newValue = "Название: $name, Количество: $quantity",
                         changedBy = "user"
                     )
                     db.historyDao().insertEntry(history)
                 }
 
-                Logger.log(TAG, "Item saved locally, closing screen: $itemId")
                 Toast.makeText(this@ItemDetailActivity, "Сохранено", Toast.LENGTH_SHORT).show()
                 finish()
-
             } catch (e: Exception) {
                 Logger.log(TAG, "Error saving changes", e)
                 Toast.makeText(this@ItemDetailActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
@@ -548,10 +637,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun parseDate(dateStr: String): Long? {
         return try {
-            val date = dateFormat.parse(dateStr)
-            date?.time
+            dateFormat.parse(dateStr)?.time
         } catch (e: Exception) {
-            Logger.log(TAG, "Error parsing date", e)
             null
         }
     }
