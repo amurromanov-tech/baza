@@ -27,7 +27,8 @@ class CatalogAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_catalog_entry, parent, false)
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_catalog_entry, parent, false)
         return ViewHolder(view)
     }
 
@@ -37,19 +38,19 @@ class CatalogAdapter(
 
         when (entry) {
             is FolderEntity -> {
+                // ===== ПАПКА =====
                 holder.icon.load(null)
 
                 val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
                 if (iconFile != null && iconFile.exists()) {
                     holder.icon.load(iconFile) {
                         crossfade(true)
-                        placeholder(R.drawable.ic_folder_48)
-                        error(R.drawable.ic_folder_48)
+                        placeholder(R.drawable.ic_folder_default)
+                        error(R.drawable.ic_folder_default)
                     }
                 } else {
-                    holder.icon.load(R.drawable.ic_folder_48) {
-                        crossfade(false)
-                    }
+                    // Дефолтная иконка папки
+                    holder.icon.load(R.drawable.ic_folder_default)
                 }
 
                 holder.name.text = entry.name
@@ -61,19 +62,19 @@ class CatalogAdapter(
                 holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
             }
             is ItemEntity -> {
+                // ===== ПРЕДМЕТ =====
                 holder.icon.load(null)
 
                 val localFile = ImageUtils.getLocalImageFile(context, entry.id)
                 if (localFile != null && localFile.exists()) {
                     holder.icon.load(localFile) {
                         crossfade(true)
-                        placeholder(R.drawable.ic_item_default_48)
-                        error(R.drawable.ic_item_default_48)
+                        placeholder(R.drawable.ic_item_default)
+                        error(R.drawable.ic_item_default)
                     }
                 } else {
-                    holder.icon.load(R.drawable.ic_item_default_48) {
-                        crossfade(false)
-                    }
+                    // Дефолтная иконка предмета
+                    holder.icon.load(R.drawable.ic_item_default)
                 }
 
                 holder.name.text = entry.name
