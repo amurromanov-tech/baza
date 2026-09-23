@@ -56,7 +56,6 @@ interface ItemDao {
     // АРХИВАЦИЯ
     // ============================================================
 
-    // Заархивировать предмет
     @Query("""
         UPDATE items SET 
             isArchived = 1, 
@@ -73,7 +72,6 @@ interface ItemDao {
         note: String?
     )
 
-    // Разархивировать предмет (вернуть из архива)
     @Query("""
         UPDATE items SET 
             isArchived = 0, 
@@ -85,31 +83,38 @@ interface ItemDao {
     """)
     suspend fun unarchiveItem(itemId: String, date: Long)
 
-    // ============================================================
-    // ЗАПРОСЫ К АРХИВУ
-    // ============================================================
-
-    // Все архивные предметы
     @Query("SELECT * FROM items WHERE isArchived = 1 ORDER BY archivedDate DESC")
     suspend fun getArchivedItems(): List<ItemEntity>
 
-    // Архивные предметы по причине
     @Query("SELECT * FROM items WHERE isArchived = 1 AND archivedReason = :reason ORDER BY archivedDate DESC")
     suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity>
+
+    // ============================================================
+    // ЗАЙМ (ВЫДАЧА)
+    // ============================================================
+
+    // Получить все выданные предметы
+    @Query("SELECT * FROM items WHERE isLent = 1 AND isArchived = 0 ORDER BY lentDate DESC")
+    suspend fun getLentItems(): List<ItemEntity>
+
+    // Получить выданные предметы конкретному человеку
+    @Query("SELECT * FROM items WHERE isLent = 1 AND lentTo = :personName ORDER BY lentDate DESC")
+    suspend fun getLentItemsByPerson(personName: String): List<ItemEntity>
+
+    // Количество выданных предметов
+    @Query("SELECT COUNT(*) FROM items WHERE isLent = 1 AND isArchived = 0")
+    suspend fun getLentItemsCount(): Int
 
     // ============================================================
     // СТАТИСТИКА АРХИВА
     // ============================================================
 
-    // Общая сумма архива (все категории)
     @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 1 AND price IS NOT NULL")
     suspend fun getTotalArchivedSum(): Double?
 
-    // Сумма текущих предметов (не в архиве)
     @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 0 AND price IS NOT NULL")
     suspend fun getTotalActiveSum(): Double?
 
-    // Сумма архива по причинам
     @Query("""
         SELECT archivedReason, SUM(price * quantity) as total
         FROM items 
@@ -118,13 +123,23 @@ interface ItemDao {
     """)
     suspend fun getArchivedStatsByReason(): List<ArchiveStatsRow>
 
-    // Количество архивных предметов
     @Query("SELECT COUNT(*) FROM items WHERE isArchived = 1")
     suspend fun getArchivedItemsCount(): Int
 
-    // Количество текущих предметов
     @Query("SELECT COUNT(*) FROM items WHERE isArchived = 0")
     suspend fun getActiveItemsCount(): Int
+
+    // ============================================================
+    // СТАТИСТИКА ЗАЙМА
+    // ============================================================
+
+    // Сумма выданных предметов
+    @Query("SELECT SUM(price * quantity) FROM items WHERE isLent = 1 AND isArchived = 0 AND price IS NOT NULL")
+    suspend fun getTotalLentSum(): Double?
+
+    // Уникальные имена людей, кому выданы предметы
+    @Query("SELECT DISTINCT lentTo FROM items WHERE isLent = 1 AND lentTo IS NOT NULL AND isArchived = 0")
+    suspend fun getLentPersons(): List<String>
 }
 
 // ============================================================
