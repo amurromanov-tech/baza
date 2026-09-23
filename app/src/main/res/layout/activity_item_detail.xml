@@ -63,6 +63,74 @@
             android:visibility="gone" />
 
         <!-- ============================================================ -->
+        <!-- БЛОК ИНФОРМАЦИИ О ЗАЙМЕ (ПОКАЗЫВАЕТСЯ, ЕСЛИ ПРЕДМЕТ ВЫДАН) -->
+        <!-- ============================================================ -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/cardLentInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="#FFF3E0"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:id="@+id/tvLentTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🤝 Выдан"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#E65100" />
+
+                <TextView
+                    android:id="@+id/tvLentPerson"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="14sp"
+                    android:textColor="#424242"
+                    android:layout_marginTop="4dp"
+                    tools:text="Кому: Иванов" />
+
+                <TextView
+                    android:id="@+id/tvLentDate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="14sp"
+                    android:textColor="#424242"
+                    android:layout_marginTop="2dp"
+                    tools:text="Дата: 01.10.2026" />
+
+                <TextView
+                    android:id="@+id/tvLentNote"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="14sp"
+                    android:textColor="#424242"
+                    android:layout_marginTop="2dp"
+                    android:visibility="gone"
+                    tools:text="Заметка: на неделю" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReturnItem"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="↩️ Вернуть в базу"
+                    android:layout_marginTop="12dp"
+                    android:backgroundTint="#4CAF50"
+                    android:textColor="@android:color/white"
+                    app:cornerRadius="12dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ============================================================ -->
         <!-- НАЗВАНИЕ -->
         <!-- ============================================================ -->
         <com.google.android.material.textfield.TextInputLayout
@@ -205,7 +273,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Сохранить"
+                android:text="💾 Сохранить"
                 android:visibility="gone" />
 
             <Button
@@ -213,7 +281,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Редактировать"
+                android:text="✏️ Редактировать"
                 android:visibility="gone" />
         </LinearLayout>
 
