@@ -55,6 +55,7 @@ class CatalogAdapter(
                 holder.name.text = entry.name
                 holder.info.text = ""
                 holder.expiryInfo.visibility = View.GONE
+                holder.lentInfo.visibility = View.GONE
 
                 holder.colorBar.setBackgroundColor(
                     context.resources.getColor(R.color.colorNormal, context.theme)
@@ -99,17 +100,34 @@ class CatalogAdapter(
                 if (entry.isExpired) {
                     holder.expiryInfo.visibility = View.VISIBLE
                     holder.expiryInfo.text = "⚠️ Просрочен"
-                    holder.expiryInfo.setTextColor(context.resources.getColor(android.R.color.holo_red_dark, context.theme))
+                    holder.expiryInfo.setTextColor(
+                        context.resources.getColor(android.R.color.holo_red_dark, context.theme)
+                    )
                 } else if (entry.daysUntilExpiry != Int.MAX_VALUE && entry.daysUntilExpiry <= 7) {
                     holder.expiryInfo.visibility = View.VISIBLE
                     holder.expiryInfo.text = "⏰ Осталось ${entry.daysUntilExpiry} дн."
-                    holder.expiryInfo.setTextColor(context.resources.getColor(android.R.color.holo_orange_dark, context.theme))
+                    holder.expiryInfo.setTextColor(
+                        context.resources.getColor(android.R.color.holo_orange_dark, context.theme)
+                    )
                 } else {
                     holder.expiryInfo.visibility = View.GONE
                 }
 
+                // ===== ЗАЙМ =====
+                if (entry.isLent && !entry.lentTo.isNullOrEmpty()) {
+                    holder.lentInfo.visibility = View.VISIBLE
+                    var text = "🤝 У ${entry.lentTo}"
+                    if (!entry.lentNote.isNullOrEmpty()) {
+                        text += " (${entry.lentNote})"
+                    }
+                    holder.lentInfo.text = text
+                } else {
+                    holder.lentInfo.visibility = View.GONE
+                }
+
                 // ===== ЦВЕТНАЯ ПОЛОСА =====
                 val colorRes = when {
+                    entry.isLent -> android.R.color.holo_orange_light  // выдан — оранжевый
                     entry.isExpired -> R.color.colorExpired
                     entry.daysUntilExpiry in 0..3 -> R.color.colorWarning
                     else -> R.color.colorNormal
@@ -131,6 +149,7 @@ class CatalogAdapter(
         val name: TextView = view.findViewById(R.id.name)
         val info: TextView = view.findViewById(R.id.info)
         val expiryInfo: TextView = view.findViewById(R.id.expiryInfo)
+        val lentInfo: TextView = view.findViewById(R.id.lentInfo)
         val colorBar: View = view.findViewById(R.id.colorBar)
     }
 }
