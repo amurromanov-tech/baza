@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 3,  // ← увеличили с 2 до 3
+    version = 4,  // ← увеличили с 3 до 4
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -41,14 +41,44 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Добавляем поля архива в таблицу items
                 db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
             }
         }
+
         // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 3 НА 4 (ЗАЙМ)
+        // ============================================================
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 2 НА 4 (ЕСЛИ ПРОПУСТИЛИ 3)
+        // ============================================================
+        private val MIGRATION_2_4 = object : Migration(2, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Архив
+                db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
+                // Займ
+                db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
+                db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -57,7 +87,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "baza.db"
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_2_4)
                     .fallbackToDestructiveMigration()  // на случай, если миграция не сработает
                     .build()
                     .also { INSTANCE = it }
