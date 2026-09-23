@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -11,7 +12,9 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- ===== ВЕРХНЯЯ ПАНЕЛЬ ===== -->
+        <!-- ============================================================ -->
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
+        <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -35,7 +38,9 @@
                 android:gravity="center" />
         </LinearLayout>
 
-        <!-- ===== ВЫБОР ПЕРИОДА ===== -->
+        <!-- ============================================================ -->
+        <!-- ВЫБОР ПЕРИОДА -->
+        <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -49,7 +54,9 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="24dp" />
 
-        <!-- ===== КАТЕГОРИИ ===== -->
+        <!-- ============================================================ -->
+        <!-- КАТЕГОРИИ -->
+        <!-- ============================================================ -->
 
         <!-- Продукты -->
         <androidx.cardview.widget.CardView
@@ -153,7 +160,9 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- ===== ИТОГО В БАЗЕ (ЯРКОЕ) ===== -->
+        <!-- ============================================================ -->
+        <!-- ИТОГО В БАЗЕ (ЯРКОЕ) -->
+        <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -189,7 +198,47 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- ===== В АРХИВЕ (СЕРОЕ) ===== -->
+        <!-- ============================================================ -->
+        <!-- ВЫДАНО (ОРАНЖЕВОЕ) -->
+        <!-- ============================================================ -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="#FFF3E0">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🤝 ВЫДАНО:"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#E65100" />
+
+                <TextView
+                    android:id="@+id/tvLentSum"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 ₽"
+                    android:textSize="18sp"
+                    android:textColor="#E65100"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ============================================================ -->
+        <!-- В АРХИВЕ (СЕРОЕ) -->
+        <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -224,7 +273,9 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- ===== ВСЕГО ПОТРАЧЕНО ===== -->
+        <!-- ============================================================ -->
+        <!-- ВСЕГО ПОТРАЧЕНО -->
+        <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -260,7 +311,9 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- ===== КОЛИЧЕСТВО ПРЕДМЕТОВ ===== -->
+        <!-- ============================================================ -->
+        <!-- КОЛИЧЕСТВО ПРЕДМЕТОВ -->
+        <!-- ============================================================ -->
         <TextView
             android:id="@+id/tvItemsCount"
             android:layout_width="match_parent"
@@ -269,7 +322,19 @@
             android:textSize="14sp"
             android:textColor="@android:color/darker_gray"
             android:gravity="center"
-            android:layout_marginTop="16dp" />
+            android:layout_marginTop="16dp"
+            tools:text="Предметов в базе: 12" />
+
+        <TextView
+            android:id="@+id/tvLentCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Выдано предметов: 0"
+            android:textSize="14sp"
+            android:textColor="@android:color/darker_gray"
+            android:gravity="center"
+            android:layout_marginTop="4dp"
+            tools:text="Выдано предметов: 3" />
 
         <TextView
             android:id="@+id/tvArchivedCount"
@@ -280,7 +345,8 @@
             android:textColor="@android:color/darker_gray"
             android:gravity="center"
             android:layout_marginTop="4dp"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="16dp"
+            tools:text="Предметов в архиве: 5" />
 
     </LinearLayout>
 </ScrollView>
