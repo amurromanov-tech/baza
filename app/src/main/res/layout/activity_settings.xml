@@ -30,19 +30,6 @@
             android:layout_height="wrap_content"
             android:text="🔄 Синхронизировать сейчас" />
 
-        <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 2: ОБЩАЯ ПАПКА -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ОБЩАЯ ПАПКА"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="8dp" />
-
         <Button
             android:id="@+id/btnShareLink"
             android:layout_width="match_parent"
@@ -50,12 +37,12 @@
             android:text="🔗 Поделиться ссылкой" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 3: СТАТИСТИКА, АРХИВ, ЗАЙМЫ -->
+        <!-- СЕКЦИЯ 2: РАЗДЕЛЫ -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="СТАТИСТИКА И УЧЁТ"
+            android:text="РАЗДЕЛЫ"
             android:textSize="12sp"
             android:textStyle="bold"
             android:textColor="@android:color/darker_gray"
@@ -63,93 +50,31 @@
             android:layout_marginBottom="8dp" />
 
         <Button
-            android:id="@+id/btnStatistics"
+            android:id="@+id/btnStatsAndAccounting"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="📊 Статистика расходов" />
+            android:text="📊 Статистика и учёт" />
 
         <Button
-            android:id="@+id/btnArchive"
+            android:id="@+id/btnBackup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="📦 Архив предметов" />
+            android:text="💾 Резервное копирование" />
 
         <Button
-            android:id="@+id/btnLentItems"
+            android:id="@+id/btnDiagnostics"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🤝 Выданные предметы" />
+            android:text="🔍 Диагностика" />
+
+        <Button
+            android:id="@+id/btnAppSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚙️ Настройки приложения" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 4: РЕЗЕРВНОЕ КОПИРОВАНИЕ -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="РЕЗЕРВНОЕ КОПИРОВАНИЕ"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnExportLocal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="📤 Экспорт локально" />
-
-        <Button
-            android:id="@+id/btnExportCloud"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="☁️ Экспорт в облако" />
-
-        <Button
-            android:id="@+id/btnImportLocal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="📥 Импорт из локального" />
-
-        <Button
-            android:id="@+id/btnImportCloud"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="☁️ Импорт из облака" />
-
-        <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 5: ЛОГИ И ДИАГНОСТИКА -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ЛОГИ И ДИАГНОСТИКА"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="8dp" />
-
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/switchLogging"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Вести логи" />
-
-        <Button
-            android:id="@+id/btnClearLogs"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🗑 Очистить логи" />
-
-        <Button
-            android:id="@+id/btnSendLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="📩 Отправить логи" />
-
-        <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 6: ОБНОВЛЕНИЯ -->
+        <!-- СЕКЦИЯ 3: ОБНОВЛЕНИЯ -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
@@ -179,7 +104,7 @@
             android:gravity="center" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 7: ОПАСНАЯ ЗОНА (СВЁРНУТА) -->
+        <!-- СЕКЦИЯ 4: ОПАСНАЯ ЗОНА (СВЁРНУТА) -->
         <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
