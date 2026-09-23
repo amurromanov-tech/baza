@@ -22,7 +22,6 @@ class StatisticsActivity : AppCompatActivity() {
     private val TAG = "StatisticsActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
-    // Периоды
     private val periods = arrayOf(
         "За всё время",
         "За сегодня",
@@ -42,7 +41,7 @@ class StatisticsActivity : AppCompatActivity() {
 
         binding.btnBack.setOnClickListener { finish() }
 
-        // Настраиваем выпадающий список периодов
+        // Спиннер периодов
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, periods)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.spinnerPeriod.adapter = adapter
@@ -63,9 +62,8 @@ class StatisticsActivity : AppCompatActivity() {
             try {
                 val (startDate, endDate) = getPeriodRange(periodIndex)
                 Logger.log(TAG, "Loading statistics for period: ${periods[periodIndex]}")
-                Logger.log(TAG, "Start: ${dateFormat.format(Date(startDate))}, End: ${dateFormat.format(Date(endDate))}")
 
-                // ===== ЗАГРУЖАЕМ АКТИВНЫЕ ПРЕДМЕТЫ =====
+                // ===== АКТИВНЫЕ ПРЕДМЕТЫ =====
                 val items = withContext(Dispatchers.IO) {
                     db.itemDao().getItemsByDateRange(startDate, endDate)
                 }
@@ -87,35 +85,44 @@ class StatisticsActivity : AppCompatActivity() {
                     totalActiveSum += sum
                 }
 
-                // ===== ЗАГРУЖАЕМ АРХИВ =====
+                // ===== АРХИВ =====
                 val archivedTotal = withContext(Dispatchers.IO) {
                     db.itemDao().getTotalArchivedSum() ?: 0.0
                 }
-
                 val archivedCount = withContext(Dispatchers.IO) {
                     db.itemDao().getArchivedItemsCount()
                 }
 
-                Logger.log(TAG, "Statistics: food=$foodSum, medicine=$medicineSum, other=$otherSum")
-                Logger.log(TAG, "Active total=$totalActiveSum, Archived=$archivedTotal")
+                // ===== ЗАЙМЫ =====
+                val lentTotal = withContext(Dispatchers.IO) {
+                    db.itemDao().getTotalLentSum() ?: 0.0
+                }
+                val lentCount = withContext(Dispatchers.IO) {
+                    db.itemDao().getLentItemsCount()
+                }
+
+                Logger.log(TAG, "Active=$totalActiveSum, Lent=$lentTotal, Archived=$archivedTotal")
 
                 // ===== ВЫВОД =====
                 binding.tvFoodSum.text = formatMoney(foodSum)
                 binding.tvMedicineSum.text = formatMoney(medicineSum)
                 binding.tvOtherSum.text = formatMoney(otherSum)
 
-                binding.tvItemsCount.text = "Предметов в базе: ${items.size}"
-
-                // Яркая строка: ИТОГО В БАЗЕ
+                // ИТОГО В БАЗЕ (яркое)
                 binding.tvActiveSum.text = formatMoney(totalActiveSum)
 
-                // Серая строка: В АРХИВЕ
+                // ВЫДАНО (оранжевое)
+                binding.tvLentSum.text = formatMoney(lentTotal)
+
+                // В АРХИВЕ (серое)
                 binding.tvArchivedSum.text = formatMoney(archivedTotal)
 
-                // Строка: ВСЕГО ПОТРАЧЕНО
+                // ВСЕГО ПОТРАЧЕНО (текущие + архив)
                 binding.tvGrandTotal.text = formatMoney(totalActiveSum + archivedTotal)
 
-                // Количество архивных
+                // Количество
+                binding.tvItemsCount.text = "Предметов в базе: ${items.size}"
+                binding.tvLentCount.text = "Выдано предметов: $lentCount"
                 binding.tvArchivedCount.text = "Предметов в архиве: $archivedCount"
 
             } catch (e: Exception) {
