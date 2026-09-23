@@ -128,15 +128,19 @@ class SettingsActivity : AppCompatActivity() {
         // Статистика
         binding.btnStatistics.setOnClickListener {
             Logger.log(TAG, "Statistics clicked")
-            val intent = Intent(this, StatisticsActivity::class.java)
-            startActivity(intent)
+            startActivity(Intent(this, StatisticsActivity::class.java))
         }
 
-        // ===== АРХИВ =====
+        // Архив
         binding.btnArchive.setOnClickListener {
             Logger.log(TAG, "Archive clicked")
-            val intent = Intent(this, ArchiveActivity::class.java)
-            startActivity(intent)
+            startActivity(Intent(this, ArchiveActivity::class.java))
+        }
+
+        // Выданные предметы
+        binding.btnLentItems.setOnClickListener {
+            Logger.log(TAG, "Lent items clicked")
+            startActivity(Intent(this, LentItemsActivity::class.java))
         }
 
         // ===== СВОРАЧИВАНИЕ ОПАСНОЙ ЗОНЫ =====
@@ -273,28 +277,25 @@ class SettingsActivity : AppCompatActivity() {
             val loggingEnabled = prefs.getBoolean("logging_enabled", true)
             binding.switchLogging.isChecked = loggingEnabled
             Logger.setEnabled(loggingEnabled)
-            Logger.log(TAG, "Settings loaded: logging=$loggingEnabled")
         } catch (e: Exception) {
             Logger.log(TAG, "Error loading settings", e)
         }
     }
 
     private fun saveSettings() {
-        Logger.log(TAG, "Saving settings")
         try {
             val prefs = getSharedPreferences("baza_settings", MODE_PRIVATE)
             prefs.edit().apply {
                 putBoolean("logging_enabled", binding.switchLogging.isChecked)
                 apply()
             }
-            Logger.log(TAG, "Settings saved")
         } catch (e: Exception) {
             Logger.log(TAG, "Error saving settings", e)
         }
     }
 
     // ============================================================
-    // ОЧИСТКА КЭША
+    // ОЧИСТКА КЭША И ЛОГОВ
     // ============================================================
 
     private fun showClearCacheDialog() {
@@ -302,7 +303,6 @@ class SettingsActivity : AppCompatActivity() {
             .setTitle("Очистить кэш")
             .setMessage("Удалить все загруженные изображения?")
             .setPositiveButton("Да") { _, _ ->
-                Logger.log(TAG, "Cache cleared")
                 clearCache()
                 Toast.makeText(this, "Кэш очищен", Toast.LENGTH_SHORT).show()
             }
@@ -314,22 +314,16 @@ class SettingsActivity : AppCompatActivity() {
         try {
             cacheDir.deleteRecursively()
             cacheDir.mkdirs()
-            Logger.log(TAG, "Cache cleared successfully")
         } catch (e: Exception) {
             Logger.log(TAG, "Error clearing cache", e)
         }
     }
-
-    // ============================================================
-    // ОЧИСТКА ЛОГОВ
-    // ============================================================
 
     private fun showClearLogsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить логи")
             .setMessage("Удалить все файлы логов?")
             .setPositiveButton("Да") { _, _ ->
-                Logger.log(TAG, "Logs cleared")
                 Logger.clearLogs()
                 Toast.makeText(this, "Логи очищены", Toast.LENGTH_SHORT).show()
             }
@@ -337,12 +331,7 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // ОТПРАВКА ЛОГОВ
-    // ============================================================
-
     private fun sendLogs() {
-        Logger.log(TAG, "Sending logs...")
         try {
             val logsDir = Logger.getLogsDirectory()
             if (logsDir == null || !logsDir.exists()) {
@@ -360,17 +349,13 @@ class SettingsActivity : AppCompatActivity() {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_EMAIL, arrayOf("support@familybase.com"))
                 putExtra(Intent.EXTRA_SUBJECT, "Логи приложения БАЗА")
-                val uris = logFiles.map { file ->
-                    android.net.Uri.fromFile(file)
-                }
+                val uris = logFiles.map { file -> android.net.Uri.fromFile(file) }
                 putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
             }
 
             startActivity(Intent.createChooser(intent, "Отправить логи"))
-            Logger.log(TAG, "Logs sent successfully")
         } catch (e: Exception) {
             Logger.log(TAG, "Error sending logs", e)
-            Toast.makeText(this, "Ошибка отправки логов", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -399,26 +384,18 @@ class SettingsActivity : AppCompatActivity() {
             .setView(editText)
             .setPositiveButton("Удалить всё") { _, _ ->
                 val input = editText.text.toString().trim()
-                if (input == randomWord) {
-                    clearAllData()
-                } else {
-                    Toast.makeText(this, "Неверное слово", Toast.LENGTH_SHORT).show()
-                }
+                if (input == randomWord) clearAllData()
+                else Toast.makeText(this, "Неверное слово", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Отмена", null)
             .show()
     }
 
     private fun generateRandomWord(): String {
-        val words = listOf(
-            "DELETE", "CLEAR", "REMOVE", "ERASE", "RESET",
-            "PURGE", "WIPE", "OBLITERATE", "ANNIHILATE"
-        )
-        return words.random()
+        return listOf("DELETE", "CLEAR", "REMOVE", "ERASE", "RESET", "PURGE", "WIPE").random()
     }
 
     private fun clearAllData() {
-        Logger.log(TAG, "=== CLEAR ALL DATA START ===")
         Toast.makeText(this, "Очистка данных...", Toast.LENGTH_SHORT).show()
 
         lifecycleScope.launch {
@@ -426,35 +403,13 @@ class SettingsActivity : AppCompatActivity() {
                 val db = AppDatabase.getInstance(this@SettingsActivity)
                 db.close()
 
-                val dbFile = getDatabasePath("baza.db")
-                if (dbFile.exists()) {
-                    dbFile.delete()
-                    Logger.log(TAG, "Database file deleted")
-                }
-                val walFile = getDatabasePath("baza.db-wal")
-                if (walFile.exists()) {
-                    walFile.delete()
-                    Logger.log(TAG, "WAL file deleted")
-                }
-                val shmFile = getDatabasePath("baza.db-shm")
-                if (shmFile.exists()) {
-                    shmFile.delete()
-                    Logger.log(TAG, "SHM file deleted")
-                }
-                Logger.log(TAG, "Local DB files removed")
+                getDatabasePath("baza.db").delete()
+                getDatabasePath("baza.db-wal").delete()
+                getDatabasePath("baza.db-shm").delete()
 
                 AppDatabase.resetInstance()
-                Logger.log(TAG, "AppDatabase instance reset")
 
-                try {
-                    val imagesDir = java.io.File(filesDir, "images")
-                    if (imagesDir.exists()) {
-                        imagesDir.deleteRecursively()
-                        Logger.log(TAG, "Deleted local images folder")
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Error deleting local images", e)
-                }
+                java.io.File(filesDir, "images").deleteRecursively()
 
                 val token = tokenStorage.getAccessToken()
                 if (token != null) {
@@ -464,53 +419,30 @@ class SettingsActivity : AppCompatActivity() {
                         val folderName = tokenStorage.getFolderName() ?: "BAZA"
                         val rootPath = "/$folderName"
 
-                        val deleteData = api.deleteFile(auth, "$rootPath/data", true)
-                        Logger.log(TAG, "Delete $rootPath/data: ${deleteData.code()}")
-
-                        val deleteImages = api.deleteFile(auth, "$rootPath/images", true)
-                        Logger.log(TAG, "Delete $rootPath/images: ${deleteImages.code()}")
-
-                        val deleteLastModified = api.deleteFile(auth, "$rootPath/.last_modified", true)
-                        Logger.log(TAG, "Delete $rootPath/.last_modified: ${deleteLastModified.code()}")
-
-                        Logger.log(TAG, "Disk contents cleared (root folder preserved)")
+                        api.deleteFile(auth, "$rootPath/data", true)
+                        api.deleteFile(auth, "$rootPath/images", true)
+                        api.deleteFile(auth, "$rootPath/.last_modified", true)
                     } catch (e: Exception) {
-                        Logger.log(TAG, "Error clearing disk contents", e)
+                        Logger.log(TAG, "Error clearing disk", e)
                     }
-                } else {
-                    Logger.log(TAG, "No token, skip Yandex.Disk deletion")
                 }
 
                 cacheDir.deleteRecursively()
                 cacheDir.mkdirs()
-                Logger.log(TAG, "Cache cleared")
-
                 Logger.clearLogs()
-                Logger.log(TAG, "Logs cleared")
 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        "✅ Все данные очищены",
-                        Toast.LENGTH_LONG
-                    ).show()
-
+                    Toast.makeText(this@SettingsActivity, "✅ Все данные очищены", Toast.LENGTH_LONG).show()
                     val intent = Intent(this@SettingsActivity, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     }
                     startActivity(intent)
                     finish()
                 }
-
-                Logger.log(TAG, "=== CLEAR ALL DATA FINISHED ===")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error clearing all data", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        "❌ Ошибка очистки: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@SettingsActivity, "❌ Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -524,10 +456,7 @@ class SettingsActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
             .setMessage("Вы уверены, что хотите выйти? Все локальные данные будут удалены.")
-            .setPositiveButton("Да") { _, _ ->
-                Logger.log(TAG, "Logging out...")
-                logout()
-            }
+            .setPositiveButton("Да") { _, _ -> logout() }
             .setNegativeButton("Нет", null)
             .show()
     }
@@ -543,13 +472,8 @@ class SettingsActivity : AppCompatActivity() {
                     db.itemDao().getAllItemsRaw().forEach { db.itemDao().deleteItem(it) }
                     db.lockDao().deleteAllLocks()
                     db.syncQueueDao().clearAll()
-                    Logger.log(TAG, "Database cleared")
 
-                    val imagesDir = java.io.File(filesDir, "images")
-                    if (imagesDir.exists()) {
-                        imagesDir.deleteRecursively()
-                        Logger.log(TAG, "Local images deleted")
-                    }
+                    java.io.File(filesDir, "images").deleteRecursively()
                 } catch (e: Exception) {
                     Logger.log(TAG, "Error clearing database", e)
                 }
@@ -560,8 +484,6 @@ class SettingsActivity : AppCompatActivity() {
             }
             startActivity(intent)
             finish()
-
-            Logger.log(TAG, "Logout completed")
         } catch (e: Exception) {
             Logger.log(TAG, "Error during logout", e)
             Toast.makeText(this, "Ошибка выхода", Toast.LENGTH_SHORT).show()
@@ -576,7 +498,6 @@ class SettingsActivity : AppCompatActivity() {
         val currentVersionCode = BuildConfig.VERSION_CODE
         val currentVersionName = BuildConfig.VERSION_NAME
 
-        Logger.log(TAG, "Checking for updates. Current version: $currentVersionName ($currentVersionCode)")
         Toast.makeText(this, "Проверка обновлений...", Toast.LENGTH_SHORT).show()
 
         lifecycleScope.launch {
@@ -585,10 +506,8 @@ class SettingsActivity : AppCompatActivity() {
                 val latestVersion = updateManager.checkForUpdate(currentVersionCode)
 
                 if (latestVersion != null && latestVersion.versionCode > currentVersionCode) {
-                    Logger.log(TAG, "Update available: ${latestVersion.versionName} (${latestVersion.versionCode})")
                     showUpdateDialog(latestVersion)
                 } else {
-                    Logger.log(TAG, "No updates available")
                     Toast.makeText(
                         this@SettingsActivity,
                         "У вас последняя версия ($currentVersionName)",
@@ -597,11 +516,7 @@ class SettingsActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error checking for updates", e)
-                Toast.makeText(
-                    this@SettingsActivity,
-                    "Ошибка проверки обновлений: ${e.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this@SettingsActivity, "Ошибка проверки: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -618,14 +533,11 @@ class SettingsActivity : AppCompatActivity() {
                 """.trimIndent()
             )
             .setPositiveButton("Обновить") { _, _ ->
-                Logger.log(TAG, "User clicked 'Update'")
                 val updateManager = UpdateManager(this)
                 updateManager.downloadAndInstall(version.downloadUrl, version.versionName)
                 Toast.makeText(this, "Загрузка началась...", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Позже") { _, _ ->
-                Logger.log(TAG, "User clicked 'Later'")
-            }
+            .setNegativeButton("Позже", null)
             .show()
     }
 
@@ -642,7 +554,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             startActivity(Intent.createChooser(intent, "Поделиться ссылкой"))
         } else {
-            Toast.makeText(this, "Ссылка не найдена. Сначала настройте общую папку.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Ссылка не найдена", Toast.LENGTH_LONG).show()
         }
     }
 
