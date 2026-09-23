@@ -6,7 +6,6 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.databinding.ActivityStatisticsBinding
 import com.family.base.util.Logger
@@ -66,6 +65,7 @@ class StatisticsActivity : AppCompatActivity() {
                 Logger.log(TAG, "Loading statistics for period: ${periods[periodIndex]}")
                 Logger.log(TAG, "Start: ${dateFormat.format(Date(startDate))}, End: ${dateFormat.format(Date(endDate))}")
 
+                // ===== ЗАГРУЖАЕМ АКТИВНЫЕ ПРЕДМЕТЫ =====
                 val items = withContext(Dispatchers.IO) {
                     db.itemDao().getItemsByDateRange(startDate, endDate)
                 }
@@ -73,7 +73,7 @@ class StatisticsActivity : AppCompatActivity() {
                 var foodSum = 0.0
                 var medicineSum = 0.0
                 var otherSum = 0.0
-                var totalSum = 0.0
+                var totalActiveSum = 0.0
 
                 items.forEach { item ->
                     val price = item.price ?: 0.0
@@ -84,17 +84,39 @@ class StatisticsActivity : AppCompatActivity() {
                         "medicine" -> medicineSum += sum
                         else -> otherSum += sum
                     }
-                    totalSum += sum
+                    totalActiveSum += sum
                 }
 
-                Logger.log(TAG, "Statistics: food=$foodSum, medicine=$medicineSum, other=$otherSum, total=$totalSum")
+                // ===== ЗАГРУЖАЕМ АРХИВ =====
+                val archivedTotal = withContext(Dispatchers.IO) {
+                    db.itemDao().getTotalArchivedSum() ?: 0.0
+                }
 
+                val archivedCount = withContext(Dispatchers.IO) {
+                    db.itemDao().getArchivedItemsCount()
+                }
+
+                Logger.log(TAG, "Statistics: food=$foodSum, medicine=$medicineSum, other=$otherSum")
+                Logger.log(TAG, "Active total=$totalActiveSum, Archived=$archivedTotal")
+
+                // ===== ВЫВОД =====
                 binding.tvFoodSum.text = formatMoney(foodSum)
                 binding.tvMedicineSum.text = formatMoney(medicineSum)
                 binding.tvOtherSum.text = formatMoney(otherSum)
-                binding.tvTotalSum.text = formatMoney(totalSum)
 
-                binding.tvItemsCount.text = "Предметов: ${items.size}"
+                binding.tvItemsCount.text = "Предметов в базе: ${items.size}"
+
+                // Яркая строка: ИТОГО В БАЗЕ
+                binding.tvActiveSum.text = formatMoney(totalActiveSum)
+
+                // Серая строка: В АРХИВЕ
+                binding.tvArchivedSum.text = formatMoney(archivedTotal)
+
+                // Строка: ВСЕГО ПОТРАЧЕНО
+                binding.tvGrandTotal.text = formatMoney(totalActiveSum + archivedTotal)
+
+                // Количество архивных
+                binding.tvArchivedCount.text = "Предметов в архиве: $archivedCount"
 
             } catch (e: Exception) {
                 Logger.log(TAG, "Error loading statistics", e)
@@ -139,5 +161,10 @@ class StatisticsActivity : AppCompatActivity() {
         } else {
             String.format("%.2f ₽", amount)
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Logger.log(TAG, "onDestroy called")
     }
 }
