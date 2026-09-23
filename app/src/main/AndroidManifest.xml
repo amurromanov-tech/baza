@@ -33,10 +33,10 @@
         </provider>
 
         <!-- ============================================================ -->
-        <!-- ACTIVITIES -->
+        <!-- ГЛАВНЫЕ ACTIVITIES -->
         <!-- ============================================================ -->
 
-        <!-- Вход (главная точка входа) -->
+        <!-- Вход (launcher) -->
         <activity
             android:name=".ui.LoginActivity"
             android:exported="true">
@@ -46,14 +46,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Главный экран -->
+        <activity android:name=".ui.MainActivity" />
+
         <!-- Сканер штрих-кодов (только портрет) -->
         <activity
             android:name=".ui.BarcodeScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
-        <!-- Главный экран -->
-        <activity android:name=".ui.MainActivity" />
+        <!-- ============================================================ -->
+        <!-- ЭКРАНЫ ДОБАВЛЕНИЯ И РЕДАКТИРОВАНИЯ -->
+        <!-- ============================================================ -->
 
         <!-- Добавление предмета -->
         <activity android:name=".ui.AddItemActivity" />
@@ -61,16 +65,36 @@
         <!-- Детали предмета -->
         <activity android:name=".ui.ItemDetailActivity" />
 
-        <!-- Настройки -->
-        <activity android:name=".ui.SettingsActivity" />
-
         <!-- Подключение к семье -->
         <activity android:name=".ui.ConnectFamilyActivity" />
 
-        <!-- Статистика -->
+        <!-- ============================================================ -->
+        <!-- НАСТРОЙКИ И РАЗДЕЛЫ -->
+        <!-- ============================================================ -->
+
+        <!-- Настройки (главный экран) -->
+        <activity android:name=".ui.SettingsActivity" />
+
+        <!-- Статистика и учёт -->
+        <activity android:name=".ui.StatsAndAccountingActivity" />
+
+        <!-- Резервное копирование -->
+        <activity android:name=".ui.BackupActivity" />
+
+        <!-- Диагностика -->
+        <activity android:name=".ui.DiagnosticsActivity" />
+
+        <!-- Настройки приложения (тема, язык и т.д.) -->
+        <activity android:name=".ui.AppSettingsActivity" />
+
+        <!-- ============================================================ -->
+        <!-- СТАТИСТИКА, АРХИВ, ЗАЙМЫ -->
+        <!-- ============================================================ -->
+
+        <!-- Статистика расходов -->
         <activity android:name=".ui.StatisticsActivity" />
 
-        <!-- Архив -->
+        <!-- Архив предметов -->
         <activity android:name=".ui.ArchiveActivity" />
 
         <!-- Выданные предметы -->
