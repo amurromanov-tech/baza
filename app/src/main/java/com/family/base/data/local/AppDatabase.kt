@@ -15,50 +15,57 @@ import com.family.base.data.local.entity.*
         ItemEntity::class,
         HistoryEntry::class,
         SettingsEntity::class,
-        SyncInfoEntity::class,
         LockEntity::class,
-        SyncQueueEntity::class
+        SyncQueueEntity::class,
+        SyncInfoEntity::class
     ],
-    version = 3,
+    version = 3,  // ← увеличили с 2 до 3
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
+
     abstract fun folderDao(): FolderDao
     abstract fun itemDao(): ItemDao
     abstract fun historyDao(): HistoryDao
     abstract fun settingsDao(): SettingsDao
-    abstract fun syncInfoDao(): SyncInfoDao
     abstract fun lockDao(): LockDao
     abstract fun syncQueueDao(): SyncQueueDao
+    abstract fun syncInfoDao(): SyncInfoDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 2 НА 3 (АРХИВ)
+        // ============================================================
         private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE items ADD COLUMN price REAL")
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Добавляем поля архива в таблицу items
+                db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
+                db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
             }
         }
+        // ============================================================
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "baza_database"
+                    "baza.db"
                 )
-                .addMigrations(MIGRATION_2_3)
-                .build().also { INSTANCE = it }
+                    .addMigrations(MIGRATION_2_3)
+                    .fallbackToDestructiveMigration()  // на случай, если миграция не сработает
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
 
-        // ===== НОВЫЙ МЕТОД ДЛЯ СБРОСА ЭКЗЕМПЛЯРА =====
         fun resetInstance() {
-            synchronized(this) {
-                INSTANCE?.close()
-                INSTANCE = null
-            }
+            INSTANCE = null
         }
     }
 }
