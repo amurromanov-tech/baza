@@ -1,66 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-
-    <application
-        android:name=".BaseApplication"
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.BAZA"
-        android:usesCleartextTraffic="true"
-        android:requestLegacyExternalStorage="true">
-
-        <!-- FileProvider для камеры -->
-      <provider
-    android:name="androidx.core.content.FileProvider"
-    android:authorities="${applicationId}.fileprovider"
-    android:exported="false"
-    android:grantUriPermissions="true">
-    <meta-data
-        android:name="android.support.FILE_PROVIDER_PATHS"
-        android:resource="@xml/file_paths" />
-</provider>
-
-        <activity
-            android:name=".ui.LoginActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-        <activity
-    android:name=".ui.BarcodeScannerActivity"
-    android:exported="false"
-    android:screenOrientation="portrait" />
-        <activity android:name=".ui.MainActivity" />
-        <activity android:name=".ui.AddItemActivity" />
-        <activity android:name=".ui.ItemDetailActivity" />
-        <activity android:name=".ui.SettingsActivity" />
-        <activity android:name=".ui.ConnectFamilyActivity" />
-        <activity android:name=".ui.StatisticsActivity" />
-
-        <!-- OAuth redirect -->
-        <activity
-            android:name="net.openid.appauth.RedirectUriReceiverActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="com.family.base"
-                    android:host="oauth2redirect" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
+cd C:\BAZA-main
+git add app/src/main/AndroidManifest.xml
+git add app/src/main/java/com/family/base/data/local/entity/ItemEntity.kt
+git add app/src/main/java/com/family/base/data/local/dao/ItemDao.kt
+git add app/src/main/java/com/family/base/data/local/AppDatabase.kt
+git add app/src/main/java/com/family/base/ui/viewmodel/MainViewModel.kt
+git add app/src/main/java/com/family/base/ui/MainActivity.kt
+git add app/src/main/java/com/family/base/ui/ArchiveActivity.kt
+git add app/src/main/java/com/family/base/ui/adapter/ArchiveAdapter.kt
+git add app/src/main/java/com/family/base/ui/StatisticsActivity.kt
+git add app/src/main/java/com/family/base/ui/SettingsActivity.kt
+git add app/src/main/res/layout/activity_archive.xml
+git add app/src/main/res/layout/item_archive_entry.xml
+git add app/src/main/res/layout/activity_statistics.xml
+git add app/src/main/res/layout/activity_settings.xml
+git commit -m "Добавлена система архива предметов с причинами и статистикой"
+git push origin main
