@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
                 val processedBytes = ImageUtils.processImage(bitmap)
                 newFolderImageBytes = processedBytes
                 Logger.log(TAG, "Folder image selected, size=${processedBytes.size}")
@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity() {
     private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, it)
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
                 val processedBytes = ImageUtils.processImage(bitmap)
                 val folder = currentFolderForImage
                 if (folder != null) {
@@ -286,7 +286,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Logger.log(TAG, "onResume called, reloading contents...")
-        // Обновляем список — это подтянет новые иконки предметов
         viewModel.loadContents()
     }
 
@@ -345,9 +344,7 @@ class MainActivity : AppCompatActivity() {
                 Logger.log(TAG, "Search cleared")
                 viewModel.clearSearch()
             }
-            .setNeutralButton("Отмена") { _, _ ->
-                // ничего не делаем
-            }
+            .setNeutralButton("Отмена") { _, _ -> }
             .show()
     }
 
@@ -453,19 +450,64 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // КОНТЕКСТНОЕ МЕНЮ ПРЕДМЕТА (С АРХИВОМ)
+    // ============================================================
     private fun showItemContextMenu(item: ItemEntity) {
         Logger.log(TAG, "Item context menu: ${item.name}")
-        val items = arrayOf("Редактировать", "Удалить", "История", "Переместить")
+        val items = arrayOf("Редактировать", "В архив", "Удалить", "История", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с предметом")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> editItem(item)
-                    1 -> confirmDeleteItem(item)
-                    2 -> showItemHistory(item)
-                    3 -> showMoveItemDialog(item)
+                    1 -> showArchiveDialog(item)
+                    2 -> confirmDeleteItem(item)
+                    3 -> showItemHistory(item)
+                    4 -> showMoveItemDialog(item)
                 }
             }
+            .show()
+    }
+
+    // ============================================================
+    // АРХИВАЦИЯ ПРЕДМЕТА
+    // ============================================================
+    private fun showArchiveDialog(item: ItemEntity) {
+        val reasons = arrayOf(
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
+
+        AlertDialog.Builder(this)
+            .setTitle("В архив: ${item.name}")
+            .setItems(reasons) { _, which ->
+                showArchiveNoteDialog(item, reasonKeys[which])
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
+        val editText = android.widget.EditText(this)
+        editText.hint = "Комментарий (необязательно)"
+
+        AlertDialog.Builder(this)
+            .setTitle("Комментарий")
+            .setMessage("Добавьте заметку о предмете:")
+            .setView(editText)
+            .setPositiveButton("В архив") { _, _ ->
+                val note = editText.text.toString().trim().ifEmpty { null }
+                viewModel.archiveItem(item.id, reason, note)
+                Toast.makeText(this, "Предмет перемещён в архив", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
@@ -606,13 +648,15 @@ class MainActivity : AppCompatActivity() {
         Logger.log(TAG, "Confirming delete item: ${item.name}")
         AlertDialog.Builder(this)
             .setTitle("Удалить предмет «${item.name}»?")
-            .setPositiveButton("Да") { _, _ ->
+            .setMessage("Это действие нельзя отменить. Возможно, лучше переместить в архив?")
+            .setPositiveButton("Удалить") { _, _ ->
                 Logger.log(TAG, "Delete item confirmed")
                 viewModel.deleteItem(item.id)
             }
-            .setNegativeButton("Нет") { _, _ ->
-                Logger.log(TAG, "Delete item cancelled")
+            .setNegativeButton("В архив") { _, _ ->
+                showArchiveDialog(item)
             }
+            .setNeutralButton("Отмена", null)
             .show()
     }
 
