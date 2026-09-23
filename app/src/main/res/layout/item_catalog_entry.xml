@@ -2,6 +2,7 @@
 <androidx.cardview.widget.CardView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginStart="8dp"
@@ -20,14 +21,14 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <!-- ЦВЕТНАЯ ПОЛОСА СЛЕВА -->
+        <!-- ===== ЦВЕТНАЯ ПОЛОСА СЛЕВА ===== -->
         <View
             android:id="@+id/colorBar"
             android:layout_width="4dp"
-            android:layout_height="64dp"
+            android:layout_height="72dp"
             android:background="#4CAF50" />
 
-        <!-- ИКОНКА -->
+        <!-- ===== ИКОНКА ===== -->
         <ImageView
             android:id="@+id/icon"
             android:layout_width="56dp"
@@ -38,7 +39,7 @@
             android:scaleType="centerCrop"
             android:contentDescription="Иконка" />
 
-        <!-- ИНФОРМАЦИЯ -->
+        <!-- ===== ИНФОРМАЦИЯ ===== -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -60,14 +61,14 @@
                 android:ellipsize="end"
                 android:textColor="?android:attr/textColorPrimary" />
 
-            <!-- Информация: количество, цена -->
+            <!-- Информация: количество + цена -->
             <TextView
                 android:id="@+id/info"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textSize="13sp"
                 android:layout_marginTop="4dp"
-                android:maxLines="2"
+                android:maxLines="1"
                 android:ellipsize="end"
                 android:textColor="?android:attr/textColorSecondary" />
 
@@ -80,7 +81,24 @@
                 android:layout_marginTop="2dp"
                 android:maxLines="1"
                 android:ellipsize="end"
-                android:visibility="gone" />
+                android:visibility="gone"
+                tools:text="⚠️ Просрочен"
+                tools:visibility="visible" />
+
+            <!-- Займ (кому выдан) -->
+            <TextView
+                android:id="@+id/lentInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:layout_marginTop="2dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#FF9800"
+                android:visibility="gone"
+                tools:text="🤝 У Иванова (на неделю)"
+                tools:visibility="visible" />
         </LinearLayout>
     </LinearLayout>
 </androidx.cardview.widget.CardView>
