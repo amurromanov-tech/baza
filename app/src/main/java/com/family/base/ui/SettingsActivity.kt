@@ -132,6 +132,13 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
+        // ===== АРХИВ =====
+        binding.btnArchive.setOnClickListener {
+            Logger.log(TAG, "Archive clicked")
+            val intent = Intent(this, ArchiveActivity::class.java)
+            startActivity(intent)
+        }
+
         // ===== СВОРАЧИВАНИЕ ОПАСНОЙ ЗОНЫ =====
         binding.dangerZoneHeader.setOnClickListener {
             val isVisible = binding.dangerZoneContent.visibility == View.VISIBLE
@@ -533,7 +540,7 @@ class SettingsActivity : AppCompatActivity() {
                 try {
                     val db = AppDatabase.getInstance(this@SettingsActivity)
                     db.folderDao().getAllFolders().forEach { db.folderDao().deleteFolder(it) }
-                    db.itemDao().getAllItems().forEach { db.itemDao().deleteItem(it) }
+                    db.itemDao().getAllItemsRaw().forEach { db.itemDao().deleteItem(it) }
                     db.lockDao().deleteAllLocks()
                     db.syncQueueDao().clearAll()
                     Logger.log(TAG, "Database cleared")
