@@ -38,15 +38,20 @@ class ArchiveAdapter(
         holder.info.text = buildInfoText(item)
         holder.reason.text = getReasonText(item.archivedReason)
 
-        // Фото
+        // ===== ИКОНКА: всегда показываем (дефолтную, если нет фото) =====
+        holder.icon.visibility = View.VISIBLE
+        holder.icon.load(null)
+
         val localFile = ImageUtils.getLocalImageFile(context, item.id)
         if (localFile != null && localFile.exists()) {
-            holder.icon.visibility = View.VISIBLE
             holder.icon.load(localFile) {
                 crossfade(true)
+                placeholder(R.drawable.ic_item_default)
+                error(R.drawable.ic_item_default)
             }
         } else {
-            holder.icon.visibility = View.GONE
+            // Дефолтная иконка предмета
+            holder.icon.load(R.drawable.ic_item_default)
         }
 
         // Клик по элементу — показать детали
