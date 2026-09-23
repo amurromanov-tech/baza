@@ -24,7 +24,13 @@ data class ItemEntity(
     var daysUntilExpiry: Int = Int.MAX_VALUE,
     var isExpired: Boolean = false,
     val itemType: String? = null,
-    val price: Double? = null  // новое поле
+    val price: Double? = null,
+
+    // ===== НОВЫЕ ПОЛЯ ДЛЯ АРХИВА =====
+    val isArchived: Boolean = false,
+    val archivedReason: String? = null,   // "eaten", "broken", "thrown", "gifted", "sold", "expired", "other"
+    val archivedDate: Long? = null,
+    val archivedNote: String? = null      // Комментарий: "сломался", "отдал другу" и т.д.
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
