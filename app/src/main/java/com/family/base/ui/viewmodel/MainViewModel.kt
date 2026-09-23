@@ -182,11 +182,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
+                // 1. Скачиваем данные с диска
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
-                mergeData(diskFolders, diskItems)
-                uploadUnsyncedImages()
-                syncImages(diskItems)
 
+                // 2. Объединяем с локальными
+                mergeData(diskFolders, diskItems)
+
+                // 3. Загружаем несинхронизированные фото (локальные → на диск)
+                uploadUnsyncedImages()
+
+                // 4. Скачиваем фото с диска (для ВСЕХ предметов из БД)
+                syncImages()
+
+                // 5. Обрабатываем очередь
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     syncStatus.postValue(SyncStatus.PENDING)
@@ -202,9 +210,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ЗАГРУЗКА НЕСИНХРОНИЗИРОВАННЫХ ФОТО (ЛОКАЛЬНЫЕ → НА ДИСК)
+    // ============================================================
     private suspend fun uploadUnsyncedImages() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
+
+        var uploadedCount = 0
 
         allItems.forEach { item ->
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -213,21 +226,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (item.imageUrl.isNullOrEmpty()) {
                 try {
                     val bytes = localFile.readBytes()
+                    Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
                     val success = repository.uploadItemImage(item.id, bytes)
                     if (success) {
                         val updated = item.copy(imageUrl = "images/${item.id}.jpg")
                         withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                        uploadedCount++
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
                 }
             }
         }
+        Logger.log(TAG, "Uploaded $uploadedCount images")
     }
 
-    private suspend fun syncImages(items: List<ItemEntity>) {
+    // ============================================================
+    // СКАЧИВАНИЕ ФОТО С ДИСКА (ДЛЯ ВСЕХ ПРЕДМЕТОВ ИЗ БД)
+    // ============================================================
+    private suspend fun syncImages() {
         val appContext = getApplication<Application>().applicationContext
-        items.filter { !it.imageUrl.isNullOrEmpty() }.forEach { item ->
+
+        // ===== БЕРЁМ ВСЕ ПРЕДМЕТЫ ИЗ БД (включая архивные) =====
+        val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
+
+        val itemsWithImages = allItems.filter { !it.imageUrl.isNullOrEmpty() }
+        if (itemsWithImages.isEmpty()) {
+            Logger.log(TAG, "No images to sync (download)")
+            return
+        }
+
+        Logger.log(TAG, "Syncing ${itemsWithImages.size} images (download)...")
+        var downloadedCount = 0
+
+        itemsWithImages.forEach { item ->
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile != null && localFile.exists()) return@forEach
 
@@ -236,11 +268,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (bitmap != null) {
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     ImageUtils.saveImageLocally(appContext, item.id, bytes)
+                    downloadedCount++
+                    Logger.log(TAG, "Downloaded image: ${item.id}")
+                } else {
+                    Logger.log(TAG, "Image not found on disk: ${item.id}")
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to download image ${item.id}: ${e.message}")
             }
         }
+
+        Logger.log(TAG, "Images downloaded: $downloadedCount")
         loadContents()
     }
 
@@ -607,10 +645,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     db.itemDao().insertItem(copy)
 
+                    // Копируем фото, если есть
+                    val appContext = getApplication<Application>().applicationContext
+                    val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+                    if (localFile != null && localFile.exists()) {
+                        val bytes = localFile.readBytes()
+                        ImageUtils.saveImageLocally(appContext, copy.id, bytes)
+                    }
+
                     globalScope.launch {
                         try {
                             if (isInternetAvailable()) {
                                 repository.createItemOnDisk(copy)
+                                uploadItemImageIfExists(copy)
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
                             }
                         } catch (e: Exception) {
