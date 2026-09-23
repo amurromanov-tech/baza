@@ -21,6 +21,7 @@ import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityItemDetailBinding
 import com.family.base.ui.viewmodel.MainViewModel
@@ -43,6 +44,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var viewModel: MainViewModel
     private val FOLDER_PATH = "/${Config.SHARED_FOLDER_NAME}"
     private val CAMERA_PERMISSION_REQUEST = 200
+
+    // ===== СЕРВИС ПОИСКА ТОВАРА =====
+    private val productLookupService = ProductLookupService()
 
     private var newImageBytes: ByteArray? = null
     private var photoUri: Uri? = null
@@ -98,6 +102,28 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         } else {
             Toast.makeText(this, "Фото не сделано", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ===== СКАНЕР ШТРИХ-КОДА =====
+    private val barcodeScannerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val scannedValue = result.data?.getStringExtra("barcode")
+            if (!scannedValue.isNullOrEmpty()) {
+                Logger.log(TAG, "Scanned barcode: $scannedValue")
+
+                // Записываем в поле
+                binding.etBarcode.setText(scannedValue)
+
+                // Если это цифры — предлагаем поиск товара
+                if (scannedValue.all { it.isDigit() }) {
+                    showLookupDialog(scannedValue)
+                } else {
+                    Toast.makeText(this, "Код: $scannedValue", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -181,6 +207,13 @@ class ItemDetailActivity : AppCompatActivity() {
 
         // ===== КНОПКА ВОЗВРАТА =====
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
+
+        // ===== СКАНЕР ШТРИХ-КОДА =====
+        binding.btnScanBarcode.setOnClickListener {
+            Logger.log(TAG, "Scan barcode clicked")
+            val intent = Intent(this, BarcodeScannerActivity::class.java)
+            barcodeScannerLauncher.launch(intent)
+        }
     }
 
     private fun changeQuantity(delta: Int) {
@@ -321,7 +354,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnSave.visibility = View.VISIBLE
                     binding.btnEdit.visibility = View.GONE
 
-                    // Скрываем блок займа в режиме редактирования
                     binding.cardLentInfo.visibility = View.GONE
                 }
             } catch (e: Exception) {
@@ -443,10 +475,86 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // ПОИСК ТОВАРА ПО ШТРИХ-КОДУ
+    // ============================================================
+    private fun showLookupDialog(barcode: String) {
+        AlertDialog.Builder(this)
+            .setTitle("🔍 Найти товар?")
+            .setMessage("Найден штрих-код: $barcode\n\nИскать информацию о товаре в базах?")
+            .setPositiveButton("Искать") { _, _ ->
+                lookupProduct(barcode)
+            }
+            .setNegativeButton("Только код") { _, _ ->
+                Toast.makeText(this, "Штрих-код сохранён", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun lookupProduct(barcode: String) {
+        Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch {
+            try {
+                val result = productLookupService.lookupProduct(barcode)
+
+                if (result.success && result.product != null) {
+                    val product = result.product
+
+                    val displayName = when {
+                        !product.name.isNullOrEmpty() -> product.name
+                        !product.brand.isNullOrEmpty() -> product.brand
+                        !product.category.isNullOrEmpty() -> product.category
+                        else -> null
+                    }
+
+                    val descriptionText = buildString {
+                        if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
+                            append("Бренд: ${product.brand}\n")
+                        }
+                        if (!product.category.isNullOrEmpty()) {
+                            append("Категория: ${product.category}\n")
+                        }
+                        if (!product.description.isNullOrEmpty()) {
+                            append("\n${product.description}")
+                        }
+                        if (product.source != null) {
+                            append("\n\nИсточник: ${product.source}")
+                        }
+                    }.trim()
+
+                    AlertDialog.Builder(this@ItemDetailActivity)
+                        .setTitle("✅ Найдено: ${displayName ?: barcode}")
+                        .setMessage("Что заполнить?\n\nНазвание: ${displayName ?: "—"}\n\nОписание: ${descriptionText.ifEmpty { "—" }}")
+                        .setPositiveButton("Заполнить всё") { _, _ ->
+                            displayName?.let { binding.etName.setText(it) }
+                            if (descriptionText.isNotEmpty()) {
+                                binding.etDescription.setText(descriptionText)
+                            }
+                            Toast.makeText(this@ItemDetailActivity, "Поля заполнены", Toast.LENGTH_SHORT).show()
+                        }
+                        .setNeutralButton("Только название") { _, _ ->
+                            displayName?.let { binding.etName.setText(it) }
+                        }
+                        .setNegativeButton("Отмена", null)
+                        .show()
+                } else {
+                    Toast.makeText(
+                        this@ItemDetailActivity,
+                        "Товар не найден. Введите название вручную.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error looking up product", e)
+                Toast.makeText(this@ItemDetailActivity, "Ошибка поиска: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ============================================================
     // ДЕЙСТВИЯ
     // ============================================================
 
-    // ===== ВЫДАТЬ =====
     private fun showLendDialog() {
         val id = itemId ?: return
         val container = android.widget.LinearLayout(this).apply {
@@ -474,7 +582,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== ВЕРНУТЬ =====
     private fun showReturnDialog() {
         val id = itemId ?: return
         AlertDialog.Builder(this)
@@ -489,7 +596,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== ПЕРЕНЕСТИ =====
     private fun showMoveDialog() {
         val id = itemId ?: return
         lifecycleScope.launch {
@@ -513,7 +619,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ===== КОПИРОВАТЬ =====
     private fun showCopyDialog() {
         val id = itemId ?: return
         AlertDialog.Builder(this)
@@ -528,7 +633,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== АРХИВИРОВАТЬ =====
     private fun showArchiveDialog() {
         val id = itemId ?: return
         val reasons = arrayOf("🍽 Съедено", "🔧 Сломано", "🗑 Выброшено", "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое")
@@ -545,7 +649,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== УДАЛИТЬ =====
     private fun showDeleteDialog() {
         val id = itemId ?: return
         AlertDialog.Builder(this)
