@@ -56,7 +56,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             checkFirstLaunch()
             // Автоматическая синхронизация ОТКЛЮЧЕНА
-            // syncWithDisk() вызывается только из AppLifecycleObserver (вход/выход) и по кнопке
         }
     }
 
@@ -72,18 +71,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (settings == null || settings.isFirstLaunch) {
                 Logger.log(TAG, "First launch detected - initializing")
                 settingsDao.insertOrUpdateSettings(
-                    SettingsEntity(
-                        id = 1,
-                        isFirstLaunch = false
-                    )
+                    SettingsEntity(id = 1, isFirstLaunch = false)
                 )
-                Logger.log(TAG, "First launch flag saved")
-            } else {
-                Logger.log(TAG, "Not first launch")
             }
         } catch (e: Exception) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
-            e.printStackTrace()
         }
     }
 
@@ -92,21 +84,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
 
     fun navigateToFolder(folderId: String?) {
-        Logger.log(TAG, "navigateToFolder: folderId=$folderId")
         currentFolderId = folderId
         loadContents()
         viewModelScope.launch { updateCurrentPath() }
     }
 
     fun navigateToRoot() {
-        Logger.log(TAG, "navigateToRoot called")
         currentFolderId = null
         loadContents()
         viewModelScope.launch { updateCurrentPath() }
     }
 
     fun navigateUp() {
-        Logger.log(TAG, "navigateUp called, currentFolderId=$currentFolderId")
         viewModelScope.launch {
             try {
                 currentFolderId?.let { id ->
@@ -117,7 +106,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in navigateUp: ${e.message}")
-                e.printStackTrace()
             }
         }
     }
@@ -127,8 +115,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
 
     fun loadContents() {
-        Logger.log(TAG, "loadContents START, currentFolderId=$currentFolderId")
-        val start = System.currentTimeMillis()
         viewModelScope.launch {
             try {
                 val entries = mutableListOf<Any>()
@@ -153,10 +139,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     entries.addAll(items)
                 }
                 currentEntries.postValue(entries)
-                Logger.log(TAG, "loadContents END, took ${System.currentTimeMillis() - start} ms")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in loadContents: ${e.message}")
-                e.printStackTrace()
             }
         }
     }
@@ -173,11 +157,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else break
             }
             val path = if (pathParts.isEmpty()) "/" else pathParts.reversed().joinToString("/")
-            Logger.log(TAG, "Updated path: $path")
             currentPath.postValue(path)
         } catch (e: Exception) {
             Logger.log(TAG, "Error in updateCurrentPath: ${e.message}")
-            e.printStackTrace()
         }
     }
 
@@ -186,34 +168,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
 
     fun syncWithDisk() {
-        Logger.log(TAG, "syncWithDisk called")
         viewModelScope.launch {
             try {
                 if (!ensureValidToken()) {
-                    Logger.log(TAG, "Token validation failed, cannot sync")
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     return@launch
                 }
                 if (!isInternetAvailable()) {
-                    Logger.log(TAG, "No internet, setting OFFLINE status")
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     checkPendingChanges()
                     return@launch
                 }
 
                 syncStatus.postValue(SyncStatus.SYNCING)
-                Logger.log(TAG, "Internet available, starting sync")
 
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
-                Logger.log(TAG, "Downloaded from disk: ${diskFolders.size} folders, ${diskItems.size} items")
-
                 mergeData(diskFolders, diskItems)
                 uploadUnsyncedImages()
                 syncImages(diskItems)
 
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
-                    Logger.log(TAG, "Has $pendingCount pending changes")
                     syncStatus.postValue(SyncStatus.PENDING)
                     processPendingChanges()
                 } else {
@@ -221,10 +196,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 loadContents()
-                Logger.log(TAG, "syncWithDisk finished")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in syncWithDisk: ${e.message}")
-                e.printStackTrace()
             }
         }
     }
@@ -233,8 +206,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        var uploadedCount = 0
-
         allItems.forEach { item ->
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile == null || !localFile.exists()) return@forEach
@@ -242,31 +213,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (item.imageUrl.isNullOrEmpty()) {
                 try {
                     val bytes = localFile.readBytes()
-                    Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
                     val success = repository.uploadItemImage(item.id, bytes)
                     if (success) {
                         val updated = item.copy(imageUrl = "images/${item.id}.jpg")
                         withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                        uploadedCount++
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
                 }
             }
         }
-        Logger.log(TAG, "Uploaded $uploadedCount images")
     }
 
     private suspend fun syncImages(items: List<ItemEntity>) {
         val appContext = getApplication<Application>().applicationContext
-        val itemsWithImages = items.filter { !it.imageUrl.isNullOrEmpty() }
-        if (itemsWithImages.isEmpty()) {
-            Logger.log(TAG, "No images to sync (download)")
-            return
-        }
-
-        var downloadedCount = 0
-        itemsWithImages.forEach { item ->
+        items.filter { !it.imageUrl.isNullOrEmpty() }.forEach { item ->
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile != null && localFile.exists()) return@forEach
 
@@ -275,13 +236,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (bitmap != null) {
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     ImageUtils.saveImageLocally(appContext, item.id, bytes)
-                    downloadedCount++
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to download image ${item.id}: ${e.message}")
             }
         }
-        Logger.log(TAG, "Images downloaded: $downloadedCount")
         loadContents()
     }
 
@@ -293,47 +252,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val response = api.getDiskResources(auth, "/BAZA")
             when (response.code()) {
                 200 -> true
-                401, 403 -> {
-                    val newToken = tokenStorage.refreshAccessToken()
-                    newToken != null
-                }
+                401, 403 -> tokenStorage.refreshAccessToken() != null
                 else -> true
             }
-        } catch (e: Exception) {
-            false
-        }
+        } catch (e: Exception) { false }
     }
 
     private suspend fun mergeData(diskFolders: List<FolderEntity>, diskItems: List<ItemEntity>) {
         withContext(Dispatchers.IO) {
             diskFolders.forEach { diskFolder ->
                 val local = db.folderDao().getFolderById(diskFolder.id)
-                if (local == null) {
-                    db.folderDao().insertFolder(diskFolder)
-                } else if (diskFolder.updatedAt > local.updatedAt) {
-                    db.folderDao().updateFolder(diskFolder)
-                }
+                if (local == null) db.folderDao().insertFolder(diskFolder)
+                else if (diskFolder.updatedAt > local.updatedAt) db.folderDao().updateFolder(diskFolder)
             }
 
             diskItems.forEach { diskItem ->
                 val local = db.itemDao().getItemById(diskItem.id)
-                if (local == null) {
-                    db.itemDao().insertItem(diskItem)
-                } else if (diskItem.updatedDate > local.updatedDate) {
-                    db.itemDao().updateItem(diskItem)
-                }
+                if (local == null) db.itemDao().insertItem(diskItem)
+                else if (diskItem.updatedDate > local.updatedDate) db.itemDao().updateItem(diskItem)
             }
 
             val diskLastModified = repository.getDiskLastModified()
             val localLastModified = syncInfoDao.getLastModified()
-            if (diskLastModified > localLastModified) {
-                syncInfoDao.setLastModified(diskLastModified)
-            }
+            if (diskLastModified > localLastModified) syncInfoDao.setLastModified(diskLastModified)
         }
-    }
-
-    private fun startPeriodicSync() {
-        Logger.log(TAG, "Periodic sync disabled")
     }
 
     private fun stopPeriodicSync() {
@@ -344,7 +286,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun processPendingChanges() {
         val pending = syncQueueDao.getAllPending()
         if (pending.isEmpty()) return
-
         if (!isInternetAvailable()) {
             syncStatus.postValue(SyncStatus.OFFLINE)
             return
@@ -416,17 +357,140 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
+    // ЗАЙМ (ВЫДАЧА) ПРЕДМЕТА
+    // ============================================================
+
+    fun lendItem(itemId: String, personName: String, note: String? = null) {
+        Logger.log(TAG, "lendItem: $itemId to $personName")
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item != null) {
+                    val updated = item.copy(
+                        isLent = true,
+                        lentTo = personName,
+                        lentDate = System.currentTimeMillis(),
+                        lentNote = note,
+                        updatedDate = System.currentTimeMillis(),
+                        updatedBy = currentUser
+                    )
+                    db.itemDao().updateItem(updated)
+                    Logger.log(TAG, "Item lent locally: $itemId")
+
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                repository.updateItemOnDisk(updated)
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "item",
+                                        entityId = itemId,
+                                        action = "update",
+                                        parentId = item.parentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Lend sync failed: ${e.message}")
+                        }
+                    }
+
+                    val history = HistoryEntry(
+                        itemId = itemId,
+                        action = "lend",
+                        oldValue = "В базе",
+                        newValue = "Выдан: $personName${if (!note.isNullOrEmpty()) " ($note)" else ""}",
+                        changedBy = currentUser
+                    )
+                    db.historyDao().insertEntry(history)
+
+                    loadContents()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error lending item: ${e.message}")
+            }
+        }
+    }
+
+    fun returnItem(itemId: String) {
+        Logger.log(TAG, "returnItem: $itemId")
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item != null) {
+                    val updated = item.copy(
+                        isLent = false,
+                        lentTo = null,
+                        lentDate = null,
+                        lentNote = null,
+                        returnDate = null,
+                        updatedDate = System.currentTimeMillis(),
+                        updatedBy = currentUser
+                    )
+                    db.itemDao().updateItem(updated)
+                    Logger.log(TAG, "Item returned locally: $itemId")
+
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                repository.updateItemOnDisk(updated)
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
+                            } else {
+                                syncQueueDao.addToQueue(
+                                    SyncQueueEntity(
+                                        entityType = "item",
+                                        entityId = itemId,
+                                        action = "update",
+                                        parentId = item.parentId,
+                                        data = null,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
+                                syncStatus.postValue(SyncStatus.PENDING)
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Return sync failed: ${e.message}")
+                        }
+                    }
+
+                    val history = HistoryEntry(
+                        itemId = itemId,
+                        action = "return",
+                        oldValue = "Выдан: ${item.lentTo}",
+                        newValue = "Возвращён в базу",
+                        changedBy = currentUser
+                    )
+                    db.historyDao().insertEntry(history)
+
+                    loadContents()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error returning item: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun getLentItems(): List<ItemEntity> {
+        return withContext(Dispatchers.IO) {
+            db.itemDao().getLentItems()
+        }
+    }
+
+    // ============================================================
     // АРХИВАЦИЯ ПРЕДМЕТОВ
     // ============================================================
 
     fun archiveItem(itemId: String, reason: String, note: String?) {
-        Logger.log(TAG, "archiveItem: $itemId, reason=$reason, note=$note")
         viewModelScope.launch {
             try {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
-                    Logger.log(TAG, "Item archived locally: $itemId")
 
                     globalScope.launch {
                         try {
@@ -450,7 +514,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 syncStatus.postValue(SyncStatus.PENDING)
                             }
                         } catch (e: Exception) {
-                            Logger.log(TAG, "Item archive sync failed: ${e.message}")
+                            Logger.log(TAG, "Archive sync failed: ${e.message}")
                         }
                     }
 
@@ -472,11 +536,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun unarchiveItem(itemId: String) {
-        Logger.log(TAG, "unarchiveItem: $itemId")
         viewModelScope.launch {
             try {
                 db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                Logger.log(TAG, "Item unarchived locally: $itemId")
 
                 globalScope.launch {
                     try {
@@ -488,7 +550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     } catch (e: Exception) {
-                        Logger.log(TAG, "Item unarchive sync failed: ${e.message}")
+                        Logger.log(TAG, "Unarchive sync failed: ${e.message}")
                     }
                 }
 
@@ -509,15 +571,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun getArchivedItems(): List<ItemEntity> {
-        return withContext(Dispatchers.IO) {
-            db.itemDao().getArchivedItems()
-        }
+        return withContext(Dispatchers.IO) { db.itemDao().getArchivedItems() }
     }
 
     suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity> {
-        return withContext(Dispatchers.IO) {
-            db.itemDao().getArchivedItemsByReason(reason)
-        }
+        return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
     }
 
     private fun getArchiveReasonText(reason: String): String {
@@ -529,6 +587,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "sold" -> "Продано"
             "expired" -> "Истёк срок"
             else -> "Другое"
+        }
+    }
+
+    // ============================================================
+    // КОПИРОВАНИЕ ПРЕДМЕТА
+    // ============================================================
+
+    fun copyItem(itemId: String) {
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item != null) {
+                    val copy = item.copy(
+                        id = java.util.UUID.randomUUID().toString(),
+                        name = "${item.name} (копия)",
+                        addedDate = System.currentTimeMillis(),
+                        updatedDate = System.currentTimeMillis()
+                    )
+                    db.itemDao().insertItem(copy)
+
+                    globalScope.launch {
+                        try {
+                            if (isInternetAvailable()) {
+                                repository.createItemOnDisk(copy)
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Copy sync failed: ${e.message}")
+                        }
+                    }
+
+                    loadContents()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error copying item: ${e.message}")
+            }
         }
     }
 
@@ -545,9 +639,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                db.folderDao().insertFolder(folder)
-            }
+            withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
             loadContents()
 
             globalScope.launch {
@@ -592,24 +684,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (isInternetAvailable()) {
                                 repository.updateFolderOnDisk(updated)
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "update",
-                                        parentId = folder.parentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
                             }
                         } catch (e: Exception) {
                             Logger.log(TAG, "Folder rename sync failed: ${e.message}")
                         }
                     }
-
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -638,34 +717,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 globalScope.launch {
                     try {
                         if (isInternetAvailable()) {
-                            val success = repository.deleteFolderOnDisk(folderId)
-                            if (success) {
-                                syncInfoDao.setLastModified(System.currentTimeMillis())
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "delete",
-                                        parentId = null,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
-                            }
-                        } else {
-                            syncQueueDao.addToQueue(
-                                SyncQueueEntity(
-                                    entityType = "folder",
-                                    entityId = folderId,
-                                    action = "delete",
-                                    parentId = null,
-                                    data = null,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
-                            syncStatus.postValue(SyncStatus.PENDING)
+                            repository.deleteFolderOnDisk(folderId)
+                            syncInfoDao.setLastModified(System.currentTimeMillis())
                         }
                     } catch (e: Exception) {
                         Logger.log(TAG, "Folder delete sync failed: ${e.message}")
@@ -679,7 +732,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПОК
+    // ПЕРЕМЕЩЕНИЕ ПАПОК И ПРЕДМЕТОВ
     // ============================================================
 
     fun moveFolder(folderId: String, newParentId: String?) {
@@ -695,18 +748,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (isInternetAvailable()) {
                                 repository.updateFolderOnDisk(updated)
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "folder",
-                                        entityId = folderId,
-                                        action = "update",
-                                        parentId = newParentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
                             }
                         } catch (e: Exception) {
                             Logger.log(TAG, "Folder move sync failed: ${e.message}")
@@ -719,10 +760,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТОВ
-    // ============================================================
 
     fun moveItem(itemId: String, newParentId: String?) {
         viewModelScope.launch {
@@ -738,18 +775,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (isInternetAvailable()) {
                                 repository.updateItemOnDisk(updated)
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "update",
-                                        parentId = newParentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
                             }
                         } catch (e: Exception) {
                             Logger.log(TAG, "Item move sync failed: ${e.message}")
@@ -768,12 +793,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
 
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
-        Logger.log(TAG, "createItem START: name=${item.name}, id=${item.id}")
-
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                db.itemDao().insertItem(item)
-            }
+            withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
 
             imageBytes?.let { bytes ->
                 val appContext = getApplication<Application>().applicationContext
@@ -805,11 +826,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
-                    val updated = item.copy(
-                        quantity = newQty,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
+                    val updated = item.copy(quantity = newQty, updatedDate = System.currentTimeMillis(), updatedBy = currentUser)
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
 
@@ -818,24 +835,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (isInternetAvailable()) {
                                 repository.updateItemOnDisk(updated)
                                 syncInfoDao.setLastModified(System.currentTimeMillis())
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "update",
-                                        parentId = item.parentId,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
                             }
                         } catch (e: Exception) {
                             Logger.log(TAG, "Item quantity sync failed: ${e.message}")
                         }
                     }
-
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -856,34 +860,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     globalScope.launch {
                         try {
                             if (isInternetAvailable()) {
-                                val success = repository.deleteItemOnDisk(itemId)
-                                if (success) {
-                                    syncInfoDao.setLastModified(System.currentTimeMillis())
-                                } else {
-                                    syncQueueDao.addToQueue(
-                                        SyncQueueEntity(
-                                            entityType = "item",
-                                            entityId = itemId,
-                                            action = "delete",
-                                            parentId = null,
-                                            data = null,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                    syncStatus.postValue(SyncStatus.PENDING)
-                                }
-                            } else {
-                                syncQueueDao.addToQueue(
-                                    SyncQueueEntity(
-                                        entityType = "item",
-                                        entityId = itemId,
-                                        action = "delete",
-                                        parentId = null,
-                                        data = null,
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                syncStatus.postValue(SyncStatus.PENDING)
+                                repository.deleteItemOnDisk(itemId)
+                                syncInfoDao.setLastModified(System.currentTimeMillis())
                             }
                         } catch (e: Exception) {
                             Logger.log(TAG, "Item delete sync failed: ${e.message}")
@@ -905,9 +883,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forceSync() {
         if (syncJob?.isActive == true) return
-        syncJob = viewModelScope.launch {
-            syncWithDisk()
-        }
+        syncJob = viewModelScope.launch { syncWithDisk() }
     }
 
     // ============================================================
@@ -945,9 +921,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun getAllFolders(): List<FolderEntity> {
-        return withContext(Dispatchers.IO) {
-            repository.getAllFolders()
-        }
+        return withContext(Dispatchers.IO) { repository.getAllFolders() }
     }
 
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
