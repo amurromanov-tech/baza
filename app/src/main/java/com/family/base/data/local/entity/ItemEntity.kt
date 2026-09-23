@@ -26,11 +26,18 @@ data class ItemEntity(
     val itemType: String? = null,
     val price: Double? = null,
 
-    // ===== НОВЫЕ ПОЛЯ ДЛЯ АРХИВА =====
+    // ===== АРХИВ =====
     val isArchived: Boolean = false,
     val archivedReason: String? = null,   // "eaten", "broken", "thrown", "gifted", "sold", "expired", "other"
     val archivedDate: Long? = null,
-    val archivedNote: String? = null      // Комментарий: "сломался", "отдал другу" и т.д.
+    val archivedNote: String? = null,
+
+    // ===== ЗАЙМ (ВЫДАЧА) =====
+    val isLent: Boolean = false,          // Флаг: предмет выдан
+    val lentTo: String? = null,           // Кому выдан (например, "Иванов")
+    val lentDate: Long? = null,           // Когда выдан
+    val lentNote: String? = null,         // Заметка (например, "на неделю")
+    val returnDate: Long? = null          // Планируемая дата возврата
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
