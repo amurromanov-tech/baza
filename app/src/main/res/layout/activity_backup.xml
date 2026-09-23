@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- ============================================================ -->
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ: НАЗАД + ЗАГОЛОВОК -->
+        <!-- ============================================================ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnBack"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="← Назад"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="💾 Резервное копирование"
+                android:textAppearance="?attr/textAppearanceHeadline6"
+                android:gravity="center" />
+        </LinearLayout>
+
+        <!-- ============================================================ -->
+        <!-- ЭКСПОРТ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ЭКСПОРТ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnExportLocal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📤 Экспорт локально" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Сохраняет копию данных в папку Download/BAZA/backup"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnExportCloud"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="☁️ Экспорт в облако" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Загружает копию данных на Яндекс.Диск в папку BAZA/backup"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ============================================================ -->
+        <!-- ИМПОРТ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ИМПОРТ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnImportLocal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📥 Импорт из локального" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Восстанавливает данные из выбранного файла бэкапа"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnImportCloud"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="☁️ Импорт из облака" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Восстанавливает данные из последнего бэкапа в облаке"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ============================================================ -->
+        <!-- ПРЕДУПРЕЖДЕНИЕ -->
+        <!-- ============================================================ -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="#FFF3E0">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚠️ Внимание"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#E65100" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="При импорте все текущие данные будут заменены данными из бэкапа. Это действие нельзя отменить."
+                    android:textSize="13sp"
+                    android:textColor="#424242"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Отступ снизу -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="16dp" />
+
+    </LinearLayout>
+</ScrollView>
