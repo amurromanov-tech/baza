@@ -162,67 +162,66 @@ class CatalogRepository(private val db: AppDatabase) {
     // ЗАПИСЬ НА ДИСК (ПРИВАТНЫЙ API)
     // ============================================================
 
-private suspend fun createFolderIfNotExists(folderPath: String) {
-    val auth = getAuthHeader()
-    if (auth == null) {
-        Logger.log(TAG, "No auth header, cannot create folder: $folderPath")
-        return
-    }
-    val api = YandexDiskApi.getInstance()
-    
-    // ===== ВАЖНО: сначала убеждаемся, что корневая папка существует =====
-    val rootPath = getRootPath()
-    try {
-        val rootCheck = api.getDiskResources(auth, rootPath)
-        if (rootCheck.code() == 404) {
-            Logger.log(TAG, "Root folder $rootPath not found, creating...")
-            val createRoot = api.createFolder(auth, rootPath)
-            if (createRoot.isSuccessful) {
-                Logger.log(TAG, "Root folder $rootPath created")
-            } else if (createRoot.code() == 409) {
-                Logger.log(TAG, "Root folder $rootPath already exists (conflict), proceeding")
-            } else {
-                val errorBody = createRoot.errorBody()?.string()
-                Logger.log(TAG, "Failed to create root folder $rootPath: ${createRoot.code()}, $errorBody")
-            }
-        } else if (!rootCheck.isSuccessful && rootCheck.code() != 404) {
-            val errorBody = rootCheck.errorBody()?.string()
-            Logger.log(TAG, "Unexpected response checking root folder: ${rootCheck.code()}, $errorBody")
-        }
-    } catch (e: Exception) {
-        Logger.log(TAG, "Error ensuring root folder: ${e.message}")
-        e.printStackTrace()
-    }
-    
-    // ===== Теперь создаём целевую папку =====
-    Logger.log(TAG, "Checking folder existence: $folderPath")
-    try {
-        val checkResponse = api.getDiskResources(auth, folderPath)
-        Logger.log(TAG, "Check folder response: code=${checkResponse.code()}")
-        
-        if (checkResponse.isSuccessful) {
-            Logger.log(TAG, "Folder exists: $folderPath")
+    private suspend fun createFolderIfNotExists(folderPath: String) {
+        val auth = getAuthHeader()
+        if (auth == null) {
+            Logger.log(TAG, "No auth header, cannot create folder: $folderPath")
             return
-        } else if (checkResponse.code() == 404) {
-            Logger.log(TAG, "Folder not found, creating: $folderPath")
-            val createResponse = api.createFolder(auth, folderPath)
-            Logger.log(TAG, "Create folder response: code=${createResponse.code()}")
-            if (createResponse.isSuccessful) {
-                Logger.log(TAG, "Folder created: $folderPath")
-            } else {
-                val errorBody = createResponse.errorBody()?.string()
-                Logger.log(TAG, "Failed to create folder $folderPath: code=${createResponse.code()}, body=$errorBody")
-            }
-        } else {
-            val errorBody = checkResponse.errorBody()?.string()
-            Logger.log(TAG, "Failed to check folder $folderPath: code=${checkResponse.code()}, body=$errorBody")
         }
-    } catch (e: Exception) {
-        Logger.log(TAG, "Error checking/creating folder $folderPath: ${e.message}")
-        e.printStackTrace()
+        val api = YandexDiskApi.getInstance()
+
+        // ===== ВАЖНО: сначала убеждаемся, что корневая папка существует =====
+        val rootPath = getRootPath()
+        try {
+            val rootCheck = api.getDiskResources(auth, rootPath)
+            if (rootCheck.code() == 404) {
+                Logger.log(TAG, "Root folder $rootPath not found, creating...")
+                val createRoot = api.createFolder(auth, rootPath)
+                if (createRoot.isSuccessful) {
+                    Logger.log(TAG, "Root folder $rootPath created")
+                } else if (createRoot.code() == 409) {
+                    Logger.log(TAG, "Root folder $rootPath already exists (conflict), proceeding")
+                } else {
+                    val errorBody = createRoot.errorBody()?.string()
+                    Logger.log(TAG, "Failed to create root folder $rootPath: ${createRoot.code()}, $errorBody")
+                }
+            } else if (!rootCheck.isSuccessful && rootCheck.code() != 404) {
+                val errorBody = rootCheck.errorBody()?.string()
+                Logger.log(TAG, "Unexpected response checking root folder: ${rootCheck.code()}, $errorBody")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error ensuring root folder: ${e.message}")
+            e.printStackTrace()
+        }
+
+        // ===== Теперь создаём целевую папку =====
+        Logger.log(TAG, "Checking folder existence: $folderPath")
+        try {
+            val checkResponse = api.getDiskResources(auth, folderPath)
+            Logger.log(TAG, "Check folder response: code=${checkResponse.code()}")
+
+            if (checkResponse.isSuccessful) {
+                Logger.log(TAG, "Folder exists: $folderPath")
+                return
+            } else if (checkResponse.code() == 404) {
+                Logger.log(TAG, "Folder not found, creating: $folderPath")
+                val createResponse = api.createFolder(auth, folderPath)
+                Logger.log(TAG, "Create folder response: code=${createResponse.code()}")
+                if (createResponse.isSuccessful) {
+                    Logger.log(TAG, "Folder created: $folderPath")
+                } else {
+                    val errorBody = createResponse.errorBody()?.string()
+                    Logger.log(TAG, "Failed to create folder $folderPath: code=${createResponse.code()}, body=$errorBody")
+                }
+            } else {
+                val errorBody = checkResponse.errorBody()?.string()
+                Logger.log(TAG, "Failed to check folder $folderPath: code=${checkResponse.code()}, body=$errorBody")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error checking/creating folder $folderPath: ${e.message}")
+            e.printStackTrace()
+        }
     }
-}
-    
 
     private suspend fun deleteFileOnDisk(path: String): Boolean {
         val auth = getAuthHeader()
@@ -268,7 +267,7 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
                 val body = json.toRequestBody("application/json".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
                 Logger.log(TAG, "Get upload URL response: code=${urlResponse.code()}")
-                
+
                 if (!urlResponse.isSuccessful) {
                     val errorBody = urlResponse.errorBody()?.string()
                     Logger.log(TAG, "Failed to get upload URL: code=${urlResponse.code()}, body=$errorBody")
@@ -339,7 +338,7 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
             val body = json.toRequestBody("application/json".toMediaType())
             val urlResponse = api.getUploadUrl(auth, path, true)
             Logger.log(TAG, "Get upload URL response (last_modified): code=${urlResponse.code()}")
-            
+
             if (!urlResponse.isSuccessful) {
                 val errorBody = urlResponse.errorBody()?.string()
                 Logger.log(TAG, "Failed to get upload URL for last_modified: code=${urlResponse.code()}, body=$errorBody")
@@ -531,7 +530,7 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
     }
 
     // ============================================================
-    // ЗАГРУЗКА ФОТО ПАПКИ НА ДИСК (НОВЫЙ МЕТОД)
+    // ЗАГРУЗКА ФОТО ПАПКИ НА ДИСК
     // ============================================================
 
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
@@ -584,6 +583,48 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
     }
 
     // ============================================================
+    // СКАЧИВАНИЕ ИКОНКИ ПАПКИ С ДИСКА
+    // ============================================================
+    suspend fun downloadFolderImage(folderId: String): Bitmap? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "No auth header, cannot download folder image")
+                    return@withContext null
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/images/folder_$folderId.jpg"
+
+                Logger.log(TAG, "Getting download URL for folder image: $path")
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                Logger.log(TAG, "Get download URL response (folder image): code=${urlResponse.code()}")
+
+                if (urlResponse.isSuccessful) {
+                    val href = urlResponse.body()?.href
+                    if (href != null) {
+                        Logger.log(TAG, "Downloading folder image from: $href")
+                        val downloadResponse = api.downloadFile(href)
+                        Logger.log(TAG, "Download folder image response: code=${downloadResponse.code()}")
+                        if (downloadResponse.isSuccessful) {
+                            val bytes = downloadResponse.body()?.bytes()
+                            Logger.log(TAG, "Folder image downloaded: folder_$folderId.jpg")
+                            return@withContext bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                        }
+                    }
+                }
+                Logger.log(TAG, "Folder image not found: folder_$folderId.jpg")
+                return@withContext null
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error downloadFolderImage: ${e.message}")
+                e.printStackTrace()
+                return@withContext null
+            }
+        }
+    }
+
+    // ============================================================
     // ЧТЕНИЕ С ДИСКА (ПРИВАТНЫЙ API)
     // ============================================================
 
@@ -598,16 +639,16 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val path = "$rootPath/.last_modified"
-                
+
                 Logger.log(TAG, "Checking last_modified file: $path")
                 val response = api.getDiskResources(auth, path)
                 Logger.log(TAG, "Check last_modified response: code=${response.code()}")
-                
+
                 if (response.isSuccessful) {
                     Logger.log(TAG, "Last_modified file exists, getting download URL")
                     val urlResponse = api.getDiskDownloadUrl(auth, path)
                     Logger.log(TAG, "Get download URL response (last_modified): code=${urlResponse.code()}")
-                    
+
                     if (urlResponse.isSuccessful) {
                         val href = urlResponse.body()?.href
                         if (href != null) {
@@ -633,7 +674,7 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
                 } else {
                     Logger.log(TAG, "Last_modified not found (code ${response.code()})")
                 }
-                
+
                 Logger.log(TAG, "Last_modified not found, returning 0")
                 return@withContext 0L
             } catch (e: Exception) {
@@ -656,13 +697,13 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
                 val rootPath = getRootPath()
 
                 Logger.log(TAG, "Downloading data from disk...")
-                
+
                 val folders = downloadJsonFile<FolderEntity>(api, auth, "$rootPath/data/folders.json")
                 Logger.log(TAG, "Downloaded ${folders.size} folders")
-                
+
                 val items = downloadJsonFile<ItemEntity>(api, auth, "$rootPath/data/items.json")
                 Logger.log(TAG, "Downloaded ${items.size} items")
-                
+
                 Pair(folders, items)
             } catch (e: Exception) {
                 Logger.log(TAG, "Error downloadDataFromDisk: ${e.message}")
@@ -678,7 +719,7 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
             Logger.log(TAG, "Getting download URL for: $path")
             val urlResponse = api.getDiskDownloadUrl(auth, path)
             Logger.log(TAG, "Get download URL response: code=${urlResponse.code()}")
-            
+
             if (urlResponse.isSuccessful) {
                 val href = urlResponse.body()?.href
                 if (href != null) {
@@ -710,57 +751,57 @@ private suspend fun createFolderIfNotExists(folderPath: String) {
     // ИЗОБРАЖЕНИЯ ПРЕДМЕТОВ
     // ============================================================
 
-suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
-    return withContext(Dispatchers.IO) {
-        try {
-            val auth = getAuthHeader()
-            if (auth == null) {
-                Logger.log(TAG, "No auth header, cannot upload image")
-                return@withContext false
-            }
-            val api = YandexDiskApi.getInstance()
-            val rootPath = getRootPath() // "/BAZA"
-            val imagesPath = "$rootPath/images"
-            val path = "$imagesPath/$itemId.jpg"
-
-            // Создаём папку images, если её нет (без создания корня)
-            createFolderIfNotExists(imagesPath)
-
-            deleteFileOnDisk(path)
-            delay(500)
-
-            Logger.log(TAG, "Getting upload URL for image: $path")
-            val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
-            val urlResponse = api.getUploadUrl(auth, path, true)
-            if (!urlResponse.isSuccessful) {
-                val errorBody = urlResponse.errorBody()?.string()
-                Logger.log(TAG, "Failed to get upload URL for image: code=${urlResponse.code()}, body=$errorBody")
-                return@withContext false
-            }
-
-            val href = urlResponse.body()?.href ?: return@withContext false
-            val uploadResponse = api.uploadFileToUrl(href, body)
-            if (uploadResponse.isSuccessful) {
-                Logger.log(TAG, "Image uploaded: $path")
-                val item = db.itemDao().getItemById(itemId)
-                item?.let {
-                    val updated = it.copy(imageUrl = "images/$itemId.jpg")
-                    db.itemDao().updateItem(updated)
-                    updateItemOnDisk(updated)
+    suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "No auth header, cannot upload image")
+                    return@withContext false
                 }
-                return@withContext true
-            } else {
-                val errorBody = uploadResponse.errorBody()?.string()
-                Logger.log(TAG, "Image upload failed: code=${uploadResponse.code()}, body=$errorBody")
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath() // "/BAZA"
+                val imagesPath = "$rootPath/images"
+                val path = "$imagesPath/$itemId.jpg"
+
+                // Создаём папку images, если её нет (без создания корня)
+                createFolderIfNotExists(imagesPath)
+
+                deleteFileOnDisk(path)
+                delay(500)
+
+                Logger.log(TAG, "Getting upload URL for image: $path")
+                val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
+                val urlResponse = api.getUploadUrl(auth, path, true)
+                if (!urlResponse.isSuccessful) {
+                    val errorBody = urlResponse.errorBody()?.string()
+                    Logger.log(TAG, "Failed to get upload URL for image: code=${urlResponse.code()}, body=$errorBody")
+                    return@withContext false
+                }
+
+                val href = urlResponse.body()?.href ?: return@withContext false
+                val uploadResponse = api.uploadFileToUrl(href, body)
+                if (uploadResponse.isSuccessful) {
+                    Logger.log(TAG, "Image uploaded: $path")
+                    val item = db.itemDao().getItemById(itemId)
+                    item?.let {
+                        val updated = it.copy(imageUrl = "images/$itemId.jpg")
+                        db.itemDao().updateItem(updated)
+                        updateItemOnDisk(updated)
+                    }
+                    return@withContext true
+                } else {
+                    val errorBody = uploadResponse.errorBody()?.string()
+                    Logger.log(TAG, "Image upload failed: code=${uploadResponse.code()}, body=$errorBody")
+                    return@withContext false
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error uploadItemImage: ${e.message}")
+                e.printStackTrace()
                 return@withContext false
             }
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error uploadItemImage: ${e.message}")
-            e.printStackTrace()
-            return@withContext false
         }
     }
-}
 
     suspend fun downloadItemImage(itemId: String): Bitmap? {
         return withContext(Dispatchers.IO) {
@@ -777,7 +818,7 @@ suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
                 Logger.log(TAG, "Getting download URL for image: $path")
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 Logger.log(TAG, "Get download URL response (image): code=${urlResponse.code()}")
-                
+
                 if (urlResponse.isSuccessful) {
                     val href = urlResponse.body()?.href
                     if (href != null) {
@@ -800,9 +841,4 @@ suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
             }
         }
     }
-
-
-
-
-    
 }
