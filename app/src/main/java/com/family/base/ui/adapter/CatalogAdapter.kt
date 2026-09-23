@@ -49,15 +49,17 @@ class CatalogAdapter(
                         error(R.drawable.ic_folder_default)
                     }
                 } else {
-                    // Дефолтная иконка папки
                     holder.icon.load(R.drawable.ic_folder_default)
                 }
 
                 holder.name.text = entry.name
                 holder.info.text = ""
+                holder.expiryInfo.visibility = View.GONE
+
                 holder.colorBar.setBackgroundColor(
                     context.resources.getColor(R.color.colorNormal, context.theme)
                 )
+
                 holder.itemView.setOnClickListener { onFolderClick(entry) }
                 holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
             }
@@ -73,14 +75,40 @@ class CatalogAdapter(
                         error(R.drawable.ic_item_default)
                     }
                 } else {
-                    // Дефолтная иконка предмета
                     holder.icon.load(R.drawable.ic_item_default)
                 }
 
                 holder.name.text = entry.name
-                val infoText = buildInfoText(entry)
-                holder.info.text = infoText
 
+                // ===== ИНФО: количество + цена =====
+                val infoParts = mutableListOf<String>()
+                if (entry.quantity > 1) {
+                    infoParts.add("×${entry.quantity}")
+                }
+                if (entry.price != null && entry.price != 0.0) {
+                    val priceStr = if (entry.price % 1.0 == 0.0) {
+                        entry.price.toInt().toString()
+                    } else {
+                        String.format("%.2f", entry.price)
+                    }
+                    infoParts.add("${priceStr} ₽")
+                }
+                holder.info.text = infoParts.joinToString("  •  ")
+
+                // ===== СРОК ГОДНОСТИ =====
+                if (entry.isExpired) {
+                    holder.expiryInfo.visibility = View.VISIBLE
+                    holder.expiryInfo.text = "⚠️ Просрочен"
+                    holder.expiryInfo.setTextColor(context.resources.getColor(android.R.color.holo_red_dark, context.theme))
+                } else if (entry.daysUntilExpiry != Int.MAX_VALUE && entry.daysUntilExpiry <= 7) {
+                    holder.expiryInfo.visibility = View.VISIBLE
+                    holder.expiryInfo.text = "⏰ Осталось ${entry.daysUntilExpiry} дн."
+                    holder.expiryInfo.setTextColor(context.resources.getColor(android.R.color.holo_orange_dark, context.theme))
+                } else {
+                    holder.expiryInfo.visibility = View.GONE
+                }
+
+                // ===== ЦВЕТНАЯ ПОЛОСА =====
                 val colorRes = when {
                     entry.isExpired -> R.color.colorExpired
                     entry.daysUntilExpiry in 0..3 -> R.color.colorWarning
@@ -96,38 +124,13 @@ class CatalogAdapter(
         }
     }
 
-    private fun buildInfoText(item: ItemEntity): String {
-        val parts = mutableListOf<String>()
-
-        if (item.quantity > 1) {
-            parts.add("×${item.quantity}")
-        }
-
-        when {
-            item.isExpired -> parts.add("Просрочен")
-            item.daysUntilExpiry != Int.MAX_VALUE && item.daysUntilExpiry <= 3 -> {
-                parts.add("Скоро просрочка (${item.daysUntilExpiry} дн.)")
-            }
-        }
-
-        if (item.price != null && item.price != 0.0) {
-            val priceStr = if (item.price % 1.0 == 0.0) {
-                item.price.toInt().toString()
-            } else {
-                String.format("%.2f", item.price)
-            }
-            parts.add("${priceStr} ₽")
-        }
-
-        return parts.joinToString(" | ")
-    }
-
     override fun getItemCount(): Int = items.size
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val icon: ImageView = view.findViewById(R.id.icon)
         val name: TextView = view.findViewById(R.id.name)
         val info: TextView = view.findViewById(R.id.info)
+        val expiryInfo: TextView = view.findViewById(R.id.expiryInfo)
         val colorBar: View = view.findViewById(R.id.colorBar)
     }
 }
