@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ===== РАЗРЕШЕНИЯ ===== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -20,6 +21,7 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 
+        <!-- ===== FILE PROVIDER ДЛЯ КАМЕРЫ ===== -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -30,6 +32,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- ============================================================ -->
+        <!-- ACTIVITIES -->
+        <!-- ============================================================ -->
+
+        <!-- Вход (главная точка входа) -->
         <activity
             android:name=".ui.LoginActivity"
             android:exported="true">
@@ -39,19 +46,39 @@
             </intent-filter>
         </activity>
 
+        <!-- Сканер штрих-кодов (только портрет) -->
         <activity
             android:name=".ui.BarcodeScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <!-- Главный экран -->
         <activity android:name=".ui.MainActivity" />
+
+        <!-- Добавление предмета -->
         <activity android:name=".ui.AddItemActivity" />
+
+        <!-- Детали предмета -->
         <activity android:name=".ui.ItemDetailActivity" />
+
+        <!-- Настройки -->
         <activity android:name=".ui.SettingsActivity" />
+
+        <!-- Подключение к семье -->
         <activity android:name=".ui.ConnectFamilyActivity" />
+
+        <!-- Статистика -->
         <activity android:name=".ui.StatisticsActivity" />
+
+        <!-- Архив -->
         <activity android:name=".ui.ArchiveActivity" />
 
+        <!-- Выданные предметы -->
+        <activity android:name=".ui.LentItemsActivity" />
+
+        <!-- ============================================================ -->
+        <!-- OAUTH REDIRECT -->
+        <!-- ============================================================ -->
         <activity
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:exported="true">
