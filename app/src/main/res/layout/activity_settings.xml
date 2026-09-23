@@ -50,12 +50,12 @@
             android:text="🔗 Поделиться ссылкой" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 3: СТАТИСТИКА И АРХИВ -->
+        <!-- СЕКЦИЯ 3: СТАТИСТИКА, АРХИВ, ЗАЙМЫ -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="СТАТИСТИКА И АРХИВ"
+            android:text="СТАТИСТИКА И УЧЁТ"
             android:textSize="12sp"
             android:textStyle="bold"
             android:textColor="@android:color/darker_gray"
@@ -73,6 +73,12 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="📦 Архив предметов" />
+
+        <Button
+            android:id="@+id/btnLentItems"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🤝 Выданные предметы" />
 
         <!-- ============================================================ -->
         <!-- СЕКЦИЯ 4: РЕЗЕРВНОЕ КОПИРОВАНИЕ -->
