@@ -50,12 +50,12 @@
             android:text="🔗 Поделиться ссылкой" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 3: СТАТИСТИКА -->
+        <!-- СЕКЦИЯ 3: СТАТИСТИКА И АРХИВ -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="СТАТИСТИКА"
+            android:text="СТАТИСТИКА И АРХИВ"
             android:textSize="12sp"
             android:textStyle="bold"
             android:textColor="@android:color/darker_gray"
@@ -67,6 +67,12 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="📊 Статистика расходов" />
+
+        <Button
+            android:id="@+id/btnArchive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📦 Архив предметов" />
 
         <!-- ============================================================ -->
         <!-- СЕКЦИЯ 4: РЕЗЕРВНОЕ КОПИРОВАНИЕ -->
