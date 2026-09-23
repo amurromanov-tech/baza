@@ -1,41 +1,174 @@
-<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
+package com.family.base.ui
 
-    <!-- ===== ВЕРХНЯЯ ПАНЕЛЬ ===== -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="16dp"
-        android:gravity="center_vertical">
+import android.os.Bundle
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import com.family.base.databinding.ActivityAppSettingsBinding
+import com.family.base.util.Logger
 
-        <Button
-            android:id="@+id/btnBack"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="← Назад"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+class AppSettingsActivity : AppCompatActivity() {
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="⚙️ Настройки приложения"
-            android:textAppearance="?attr/textAppearanceHeadline6"
-            android:gravity="center" />
-    </LinearLayout>
+    private lateinit var binding: ActivityAppSettingsBinding
+    private val TAG = "AppSettingsActivity"
 
-    <!-- ===== ЗАГЛУШКА ===== -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Здесь будут настройки темы, языка и другие параметры (в будущем)."
-        android:textSize="14sp"
-        android:textColor="@android:color/darker_gray"
-        android:layout_marginTop="16dp" />
+    private val languages = arrayOf("Русский", "English")
+    private val sortOptions = arrayOf(
+        "По имени",
+        "По сроку годности",
+        "По цене",
+        "По дате добавления"
+    )
 
-</LinearLayout>
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Logger.log(TAG, "=== AppSettingsActivity onCreate START ===")
+
+        try {
+            binding = ActivityAppSettingsBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+            Logger.log(TAG, "Binding inflated successfully")
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+            return
+        }
+
+        binding.btnBack.setOnClickListener { finish() }
+
+        setupLanguageSpinner()
+        setupSortSpinner()
+        setupDarkThemeSwitch()
+        setupNotificationsSwitch()
+        loadSettings()
+
+        Logger.log(TAG, "=== AppSettingsActivity onCreate FINISHED ===")
+    }
+
+    // ============================================================
+    // СПИННЕР ЯЗЫКА
+    // ============================================================
+    private fun setupLanguageSpinner() {
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languages)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerLanguage.adapter = adapter
+
+        binding.spinnerLanguage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                Logger.log(TAG, "Language selected: ${languages[position]}")
+                saveSetting("language", languages[position])
+                Toast.makeText(
+                    this@AppSettingsActivity,
+                    "Смена языка будет доступна в следующем обновлении",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    // ============================================================
+    // СПИННЕР СОРТИРОВКИ
+    // ============================================================
+    private fun setupSortSpinner() {
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, sortOptions)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerSort.adapter = adapter
+
+        binding.spinnerSort.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                Logger.log(TAG, "Sort selected: ${sortOptions[position]}")
+                saveSetting("sort_order", sortOptions[position])
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    // ============================================================
+    // ТЁМНАЯ ТЕМА
+    // ============================================================
+    private fun setupDarkThemeSwitch() {
+        binding.switchDarkTheme.setOnCheckedChangeListener { _, isChecked ->
+            Logger.log(TAG, "Dark theme: $isChecked")
+            saveSetting("dark_theme", isChecked)
+            Toast.makeText(
+                this@AppSettingsActivity,
+                "Смена темы будет доступна в следующем обновлении",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // ============================================================
+    // УВЕДОМЛЕНИЯ
+    // ============================================================
+    private fun setupNotificationsSwitch() {
+        binding.switchNotifications.setOnCheckedChangeListener { _, isChecked ->
+            Logger.log(TAG, "Notifications: $isChecked")
+            saveSetting("notifications_enabled", isChecked)
+            Toast.makeText(
+                this@AppSettingsActivity,
+                "Уведомления будут доступны в следующем обновлении",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // ============================================================
+    // ЗАГРУЗКА СОХРАНЁННЫХ НАСТРОЕК
+    // ============================================================
+    private fun loadSettings() {
+        try {
+            val prefs = getSharedPreferences("baza_settings", MODE_PRIVATE)
+
+            // Тёмная тема
+            binding.switchDarkTheme.isChecked = prefs.getBoolean("dark_theme", false)
+
+            // Уведомления
+            binding.switchNotifications.isChecked = prefs.getBoolean("notifications_enabled", true)
+
+            // Язык
+            val savedLanguage = prefs.getString("language", "Русский")
+            val langIndex = languages.indexOf(savedLanguage).coerceAtLeast(0)
+            binding.spinnerLanguage.setSelection(langIndex)
+
+            // Сортировка
+            val savedSort = prefs.getString("sort_order", "По имени")
+            val sortIndex = sortOptions.indexOf(savedSort).coerceAtLeast(0)
+            binding.spinnerSort.setSelection(sortIndex)
+
+            Logger.log(TAG, "Settings loaded")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error loading settings", e)
+        }
+    }
+
+    // ============================================================
+    // СОХРАНЕНИЕ НАСТРОЕК
+    // ============================================================
+    private fun saveSetting(key: String, value: Any) {
+        try {
+            val prefs = getSharedPreferences("baza_settings", MODE_PRIVATE)
+            prefs.edit().apply {
+                when (value) {
+                    is Boolean -> putBoolean(key, value)
+                    is String -> putString(key, value)
+                    is Int -> putInt(key, value)
+                    else -> return
+                }
+                apply()
+            }
+            Logger.log(TAG, "Setting saved: $key = $value")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error saving setting: $key", e)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Logger.log(TAG, "onDestroy called")
+    }
+}
