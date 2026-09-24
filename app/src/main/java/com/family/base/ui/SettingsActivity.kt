@@ -355,7 +355,18 @@ class SettingsActivity : AppCompatActivity() {
             )
             .setPositiveButton("Обновить") { _, _ ->
                 val updateManager = UpdateManager(this)
-                updateManager.downloadAndInstall(version.downloadUrl, version.versionName)
+                lifecycleScope.launch {
+                    try {
+                        updateManager.downloadAndInstall(version.downloadUrl, version.versionName)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "Error starting download", e)
+                        Toast.makeText(
+                            this@SettingsActivity,
+                            "Ошибка загрузки: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
                 Toast.makeText(this, "Загрузка началась...", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Позже", null)
