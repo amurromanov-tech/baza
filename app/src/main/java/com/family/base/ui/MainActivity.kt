@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
     private var newFolderImageBytes: ByteArray? = null
     private var currentFolderForImage: FolderEntity? = null
 
-    // ===== ВЫБОР ФОТО ДЛЯ НОВОЙ ПАПКИ =====
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -64,7 +63,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ВЫБОР ФОТО ДЛЯ СУЩЕСТВУЮЩЕЙ ПАПКИ =====
     private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -96,7 +94,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===== СКАНЕР ШТРИХ-КОДА ДЛЯ ПОИСКА =====
     private val barcodeSearchLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -105,36 +102,26 @@ class MainActivity : AppCompatActivity() {
             if (!scanned.isNullOrEmpty()) {
                 Logger.log(TAG, "Scanned barcode for search: $scanned")
                 searchByBarcode(scanned)
-            } else {
-                Logger.log(TAG, "Scanned barcode is empty")
             }
-        } else {
-            Logger.log(TAG, "Barcode scan cancelled")
         }
     }
 
     private val connectFamilyLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        Logger.log(TAG, "ConnectFamily result: resultCode=${result.resultCode}, data=${result.data}")
+        Logger.log(TAG, "ConnectFamily result: resultCode=${result.resultCode}")
         if (result.resultCode == RESULT_OK) {
-            Logger.log(TAG, "Public key saved, reloading contents")
             viewModel.loadContents()
-        } else {
-            Logger.log(TAG, "ConnectFamily cancelled or failed")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.log(TAG, "=== MainActivity onCreate START ===")
-        Logger.log(TAG, "SavedInstanceState: ${savedInstanceState != null}")
 
         try {
-            Logger.log(TAG, "Inflating layout...")
             binding = ActivityMainBinding.inflate(layoutInflater)
             setContentView(binding.root)
-            Logger.log(TAG, "Binding inflated successfully")
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
             return
@@ -142,243 +129,125 @@ class MainActivity : AppCompatActivity() {
 
         Logger.init(applicationContext)
 
-        try {
-            Logger.log(TAG, "Initializing TokenStorage...")
-            tokenStorage = TokenStorage(this)
-            Logger.log(TAG, "TokenStorage initialized")
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to initialize TokenStorage", e)
-            return
-        }
-
-        try {
-            Logger.log(TAG, "Creating ViewModel...")
-            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
-            Logger.log(TAG, "ViewModel created")
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to create ViewModel", e)
-            return
-        }
+        tokenStorage = TokenStorage(this)
+        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
 
         try {
             val appLifecycleObserver = AppLifecycleObserver(viewModel)
             ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
-            Logger.log(TAG, "AppLifecycleObserver registered")
         } catch (e: Exception) {
             Logger.log(TAG, "Error registering AppLifecycleObserver", e)
         }
 
         val publicKey = tokenStorage.getPublicKey()
-        Logger.log(TAG, "Public key from storage: ${publicKey?.take(20) ?: "null"}")
-
         if (publicKey == null) {
-            Logger.log(TAG, "No public key, launching ConnectFamilyActivity")
-            try {
-                val intent = Intent(this, ConnectFamilyActivity::class.java)
-                connectFamilyLauncher.launch(intent)
-                Logger.log(TAG, "ConnectFamilyActivity launched")
-            } catch (e: Exception) {
-                Logger.log(TAG, "CRITICAL: Failed to launch ConnectFamilyActivity", e)
-            }
-        } else {
-            Logger.log(TAG, "Public key exists, proceeding with normal startup")
+            connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
         }
 
-        try {
-            Logger.log(TAG, "Setting up toolbar...")
-            setSupportActionBar(binding.toolbar)
-            supportActionBar?.setDisplayHomeAsUpEnabled(false)
+        setSupportActionBar(binding.toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
-            pathTextView = TextView(this).apply {
-                text = "BAZA"
-                textSize = 18f
-                maxLines = 3
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
-                setPadding(0, 0, 0, 0)
-            }
-            supportActionBar?.setCustomView(pathTextView)
-            supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
+        pathTextView = TextView(this).apply {
+            text = "BAZA"
+            textSize = 18f
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+        }
+        supportActionBar?.setCustomView(pathTextView)
+        supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
-            Logger.log(TAG, "Toolbar set up")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error setting up toolbar", e)
+        adapter = CatalogAdapter(
+            onFolderClick = { folder -> navigateToFolder(folder) },
+            onItemClick = { item -> openItemDetail(item) },
+            onFolderLongClick = { folder -> showFolderContextMenu(folder) },
+            onItemLongClick = { item -> showItemContextMenu(item) }
+        )
+        binding.rvCatalog.layoutManager = LinearLayoutManager(this)
+        binding.rvCatalog.adapter = adapter
+
+        viewModel.currentEntries.observe(this) { entries ->
+            adapter.submitList(entries)
+            updatePathTitle()
+        }
+        viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
+        viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
+
+        binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
+        binding.btnAddItem.setOnClickListener {
+            val intent = Intent(this, AddItemActivity::class.java)
+            intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+            startActivity(intent)
+        }
+        binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
+        binding.btnUp.setOnClickListener { viewModel.navigateUp() }
+        binding.btnSearch.setOnClickListener { showSearchDialog() }
+        binding.btnScanSearch.setOnClickListener {
+            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+        }
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        try {
-            Logger.log(TAG, "Creating adapter...")
-            adapter = CatalogAdapter(
-                onFolderClick = { folder -> navigateToFolder(folder) },
-                onItemClick = { item -> openItemDetail(item) },
-                onFolderLongClick = { folder -> showFolderContextMenu(folder) },
-                onItemLongClick = { item -> showItemContextMenu(item) }
-            )
-            binding.rvCatalog.layoutManager = LinearLayoutManager(this)
-            binding.rvCatalog.adapter = adapter
-            Logger.log(TAG, "Adapter set up")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error setting up adapter", e)
-        }
-
-        try {
-            Logger.log(TAG, "Setting up observers...")
-            viewModel.currentEntries.observe(this) { entries ->
-                Logger.log(TAG, "Entries updated: ${entries.size} items")
-                try {
-                    adapter.submitList(entries)
-                    updatePathTitle()
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Error updating adapter", e)
-                }
-            }
-
-            viewModel.syncStatus.observe(this) { status ->
-                Logger.log(TAG, "Sync status changed: $status")
-                updateSyncStatusIcon(status)
-            }
-
-            viewModel.searchQueryLiveData.observe(this) { query ->
-                updateSearchIcon(query)
-            }
-
-            Logger.log(TAG, "Observers set up")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error setting up observers", e)
-        }
-
-        try {
-            Logger.log(TAG, "Setting up button listeners...")
-            binding.btnAddFolder.setOnClickListener {
-                Logger.log(TAG, "Add folder button clicked")
-                showCreateFolderDialog()
-            }
-
-            binding.btnAddItem.setOnClickListener {
-                Logger.log(TAG, "Add item button clicked")
-                val intent = Intent(this, AddItemActivity::class.java)
-                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-                startActivity(intent)
-            }
-
-            binding.btnHome.setOnClickListener {
-                Logger.log(TAG, "Home button clicked")
-                viewModel.navigateToRoot()
-            }
-            binding.btnUp.setOnClickListener {
-                Logger.log(TAG, "Up button clicked")
-                viewModel.navigateUp()
-            }
-            binding.btnSearch.setOnClickListener {
-                Logger.log(TAG, "Search button clicked")
-                showSearchDialog()
-            }
-            binding.btnScanSearch.setOnClickListener {
-                Logger.log(TAG, "Scan search button clicked")
-                val intent = Intent(this, BarcodeScannerActivity::class.java)
-                barcodeSearchLauncher.launch(intent)
-            }
-            binding.btnSettings.setOnClickListener {
-                Logger.log(TAG, "Settings button clicked")
-                startActivity(Intent(this, SettingsActivity::class.java))
-            }
-            Logger.log(TAG, "Button listeners set up")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error setting up button listeners", e)
-        }
-
-        try {
-            Logger.log(TAG, "Navigating to root folder...")
-            viewModel.navigateToFolder(null)
-            Logger.log(TAG, "Navigation started")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error navigating to root", e)
-        }
-
+        viewModel.navigateToFolder(null)
         updateSearchIcon(viewModel.searchQueryLiveData.value)
-
-        Logger.log(TAG, "=== MainActivity onCreate FINISHED ===")
     }
 
     override fun onResume() {
         super.onResume()
-        Logger.log(TAG, "onResume called, reloading contents...")
         viewModel.loadContents()
     }
 
     override fun onPause() {
         super.onPause()
-        Logger.log(TAG, "onPause called")
         stopSyncAnimation()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Logger.log(TAG, "onDestroy called")
         stopSyncAnimation()
     }
 
     private fun updatePathTitle() {
-        val path = viewModel.currentPath.value ?: "BAZA"
-        pathTextView?.text = path
+        pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
     }
 
     private fun navigateToFolder(folder: FolderEntity) {
-        Logger.log(TAG, "Navigate to folder: id=${folder.id}, name=${folder.name}")
         viewModel.navigateToFolder(folder.id)
     }
 
     private fun openItemDetail(item: ItemEntity) {
-        Logger.log(TAG, "Open item: id=${item.id}, name=${item.name}")
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
         startActivity(intent)
     }
 
     private fun showSearchDialog() {
-        Logger.log(TAG, "Showing search dialog")
         val editText = android.widget.EditText(this)
         editText.hint = "Поиск по названию или штрих-коду..."
-
-        val currentQuery = viewModel.searchQueryLiveData.value
-        if (!currentQuery.isNullOrEmpty()) {
-            editText.setText(currentQuery)
-        }
+        viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) editText.setText(it) }
 
         AlertDialog.Builder(this)
             .setTitle("Поиск")
             .setView(editText)
             .setPositiveButton("Искать") { _, _ ->
-                val query = editText.text.toString().trim()
-                Logger.log(TAG, "Search query: $query")
-                if (query.isNotEmpty()) {
-                    viewModel.search(query)
-                } else {
-                    viewModel.clearSearch()
-                }
+                val q = editText.text.toString().trim()
+                if (q.isNotEmpty()) viewModel.search(q) else viewModel.clearSearch()
             }
-            .setNegativeButton("Сбросить") { _, _ ->
-                Logger.log(TAG, "Search cleared")
-                viewModel.clearSearch()
-            }
-            .setNeutralButton("Отмена") { _, _ -> }
+            .setNegativeButton("Сбросить") { _, _ -> viewModel.clearSearch() }
+            .setNeutralButton("Отмена", null)
             .show()
     }
 
-    // ============================================================
-    // ПОИСК ПО ШТРИХ-КОДУ
-    // ============================================================
     private fun searchByBarcode(barcode: String) {
         lifecycleScope.launch {
             try {
-                val items = withContext(Dispatchers.IO) {
-                    db.itemDao().getItemsByBarcode(barcode)
-                }
-
+                val items = withContext(Dispatchers.IO) { db.itemDao().getItemsByBarcode(barcode) }
                 when {
                     items.isEmpty() -> {
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("Ничего не найдено")
-                            .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый предмет с этим кодом?")
+                            .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
                             .setPositiveButton("Создать") { _, _ ->
                                 val intent = Intent(this@MainActivity, AddItemActivity::class.java)
                                 intent.putExtra("parent_id", viewModel.getCurrentFolderId())
@@ -388,116 +257,73 @@ class MainActivity : AppCompatActivity() {
                             .setNegativeButton("Отмена", null)
                             .show()
                     }
-                    items.size == 1 -> {
-                        val item = items.first()
-                        Logger.log(TAG, "Found item by barcode: ${item.name}")
-                        openItemDetail(item)
-                    }
+                    items.size == 1 -> openItemDetail(items.first())
                     else -> {
                         val names = items.map { "${it.name}  (×${it.quantity})" }.toTypedArray()
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("Найдено ${items.size} предметов")
-                            .setItems(names) { _, which ->
-                                openItemDetail(items[which])
-                            }
+                            .setItems(names) { _, which -> openItemDetail(items[which]) }
                             .setNegativeButton("Отмена", null)
                             .show()
                     }
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error searching by barcode", e)
-                Toast.makeText(this@MainActivity, "Ошибка поиска: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // ============================================================
-    // ДИАЛОГ СОЗДАНИЯ ПАПКИ
-    // ============================================================
     private fun showCreateFolderDialog() {
-        Logger.log(TAG, "Showing create folder dialog")
-
         val editText = android.widget.EditText(this)
         editText.hint = "Название папки"
-
         AlertDialog.Builder(this)
             .setTitle("Новая папка")
             .setView(editText)
             .setPositiveButton("Создать") { _, _ ->
                 val name = editText.text.toString().trim()
-                if (name.isNotEmpty()) {
-                    createFolderWithImage(name)
-                } else {
-                    Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
-                }
+                if (name.isNotEmpty()) createFolderWithImage(name) else Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
             }
             .setNeutralButton("Выбрать иконку") { _, _ ->
                 val name = editText.text.toString().trim()
                 if (name.isNotEmpty()) {
                     newFolderImageBytes = null
                     pickFolderImageLauncher.launch("image/*")
-                    Toast.makeText(this, "Выберите изображение, затем создайте папку", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
-                }
+                } else Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Отмена") { _, _ ->
-                Logger.log(TAG, "Create folder cancelled")
-                newFolderImageBytes = null
-            }
+            .setNegativeButton("Отмена") { _, _ -> newFolderImageBytes = null }
             .show()
     }
 
     private fun createFolderWithImage(name: String) {
-        Logger.log(TAG, "Creating folder: $name, with image: ${newFolderImageBytes != null}")
-
         lifecycleScope.launch {
             try {
                 viewModel.createFolder(name)
-
                 delay(100)
-
                 newFolderImageBytes?.let { bytes ->
                     try {
-                        val folders = withContext(Dispatchers.IO) {
-                            db.folderDao().getAllFolders()
-                        }
+                        val folders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
                         val lastFolder = folders.maxByOrNull { it.createdAt }
                         if (lastFolder != null) {
                             ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
                             val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
-                            withContext(Dispatchers.IO) {
-                                db.folderDao().updateFolder(updated)
-                            }
+                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                             viewModel.uploadFolderImage(lastFolder.id, bytes)
-                            Logger.log(TAG, "Folder image uploaded")
                         }
                     } catch (e: Exception) {
                         Logger.log(TAG, "Failed to upload folder image", e)
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Иконка не загружена, но папка создана",
-                            Toast.LENGTH_SHORT
-                        ).show()
                     }
                     newFolderImageBytes = null
                 }
-
                 viewModel.syncWithDisk()
                 viewModel.loadContents()
                 Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error creating folder", e)
-                Toast.makeText(this@MainActivity, "Ошибка создания папки: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // ============================================================
-    // КОНТЕКСТНОЕ МЕНЮ ПАПКИ
-    // ============================================================
     private fun showFolderContextMenu(folder: FolderEntity) {
-        Logger.log(TAG, "Folder context menu: ${folder.name}")
         val items = arrayOf("Переименовать", "Сменить иконку", "Удалить (если пуста)", "Статистика", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с папкой")
@@ -513,11 +339,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // КОНТЕКСТНОЕ МЕНЮ ПРЕДМЕТА
-    // ============================================================
     private fun showItemContextMenu(item: ItemEntity) {
-        Logger.log(TAG, "Item context menu: ${item.name}")
         val items = arrayOf("Редактировать", "В архив", "Удалить", "История", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с предметом")
@@ -533,26 +355,12 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // АРХИВАЦИЯ ПРЕДМЕТА
-    // ============================================================
     private fun showArchiveDialog(item: ItemEntity) {
-        val reasons = arrayOf(
-            "🍽 Съедено",
-            "🔧 Сломано",
-            "🗑 Выброшено",
-            "🎁 Подарено",
-            "💰 Продано",
-            "⏰ Истёк срок",
-            "📦 Другое"
-        )
+        val reasons = arrayOf("🍽 Съедено", "🔧 Сломано", "🗑 Выброшено", "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое")
         val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
-
         AlertDialog.Builder(this)
             .setTitle("В архив: ${item.name}")
-            .setItems(reasons) { _, which ->
-                showArchiveNoteDialog(item, reasonKeys[which])
-            }
+            .setItems(reasons) { _, which -> showArchiveNoteDialog(item, reasonKeys[which]) }
             .setNegativeButton("Отмена", null)
             .show()
     }
@@ -560,147 +368,141 @@ class MainActivity : AppCompatActivity() {
     private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
         val editText = android.widget.EditText(this)
         editText.hint = "Комментарий (необязательно)"
-
         AlertDialog.Builder(this)
             .setTitle("Комментарий")
-            .setMessage("Добавьте заметку о предмете:")
             .setView(editText)
             .setPositiveButton("В архив") { _, _ ->
                 val note = editText.text.toString().trim().ifEmpty { null }
                 viewModel.archiveItem(item.id, reason, note)
-                Toast.makeText(this, "Предмет перемещён в архив", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "В архиве", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Отмена", null)
             .show()
     }
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
-        Logger.log(TAG, "Showing rename dialog for: ${folder.name}")
         val editText = android.widget.EditText(this).apply { setText(folder.name) }
         AlertDialog.Builder(this)
             .setTitle("Переименовать папку")
             .setView(editText)
             .setPositiveButton("OK") { _, _ ->
-                val newName = editText.text.toString().trim()
-                Logger.log(TAG, "Rename confirmed: ${folder.name} -> $newName")
-                viewModel.renameFolder(folder.id, newName)
+                viewModel.renameFolder(folder.id, editText.text.toString().trim())
             }
-            .setNegativeButton("Отмена") { _, _ ->
-                Logger.log(TAG, "Rename cancelled")
-            }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
     private fun confirmDeleteFolder(folder: FolderEntity) {
-        Logger.log(TAG, "Confirming delete folder: ${folder.name}")
         lifecycleScope.launch {
-            try {
-                viewModel.getFolderStats(folder.id) { stats ->
-                    val (itemCount, folderCount) = stats
-                    Logger.log(TAG, "Folder stats: items=$itemCount, subfolders=$folderCount")
-                    if (itemCount > 0 || folderCount > 0) {
-                        Toast.makeText(this@MainActivity, "Папка не пуста", Toast.LENGTH_SHORT).show()
-                    } else {
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Удалить папку «${folder.name}»?")
-                            .setMessage("Вы уверены?")
-                            .setPositiveButton("Да") { _, _ ->
-                                viewModel.deleteFolder(folder.id)
-                            }
-                            .setNegativeButton("Нет", null)
-                            .show()
-                    }
+            viewModel.getFolderStats(folder.id) { stats ->
+                val (itemCount, folderCount) = stats
+                if (itemCount > 0 || folderCount > 0) {
+                    Toast.makeText(this@MainActivity, "Папка не пуста", Toast.LENGTH_SHORT).show()
+                } else {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Удалить папку «${folder.name}»?")
+                        .setPositiveButton("Да") { _, _ -> viewModel.deleteFolder(folder.id) }
+                        .setNegativeButton("Нет", null)
+                        .show()
                 }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error in confirmDeleteFolder", e)
-                Toast.makeText(this@MainActivity, "Ошибка при проверке папки", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun changeFolderImage(folder: FolderEntity) {
-        Logger.log(TAG, "Change image requested for folder: ${folder.name}")
         currentFolderForImage = folder
         pickExistingFolderImageLauncher.launch("image/*")
     }
 
     private fun showFolderStats(folder: FolderEntity) {
-        Logger.log(TAG, "Showing stats for folder: ${folder.name}")
         lifecycleScope.launch {
-            try {
-                viewModel.getFolderStats(folder.id) { stats ->
-                    val (itemCount, folderCount) = stats
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Статистика папки «${folder.name}»")
-                        .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
-                        .setPositiveButton("OK", null)
-                        .show()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error in showFolderStats", e)
-                Toast.makeText(this@MainActivity, "Ошибка при получении статистики", Toast.LENGTH_SHORT).show()
+            viewModel.getFolderStats(folder.id) { stats ->
+                val (itemCount, folderCount) = stats
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Статистика «${folder.name}»")
+                    .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
+                    .setPositiveButton("OK", null)
+                    .show()
             }
         }
     }
 
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЕ ПАПКИ (новый иерархический диалог)
+    // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
-        Logger.log(TAG, "Show move folder dialog for: ${folder.name}")
+        Logger.log(TAG, "Show move folder dialog: ${folder.name}")
+
         lifecycleScope.launch {
             try {
-                val allFolders = viewModel.getAllFolders().filter { it.id != folder.id }
-                val folderNames = allFolders.map { it.name }.toMutableList()
-                folderNames.add(0, "Корень")
+                // Исключаем саму папку и всех её потомков
+                val excluded = withContext(Dispatchers.IO) {
+                    collectDescendantIds(folder.id) + folder.id
+                }
 
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Переместить папку «${folder.name}»")
-                    .setItems(folderNames.toTypedArray()) { _, which ->
-                        val targetFolder = if (which == 0) null else allFolders[which - 1]
-                        val newParentId = targetFolder?.id
-                        Logger.log(TAG, "Moving folder to: ${targetFolder?.name ?: "корень"} (id=$newParentId)")
+                MoveDialogHelper.show(
+                    context = this@MainActivity,
+                    scope = lifecycleScope,
+                    db = db,
+                    title = "Переместить «${folder.name}»",
+                    startFromId = null,
+                    excludedIds = excluded,
+                    onConfirm = { newParentId ->
+                        Logger.log(TAG, "Move folder to: $newParentId")
                         viewModel.moveFolder(folder.id, newParentId)
+                        Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
                     }
-                    .setNegativeButton("Отмена", null)
-                    .show()
+                )
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing move folder dialog", e)
-                Toast.makeText(this@MainActivity, "Ошибка загрузки списка папок", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (новый иерархический диалог)
+    // ============================================================
     private fun showMoveItemDialog(item: ItemEntity) {
-        Logger.log(TAG, "Show move item dialog for: ${item.name}")
-        lifecycleScope.launch {
-            try {
-                val allFolders = viewModel.getAllFolders()
-                val folderNames = allFolders.map { it.name }.toMutableList()
-                folderNames.add(0, "Корень")
+        Logger.log(TAG, "Show move item dialog: ${item.name}")
 
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Переместить предмет «${item.name}»")
-                    .setItems(folderNames.toTypedArray()) { _, which ->
-                        val targetFolder = if (which == 0) null else allFolders[which - 1]
-                        val newParentId = targetFolder?.id
-                        Logger.log(TAG, "Moving item to: ${targetFolder?.name ?: "корень"} (id=$newParentId)")
-                        viewModel.moveItem(item.id, newParentId)
-                    }
-                    .setNegativeButton("Отмена", null)
-                    .show()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error showing move item dialog", e)
-                Toast.makeText(this@MainActivity, "Ошибка загрузки списка папок", Toast.LENGTH_SHORT).show()
+        MoveDialogHelper.show(
+            context = this,
+            scope = lifecycleScope,
+            db = db,
+            title = "Переместить «${item.name}»",
+            startFromId = null,
+            excludedIds = emptySet(),   // предмет можно переместить в любую папку
+            onConfirm = { newParentId ->
+                Logger.log(TAG, "Move item to: $newParentId")
+                viewModel.moveItem(item.id, newParentId)
+                Toast.makeText(this, "Перемещено", Toast.LENGTH_SHORT).show()
             }
-        }
+        )
     }
 
-    private fun changeItemQuantity(item: ItemEntity, delta: Int) {
-        val newQty = (item.quantity + delta).coerceAtLeast(0)
-        Logger.log(TAG, "Changing quantity of ${item.name}: ${item.quantity} -> $newQty (delta: $delta)")
-        viewModel.updateItemQuantity(item.id, newQty)
+    /**
+     * Рекурсивно собирает id всех потомков папки.
+     * Нужно для защиты: нельзя переместить папку в саму себя или в своего потомка.
+     */
+    private suspend fun collectDescendantIds(folderId: String): Set<String> {
+        val result = mutableSetOf<String>()
+        val stack = ArrayDeque<String>()
+        stack.addLast(folderId)
+
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
+            val children = db.folderDao().getFoldersByParent(id)
+            for (child in children) {
+                if (result.add(child.id)) {
+                    stack.addLast(child.id)
+                }
+            }
+        }
+        return result
     }
 
     private fun editItem(item: ItemEntity) {
-        Logger.log(TAG, "Edit item: ${item.name}")
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
         intent.putExtra("edit_mode", true)
@@ -708,52 +510,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDeleteItem(item: ItemEntity) {
-        Logger.log(TAG, "Confirming delete item: ${item.name}")
         AlertDialog.Builder(this)
             .setTitle("Удалить предмет «${item.name}»?")
-            .setMessage("Это действие нельзя отменить. Возможно, лучше переместить в архив?")
-            .setPositiveButton("Удалить") { _, _ ->
-                Logger.log(TAG, "Delete item confirmed")
-                viewModel.deleteItem(item.id)
-            }
-            .setNegativeButton("В архив") { _, _ ->
-                showArchiveDialog(item)
-            }
+            .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
+            .setPositiveButton("Удалить") { _, _ -> viewModel.deleteItem(item.id) }
+            .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
             .setNeutralButton("Отмена", null)
             .show()
     }
 
     private fun showItemHistory(item: ItemEntity) {
-        Logger.log(TAG, "Show history for item: ${item.name}")
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
         intent.putExtra("show_history", true)
         startActivity(intent)
     }
 
-    // ============================================================
-    // ИКОНКА ПОИСКА С СОСТОЯНИЕМ
-    // ============================================================
-
     private fun updateSearchIcon(query: String?) {
         if (query.isNullOrEmpty()) {
             binding.btnSearch.setImageResource(R.drawable.ic_search)
-            binding.btnSearch.setOnClickListener {
-                Logger.log(TAG, "Search button clicked")
-                showSearchDialog()
-            }
+            binding.btnSearch.setOnClickListener { showSearchDialog() }
         } else {
             binding.btnSearch.setImageResource(R.drawable.ic_close)
-            binding.btnSearch.setOnClickListener {
-                Logger.log(TAG, "Clear search clicked")
-                viewModel.clearSearch()
-            }
+            binding.btnSearch.setOnClickListener { viewModel.clearSearch() }
         }
     }
-
-    // ============================================================
-    // СТАТУС СИНХРОНИЗАЦИИ
-    // ============================================================
 
     private fun updateSyncStatusIcon(status: SyncStatus) {
         when (status) {
