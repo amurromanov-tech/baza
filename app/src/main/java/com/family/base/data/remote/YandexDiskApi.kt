@@ -24,7 +24,7 @@ interface YandexDiskApi {
     /**
      * Получение информации о публичной папке (список файлов и папок).
      */
-    @GET("public/resources")
+    @GET("disk/public/resources")
     suspend fun getPublicResources(
         @Query("public_key") publicKey: String,
         @Query("path") path: String? = null,
@@ -35,7 +35,7 @@ interface YandexDiskApi {
     /**
      * Получение ссылки для скачивания файла из публичной папки.
      */
-    @GET("public/resources/download")
+    @GET("disk/public/resources/download")
     suspend fun getPublicDownloadUrl(
         @Query("public_key") publicKey: String,
         @Query("path") path: String
@@ -52,7 +52,7 @@ interface YandexDiskApi {
     /**
      * Удаление файла из публичной папки.
      */
-    @DELETE("public/resources")
+    @DELETE("disk/public/resources")
     suspend fun deletePublicFile(
         @Query("public_key") publicKey: String,
         @Query("path") path: String
