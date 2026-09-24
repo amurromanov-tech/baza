@@ -11,6 +11,24 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- ============================================================ -->
+    <!-- QUERIES (для Android 11+)                                     -->
+    <!-- Нужно, чтобы intent.resolveActivity() и запуск установщика   -->
+    <!-- APK работали на Android 11+ (package visibility)             -->
+    <!-- ============================================================ -->
+    <queries>
+        <!-- Установщик APK -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <!-- Браузер (для OAuth и внешних ссылок) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application
         android:name=".BaseApplication"
         android:allowBackup="true"
@@ -21,7 +39,10 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 
-        <!-- ===== FILE PROVIDER ДЛЯ КАМЕРЫ ===== -->
+        <!-- ===== FILE PROVIDER ===== -->
+        <!-- Используется для:                                        -->
+        <!-- 1. Передачи файла APK установщику (обновления)           -->
+        <!-- 2. Передачи фото камере (съёмка предметов)               -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
