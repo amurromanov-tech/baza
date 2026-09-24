@@ -1,11 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- ===== БАЗОВЫЕ ЦВЕТА ПРИЛОЖЕНИЯ ===== -->
     <color name="colorPrimary">#FF5722</color>
     <color name="colorPrimaryDark">#E64A19</color>
     <color name="colorAccent">#FF9800</color>
+
     <color name="colorNormal">#4CAF50</color>
     <color name="colorSoonExpired">#FFC107</color>
     <color name="colorExpired">#F44336</color>
     <color name="colorFolderBar">#9E9E9E</color>
     <color name="iconColor">#000000</color>
-    <color name="colorWarning">#FFC107</color>  <!-- жёлтый (скоро просрочка) -->
+    <color name="colorWarning">#FFC107</color>
+
+    <!-- ===== ЦВЕТА ДЛЯ ИКОНОК ===== -->
+    <color name="folder_icon_color">#FF9800</color>
+    <color name="item_icon_color">#2196F3</color>
+
+    <!-- ===== ЦВЕТА СТАТУСОВ (для карточки каталога) ===== -->
+    <color name="status_normal">#4CAF50</color>
+    <color name="status_warning">#FFC107</color>
+    <color name="status_expired">#F44336</color>
+    <color name="status_lent">#FF9800</color>
+
+    <!-- ===== РЕДИЗАЙН КАРТОЧКИ ПРЕДМЕТА ===== -->
+    <color name="chipExpired">#F44336</color>
+    <color name="chipSoon">#FF9800</color>
+    <color name="chipLent">#2196F3</color>
+    <color name="chipFood">#4CAF50</color>
+    <color name="chipMedicine">#9C27B0</color>
+    <color name="chipOther">#607D8B</color>
+
+    <color name="sectionTitle">#FF5722</color>
+    <color name="cardSurface">#FFFFFF</color>
+    <color name="cardSurfaceDark">#1E1E1E</color>
 </resources>
