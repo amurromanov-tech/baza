@@ -2,7 +2,7 @@ package com.family.base
 
 object Config {
     // Client ID Яндекс OAuth (замените на реальный, полученный при регистрации приложения)
-    const val CLIENT_ID = "https://raw.githubusercontent.com/amurromanov-tech/baza/main/version.json"  // ← ЗАМЕНИТЕ ЭТУ СТРОКУ
+   const val CLIENT_ID = "eca647a834c3431f974bc6f650f64208"  // ← ЗАМЕНЛ
 
     // Внутреннее имя корневой папки (не обязано совпадать с именем на Диске)
     const val SHARED_FOLDER_NAME = "BAZA"
