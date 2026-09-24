@@ -12,14 +12,14 @@
         android:background="?attr/colorPrimary"
         android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
         tools:title="BAZA">
-        
+
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:layout_gravity="end"
             android:gravity="center_vertical">
-            
+
             <!-- Иконка статуса синхронизации -->
             <ImageView
                 android:id="@+id/ivSyncStatus"
@@ -29,7 +29,17 @@
                 android:contentDescription="Sync status"
                 android:layout_marginEnd="8dp"
                 android:visibility="visible" />
-            
+
+            <!-- Кнопка сканера штрих-кода -->
+            <ImageButton
+                android:id="@+id/btnScanSearch"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_scan"
+                android:background="@drawable/btn_dark_circle"
+                android:contentDescription="Сканировать код"
+                android:tint="?attr/colorControlNormal" />
+
             <!-- Кнопка поиска -->
             <ImageButton
                 android:id="@+id/btnSearch"
@@ -39,7 +49,7 @@
                 android:background="@drawable/btn_dark_circle"
                 android:contentDescription="Search"
                 android:tint="?attr/colorControlNormal" />
-                
+
             <!-- Кнопка настроек -->
             <ImageButton
                 android:id="@+id/btnSettings"
@@ -59,7 +69,7 @@
         android:layout_weight="1"
         tools:listitem="@layout/item_catalog_entry" />
 
-    <!-- Нижняя панель с 4 кнопками (убрали поиск) -->
+    <!-- Нижняя панель -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
