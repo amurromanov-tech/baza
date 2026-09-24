@@ -192,6 +192,9 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnMinus.setOnClickListener { changeQuantity(-1) }
         binding.btnAddPhoto.setOnClickListener { showImageSourceDialog() }
 
+        // ===== КЛИК ПО ФОТО → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
+        binding.ivPhoto.setOnClickListener { openFullscreenPhoto() }
+
         // ===== КНОПКИ ДЕЙСТВИЙ =====
         binding.btnActionEdit.setOnClickListener {
             itemId?.let {
@@ -345,8 +348,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
                         binding.ivPhoto.load(localFile) { crossfade(true) }
-                        binding.ivPhoto.setOnClickListener { showImageSourceDialog() }
                         binding.btnAddPhoto.visibility = View.GONE
+                        // Клик на фото — полноэкранный просмотр (обработчик в setupListeners)
                     } else {
                         binding.ivPhoto.visibility = View.GONE
                         binding.btnAddPhoto.visibility = View.VISIBLE
@@ -412,6 +415,26 @@ class ItemDetailActivity : AppCompatActivity() {
                 Logger.log(TAG, "Error showing history", e)
             }
         }
+    }
+
+    // ============================================================
+    // ПОЛНОЭКРАННЫЙ ПРОСМОТР ФОТО
+    // ============================================================
+    private fun openFullscreenPhoto() {
+        val id = itemId ?: return
+        val localFile = ImageUtils.getLocalImageFile(this, id)
+        if (localFile == null || !localFile.exists()) {
+            Toast.makeText(this, "Фото отсутствует", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Logger.log(TAG, "Opening fullscreen photo: ${localFile.absolutePath}")
+
+        val intent = Intent(this, FullscreenImageActivity::class.java).apply {
+            putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
+            putExtra(FullscreenImageActivity.EXTRA_TITLE, binding.tvTitle.text.toString())
+        }
+        startActivity(intent)
     }
 
     // ============================================================
