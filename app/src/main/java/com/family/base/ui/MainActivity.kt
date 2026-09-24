@@ -45,10 +45,7 @@ class MainActivity : AppCompatActivity() {
     private val TAG = "MainActivity"
     private val db by lazy { AppDatabase.getInstance(this) }
 
-    // Для иконки папки при создании
     private var newFolderImageBytes: ByteArray? = null
-
-    // Для смены иконки существующей папки
     private var currentFolderForImage: FolderEntity? = null
 
     // ===== ВЫБОР ФОТО ДЛЯ НОВОЙ ПАПКИ =====
@@ -99,6 +96,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ===== СКАНЕР ШТРИХ-КОДА ДЛЯ ПОИСКА =====
+    private val barcodeSearchLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val scanned = result.data?.getStringExtra("barcode")
+            if (!scanned.isNullOrEmpty()) {
+                Logger.log(TAG, "Scanned barcode for search: $scanned")
+                searchByBarcode(scanned)
+            } else {
+                Logger.log(TAG, "Scanned barcode is empty")
+            }
+        } else {
+            Logger.log(TAG, "Barcode scan cancelled")
+        }
+    }
+
     private val connectFamilyLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -146,7 +160,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // ===== РЕГИСТРАЦИЯ LIFECYCLE OBSERVER =====
         try {
             val appLifecycleObserver = AppLifecycleObserver(viewModel)
             ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
@@ -154,7 +167,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Logger.log(TAG, "Error registering AppLifecycleObserver", e)
         }
-        // ==========================================
 
         val publicKey = tokenStorage.getPublicKey()
         Logger.log(TAG, "Public key from storage: ${publicKey?.take(20) ?: "null"}")
@@ -260,6 +272,11 @@ class MainActivity : AppCompatActivity() {
                 Logger.log(TAG, "Search button clicked")
                 showSearchDialog()
             }
+            binding.btnScanSearch.setOnClickListener {
+                Logger.log(TAG, "Scan search button clicked")
+                val intent = Intent(this, BarcodeScannerActivity::class.java)
+                barcodeSearchLauncher.launch(intent)
+            }
             binding.btnSettings.setOnClickListener {
                 Logger.log(TAG, "Settings button clicked")
                 startActivity(Intent(this, SettingsActivity::class.java))
@@ -282,7 +299,6 @@ class MainActivity : AppCompatActivity() {
         Logger.log(TAG, "=== MainActivity onCreate FINISHED ===")
     }
 
-    // ===== onResume: ОБНОВЛЯЕМ СПИСОК ПРИ ВОЗВРАТЕ =====
     override fun onResume() {
         super.onResume()
         Logger.log(TAG, "onResume called, reloading contents...")
@@ -321,7 +337,7 @@ class MainActivity : AppCompatActivity() {
     private fun showSearchDialog() {
         Logger.log(TAG, "Showing search dialog")
         val editText = android.widget.EditText(this)
-        editText.hint = "Поиск предметов..."
+        editText.hint = "Поиск по названию или штрих-коду..."
 
         val currentQuery = viewModel.searchQueryLiveData.value
         if (!currentQuery.isNullOrEmpty()) {
@@ -346,6 +362,53 @@ class MainActivity : AppCompatActivity() {
             }
             .setNeutralButton("Отмена") { _, _ -> }
             .show()
+    }
+
+    // ============================================================
+    // ПОИСК ПО ШТРИХ-КОДУ
+    // ============================================================
+    private fun searchByBarcode(barcode: String) {
+        lifecycleScope.launch {
+            try {
+                val items = withContext(Dispatchers.IO) {
+                    db.itemDao().getItemsByBarcode(barcode)
+                }
+
+                when {
+                    items.isEmpty() -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Ничего не найдено")
+                            .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый предмет с этим кодом?")
+                            .setPositiveButton("Создать") { _, _ ->
+                                val intent = Intent(this@MainActivity, AddItemActivity::class.java)
+                                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                                intent.putExtra("barcode", barcode)
+                                startActivity(intent)
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                    items.size == 1 -> {
+                        val item = items.first()
+                        Logger.log(TAG, "Found item by barcode: ${item.name}")
+                        openItemDetail(item)
+                    }
+                    else -> {
+                        val names = items.map { "${it.name}  (×${it.quantity})" }.toTypedArray()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Найдено ${items.size} предметов")
+                            .setItems(names) { _, which ->
+                                openItemDetail(items[which])
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error searching by barcode", e)
+                Toast.makeText(this@MainActivity, "Ошибка поиска: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // ============================================================
@@ -451,7 +514,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // КОНТЕКСТНОЕ МЕНЮ ПРЕДМЕТА (С АРХИВОМ)
+    // КОНТЕКСТНОЕ МЕНЮ ПРЕДМЕТА
     // ============================================================
     private fun showItemContextMenu(item: ItemEntity) {
         Logger.log(TAG, "Item context menu: ${item.name}")
