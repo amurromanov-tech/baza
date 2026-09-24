@@ -51,7 +51,7 @@ jobs:
         {
           "versionCode": ${{ steps.version.outputs.code }},
           "versionName": "${{ steps.version.outputs.name }}",
-           "downloadUrl": "https://disk.yandex.ru/d/jA1J1i8ZFvK8Sg",
+          "downloadUrl": "https://disk.yandex.ru/d/jA1J1i8ZFvK8Sg",
           "releaseNotes": "Обновление от $(date +'%Y-%m-%d')"
         }
         EOF
@@ -67,5 +67,6 @@ jobs:
           echo "No changes to version.json"
         else
           git commit -m "chore: version ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})"
+          git pull --rebase origin main
           git push
         fi
