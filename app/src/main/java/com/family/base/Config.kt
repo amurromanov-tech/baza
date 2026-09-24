@@ -2,7 +2,7 @@ package com.family.base
 
 object Config {
     // Client ID Яндекс OAuth (замените на реальный, полученный при регистрации приложения)
-    const val CLIENT_ID = "eca647a834c3431f974bc6f650f64208"  // ← ЗАМЕНИТЕ ЭТУ СТРОКУ
+    const val CLIENT_ID = "https://raw.githubusercontent.com/amurromanov-tech/baza/main/version.json"  // ← ЗАМЕНИТЕ ЭТУ СТРОКУ
 
     // Внутреннее имя корневой папки (не обязано совпадать с именем на Диске)
     const val SHARED_FOLDER_NAME = "BAZA"
@@ -31,7 +31,7 @@ object Config {
      * Например: https://raw.githubusercontent.com/ivanov/baza/main/version.json
      */
     const val VERSION_JSON_URL =
-        "https://raw.githubusercontent.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ/main/version.json"
+        "https://raw.githubusercontent.com/amurromanov-tech/baza/main/version.json"
 
     /**
      * Публичная ссылка на папку или файл APK на Яндекс.Диске.
@@ -41,7 +41,7 @@ object Config {
      * ⚠️ При создании публичной ссылки НЕ включай опцию «Запретить скачивание».
      */
     const val APK_YANDEX_PUBLIC_URL =
-        "https://disk.yandex.ru/d/ВАШ_ПУБЛИЧНЫЙ_КЛЮЧ"
+        "https://disk.yandex.ru/d/jA1J1i8ZFvK8Sg"
 
     /**
      * Имя APK-файла в публичной папке Яндекс.Диска.
