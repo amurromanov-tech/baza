@@ -143,7 +143,39 @@ class AddItemActivity : AppCompatActivity() {
         parentFolderId = intent.getStringExtra("parent_id")
         Logger.log(TAG, "parentFolderId: $parentFolderId")
 
+        // ===== ПРИЁМ ШТРИХ-КОДА ИЗ СКАНЕРА ПОИСКА =====
+        val incomingBarcode = intent.getStringExtra("barcode")
+        if (!incomingBarcode.isNullOrEmpty()) {
+            Logger.log(TAG, "Incoming barcode from search: $incomingBarcode")
+            barcode = incomingBarcode
+        }
+
         setupListeners()
+
+        // ===== ЕСЛИ ПРИШЁЛ КОД — ПЕРЕКЛЮЧИТЬСЯ В AUTO-РЕЖИМ И ПОИСКАТЬ =====
+        incomingBarcode?.let { code ->
+            Logger.log(TAG, "Auto-switching to auto mode for barcode: $code")
+
+            binding.modeSelection.visibility = View.GONE
+            binding.autoModeLayout.visibility = View.VISIBLE
+            binding.manualModeLayout.visibility = View.GONE
+
+            binding.etAutoBarcode.setText(code)
+
+            if (code.all { it.isDigit() }) {
+                // Это штрих-код — запускаем поиск товара в базах
+                lookupProduct(code)
+            } else {
+                // Это QR-код с текстом — подставляем как название
+                binding.etAutoName.setText(code)
+                Toast.makeText(
+                    this,
+                    "QR-код распознан: $code",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
         Logger.log(TAG, "=== AddItemActivity onCreate FINISHED ===")
     }
 
