@@ -81,6 +81,9 @@ dependencies {
     // Coil для загрузки изображений
     implementation("io.coil-kt:coil:2.4.0")
 
+    // PhotoView для полноэкранного просмотра фото с pinch-to-zoom
+    implementation("com.github.chrisbanes:PhotoView:2.3.0")
+
     // AppAuth для OAuth
     implementation("net.openid:appauth:0.11.1")
 
@@ -99,5 +102,4 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.0")
     implementation("androidx.camera:camera-view:1.3.0")
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")
-
 }
