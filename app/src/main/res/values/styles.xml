@@ -2,21 +2,6 @@
 <resources>
 
     <!-- ============================================================ -->
-    <!-- БАЗОВАЯ ТЕМА ПРИЛОЖЕНИЯ (используется в AndroidManifest.xml) -->
-    <!-- ============================================================ -->
-    <style name="Theme.BAZA" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryVariant">@color/colorPrimaryDark</item>
-        <item name="colorOnPrimary">@android:color/white</item>
-        <item name="colorSecondary">@color/colorAccent</item>
-        <item name="colorSecondaryVariant">@color/colorAccent</item>
-        <item name="colorOnSecondary">@android:color/white</item>
-
-        <item name="android:statusBarColor">@color/colorPrimaryDark</item>
-        <item name="android:windowBackground">?android:attr/colorBackground</item>
-    </style>
-
-    <!-- ============================================================ -->
     <!-- ПОЛНОЭКРАННАЯ ТЕМА ДЛЯ ПРОСМОТРА ФОТО                         -->
     <!-- Используется в FullscreenImageActivity                       -->
     <!-- ============================================================ -->
