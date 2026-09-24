@@ -15,9 +15,21 @@
     </style>
 
     <!-- ============================================================ -->
-    <!-- СТИЛИ КНОПОК ДЕЙСТВИЙ (для ItemDetailActivity)               -->
+    <!-- СТИЛЬ НИЖНЕЙ НАВИГАЦИИ (для MainActivity)                    -->
     <!-- ============================================================ -->
+    <style name="BottomNavButton" parent="Widget.AppCompat.ImageButton">
+        <item name="android:layout_width">56dp</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:tint">?attr/colorControlNormal</item>
+    </style>
 
+    <!-- ============================================================ -->
+    <!-- СТИЛИ КНОПОК ДЕЙСТВИЙ (устаревшие, оставлены для совместимости) -->
+    <!-- ============================================================ -->
     <style name="ActionButton" parent="Widget.MaterialComponents.Button">
         <item name="android:textSize">13sp</item>
         <item name="android:paddingTop">10dp</item>
@@ -50,6 +62,85 @@
 
     <style name="ActionButton.Delete" parent="ActionButton">
         <item name="backgroundTint">#F44336</item>
+    </style>
+
+    <!-- ============================================================ -->
+    <!-- РЕДИЗАЙН: СТИЛИ ДЛЯ КАРТОЧКИ ПРЕДМЕТА                        -->
+    <!-- ============================================================ -->
+
+    <!-- Заголовок секции -->
+    <style name="SectionTitle" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/sectionTitle</item>
+        <item name="android:letterSpacing">0.05</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:layout_marginTop">16dp</item>
+        <item name="android:layout_marginBottom">8dp</item>
+        <item name="android:layout_marginStart">4dp</item>
+    </style>
+
+    <!-- Секция-карточка -->
+    <style name="SectionCard" parent="Widget.MaterialComponents.CardView">
+        <item name="cardCornerRadius">12dp</item>
+        <item name="cardElevation">2dp</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:layout_marginBottom">8dp</item>
+    </style>
+
+    <!-- Чип-статус -->
+    <style name="StatusChip" parent="Widget.MaterialComponents.Chip.Entry">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="chipBackgroundColor">@color/colorPrimary</item>
+        <item name="chipMinHeight">28dp</item>
+        <item name="chipStartPadding">8dp</item>
+        <item name="chipEndPadding">8dp</item>
+    </style>
+
+    <!-- Круглая кнопка действия -->
+    <style name="RoundActionButton" parent="Widget.MaterialComponents.Button">
+        <item name="android:layout_width">56dp</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">28dp</item>
+        <item name="android:textColor">@android:color/white</item>
+    </style>
+
+    <style name="RoundActionButton.Edit" parent="RoundActionButton">
+        <item name="backgroundTint">#2196F3</item>
+    </style>
+
+    <style name="RoundActionButton.Lend" parent="RoundActionButton">
+        <item name="backgroundTint">#FF9800</item>
+    </style>
+
+    <style name="RoundActionButton.Move" parent="RoundActionButton">
+        <item name="backgroundTint">#9C27B0</item>
+    </style>
+
+    <style name="RoundActionButton.Copy" parent="RoundActionButton">
+        <item name="backgroundTint">#00BCD4</item>
+    </style>
+
+    <style name="RoundActionButton.Archive" parent="RoundActionButton">
+        <item name="backgroundTint">#607D8B</item>
+    </style>
+
+    <style name="RoundActionButton.Delete" parent="RoundActionButton">
+        <item name="backgroundTint">#F44336</item>
+    </style>
+
+    <!-- Подпись под круглой кнопкой -->
+    <style name="RoundActionLabel" parent="">
+        <item name="android:textSize">11sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:layout_marginTop">4dp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
     </style>
 
 </resources>
