@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- ============================================================ -->
+    <!-- ФОТО НА ВЕСЬ ЭКРАН (pinch-to-zoom, pan) -->
+    <!-- ============================================================ -->
+    <com.github.chrisbanes.photoview.PhotoView
+        android:id="@+id/photoView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="Фото предмета" />
+
+    <!-- ============================================================ -->
+    <!-- КНОПКА ЗАКРЫТИЯ (правый верхний угол) -->
+    <!-- ============================================================ -->
+    <ImageView
+        android:id="@+id/btnClose"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:padding="10dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:contentDescription="Закрыть"
+        android:tint="#FFFFFF" />
+
+    <!-- ============================================================ -->
+    <!-- ЗАГОЛОВОК (название предмета) -->
+    <!-- ============================================================ -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:paddingStart="16dp"
+        android:paddingEnd="72dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="16dp"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:shadowColor="#80000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="3" />
+
+    <!-- ============================================================ -->
+    <!-- ПОДСКАЗКА ВНИЗУ (короткая инструкция) -->
+    <!-- ============================================================ -->
+    <TextView
+        android:id="@+id/tvHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="Свайп вниз — закрыть"
+        android:textColor="#CCFFFFFF"
+        android:textSize="12sp"
+        android:background="#40000000" />
+
+</FrameLayout>
