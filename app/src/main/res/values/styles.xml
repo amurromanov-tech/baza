@@ -15,19 +15,6 @@
     </style>
 
     <!-- ============================================================ -->
-    <!-- СТИЛЬ НИЖНЕЙ НАВИГАЦИИ (для MainActivity)                    -->
-    <!-- ============================================================ -->
-    <style name="BottomNavButton" parent="Widget.AppCompat.ImageButton">
-        <item name="android:layout_width">56dp</item>
-        <item name="android:layout_height">56dp</item>
-        <item name="android:layout_marginStart">8dp</item>
-        <item name="android:layout_marginEnd">8dp</item>
-        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
-        <item name="android:padding">12dp</item>
-        <item name="android:tint">?attr/colorControlNormal</item>
-    </style>
-
-    <!-- ============================================================ -->
     <!-- СТИЛИ КНОПОК ДЕЙСТВИЙ (устаревшие, оставлены для совместимости) -->
     <!-- ============================================================ -->
     <style name="ActionButton" parent="Widget.MaterialComponents.Button">
