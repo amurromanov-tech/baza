@@ -1,5 +1,6 @@
 package com.family.base.ui.adapter
 
+import android.content.Intent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -10,6 +11,7 @@ import coil.load
 import com.family.base.R
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.ui.FullscreenImageActivity
 import com.family.base.util.ImageUtils
 
 class CatalogAdapter(
@@ -40,6 +42,7 @@ class CatalogAdapter(
             is FolderEntity -> {
                 // ===== ПАПКА =====
                 holder.icon.load(null)
+                holder.icon.setOnClickListener(null)   // сброс обработчика от предыдущего bind
 
                 val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
                 if (iconFile != null && iconFile.exists()) {
@@ -75,8 +78,18 @@ class CatalogAdapter(
                         placeholder(R.drawable.ic_item_default)
                         error(R.drawable.ic_item_default)
                     }
+
+                    // ===== КЛИК ПО ИКОНКЕ → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
+                    holder.icon.setOnClickListener {
+                        val intent = Intent(context, FullscreenImageActivity::class.java).apply {
+                            putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
+                            putExtra(FullscreenImageActivity.EXTRA_TITLE, entry.name)
+                        }
+                        context.startActivity(intent)
+                    }
                 } else {
                     holder.icon.load(R.drawable.ic_item_default)
+                    holder.icon.setOnClickListener(null)
                 }
 
                 holder.name.text = entry.name
