@@ -191,8 +191,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // 3. Загружаем несинхронизированные фото (локальные → на диск)
                 uploadUnsyncedImages()
 
+                // 3.1. Загружаем несинхронизированные иконки папок (локальные → на диск)
+                uploadUnsyncedFolderImages()
+
                 // 4. Скачиваем фото с диска (для ВСЕХ предметов из БД)
                 syncImages()
+
+                // 4.1. Скачиваем иконки папок с диска (для ВСЕХ папок из БД)
+                syncFolderImages()
 
                 // 5. Обрабатываем очередь
                 val pendingCount = syncQueueDao.getPendingCount()
@@ -242,6 +248,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
+    // ЗАГРУЗКА НЕСИНХРОНИЗИРОВАННЫХ ИКОНОК ПАПОК (ЛОКАЛЬНЫЕ → НА ДИСК)
+    // ============================================================
+    private suspend fun uploadUnsyncedFolderImages() {
+        val appContext = getApplication<Application>().applicationContext
+        val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+
+        var uploadedCount = 0
+
+        allFolders.forEach { folder ->
+            val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+            if (localFile == null || !localFile.exists() || localFile.length() == 0L) return@forEach
+
+            if (folder.iconUrl.isNullOrEmpty()) {
+                try {
+                    val bytes = localFile.readBytes()
+                    Logger.log(TAG, "Uploading folder image for ${folder.id}, size=${bytes.size}")
+                    val success = repository.uploadFolderImage(folder.id, bytes)
+                    if (success) {
+                        val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                        withContext(Dispatchers.IO) {
+                            db.folderDao().updateFolder(updated)
+                            // ВАЖНО: фиксируем iconUrl в folders.json на Диске,
+                            // чтобы другие устройства знали о наличии иконки
+                            repository.updateFolderOnDisk(updated)
+                        }
+                        uploadedCount++
+                    }
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
+                }
+            }
+        }
+        Logger.log(TAG, "Uploaded $uploadedCount folder images")
+    }
+
+    // ============================================================
     // СКАЧИВАНИЕ ФОТО С ДИСКА (ДЛЯ ВСЕХ ПРЕДМЕТОВ ИЗ БД)
     // ============================================================
     private suspend fun syncImages() {
@@ -282,6 +324,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadContents()
     }
 
+    // ============================================================
+    // СКАЧИВАНИЕ ИКОНОК ПАПОК С ДИСКА
+    // ============================================================
+    private suspend fun syncFolderImages() {
+        val appContext = getApplication<Application>().applicationContext
+        val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+
+        if (allFolders.isEmpty()) {
+            Logger.log(TAG, "No folders to sync images for")
+            return
+        }
+
+        // ❗ НЕ фильтруем по iconUrl: после импорта бэкапа он может быть пустым,
+        //    но файл иконки на Яндекс.Диске физически существует.
+        //    Пытаемся скачать для ВСЕХ папок, у которых локально файла нет.
+        Logger.log(TAG, "Syncing folder images (download) for ${allFolders.size} folders...")
+        var downloadedCount = 0
+
+        allFolders.forEach { folder ->
+            val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+            if (localFile != null && localFile.exists() && localFile.length() > 0L) return@forEach
+
+            try {
+                val bitmap = repository.downloadFolderImage(folder.id)
+                if (bitmap != null) {
+                    val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
+                    if (bytes != null) {
+                        ImageUtils.saveImageLocally(appContext, "folder_${folder.id}", bytes)
+
+                        // Восстанавливаем iconUrl, если был пуст
+                        if (folder.iconUrl.isNullOrEmpty()) {
+                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                        }
+
+                        downloadedCount++
+                        Logger.log(TAG, "Downloaded folder image: ${folder.id}")
+                    }
+                } else {
+                    Logger.log(TAG, "Folder image not found on disk: ${folder.id}")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Failed to download folder image ${folder.id}: ${e.message}")
+            }
+        }
+
+        Logger.log(TAG, "Folder images downloaded: $downloadedCount")
+    }
+
     private suspend fun ensureValidToken(): Boolean {
         val token = tokenStorage.getAccessToken() ?: return false
         val auth = "OAuth $token"
@@ -300,14 +391,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         withContext(Dispatchers.IO) {
             diskFolders.forEach { diskFolder ->
                 val local = db.folderDao().getFolderById(diskFolder.id)
-                if (local == null) db.folderDao().insertFolder(diskFolder)
-                else if (diskFolder.updatedAt > local.updatedAt) db.folderDao().updateFolder(diskFolder)
+                if (local == null) {
+                    db.folderDao().insertFolder(diskFolder)
+                } else if (diskFolder.updatedAt > local.updatedAt) {
+                    // Мержим: не теряем локальный iconUrl, если на Диске пусто
+                    val merged = diskFolder.copy(
+                        iconUrl = diskFolder.iconUrl ?: local.iconUrl
+                    )
+                    db.folderDao().updateFolder(merged)
+                }
             }
 
             diskItems.forEach { diskItem ->
                 val local = db.itemDao().getItemById(diskItem.id)
-                if (local == null) db.itemDao().insertItem(diskItem)
-                else if (diskItem.updatedDate > local.updatedDate) db.itemDao().updateItem(diskItem)
+                if (local == null) {
+                    db.itemDao().insertItem(diskItem)
+                } else if (diskItem.updatedDate > local.updatedDate) {
+                    // Аналогично не теряем imageUrl
+                    val merged = diskItem.copy(
+                        imageUrl = diskItem.imageUrl ?: local.imageUrl
+                    )
+                    db.itemDao().updateItem(merged)
+                }
             }
 
             val diskLastModified = repository.getDiskLastModified()
@@ -346,7 +451,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun applyFolderChange(entry: SyncQueueEntity) {
         when (entry.action) {
-            "create" -> db.folderDao().getFolderById(entry.entityId)?.let { repository.createFolderOnDisk(it) }
+            "create" -> db.folderDao().getFolderById(entry.entityId)?.let {
+                repository.createFolderOnDisk(it)
+                // Если у папки уже есть локальная иконка — сразу загрузим её на Диск
+                val appContext = getApplication<Application>().applicationContext
+                val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${it.id}")
+                if (localFile != null && localFile.exists() && it.iconUrl.isNullOrEmpty()) {
+                    try {
+                        val success = repository.uploadFolderImage(it.id, localFile.readBytes())
+                        if (success) {
+                            val updated = it.copy(iconUrl = "folder_${it.id}.jpg")
+                            db.folderDao().updateFolder(updated)
+                            repository.updateFolderOnDisk(updated)
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "applyFolderChange: upload folder image failed: ${e.message}")
+                    }
+                }
+            }
             "update" -> db.folderDao().getFolderById(entry.entityId)?.let { repository.updateFolderOnDisk(it) }
             "delete" -> repository.deleteFolderOnDisk(entry.entityId)
         }
