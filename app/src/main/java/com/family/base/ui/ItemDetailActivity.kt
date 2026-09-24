@@ -27,6 +27,7 @@ import com.family.base.databinding.ActivityItemDetailBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.google.android.material.chip.Chip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,10 +43,8 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
     private lateinit var viewModel: MainViewModel
-    private val FOLDER_PATH = "/${Config.SHARED_FOLDER_NAME}"
     private val CAMERA_PERMISSION_REQUEST = 200
 
-    // ===== СЕРВИС ПОИСКА ТОВАРА =====
     private val productLookupService = ProductLookupService()
 
     private var newImageBytes: ByteArray? = null
@@ -54,7 +53,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var isEditMode = false
 
-    // ===== ВЫБОР ИЗ ГАЛЕРЕИ (С EXIF) =====
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -63,14 +62,8 @@ class ItemDetailActivity : AppCompatActivity() {
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
+                binding.ivPhotoPlaceholder.visibility = View.GONE
                 binding.btnAddPhoto.visibility = View.GONE
-
-                if (isEditMode) {
-                    binding.btnSave.visibility = View.VISIBLE
-                    binding.btnEdit.visibility = View.GONE
-                    binding.btnPlus.visibility = View.VISIBLE
-                    binding.btnMinus.visibility = View.VISIBLE
-                }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
                 Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
@@ -78,7 +71,7 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ФОТО С КАМЕРЫ (С EXIF) =====
+    // ===== ФОТО С КАМЕРЫ =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
             val uri = photoUri ?: return@registerForActivityResult
@@ -88,14 +81,8 @@ class ItemDetailActivity : AppCompatActivity() {
                 newImageBytes = processedBytes
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
+                binding.ivPhotoPlaceholder.visibility = View.GONE
                 binding.btnAddPhoto.visibility = View.GONE
-
-                if (isEditMode) {
-                    binding.btnSave.visibility = View.VISIBLE
-                    binding.btnEdit.visibility = View.GONE
-                    binding.btnPlus.visibility = View.VISIBLE
-                    binding.btnMinus.visibility = View.VISIBLE
-                }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error processing camera photo", e)
                 Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
@@ -113,11 +100,7 @@ class ItemDetailActivity : AppCompatActivity() {
             val scannedValue = result.data?.getStringExtra("barcode")
             if (!scannedValue.isNullOrEmpty()) {
                 Logger.log(TAG, "Scanned barcode: $scannedValue")
-
-                // Записываем в поле
                 binding.etBarcode.setText(scannedValue)
-
-                // Если это цифры — предлагаем поиск товара
                 if (scannedValue.all { it.isDigit() }) {
                     showLookupDialog(scannedValue)
                 } else {
@@ -158,6 +141,8 @@ class ItemDetailActivity : AppCompatActivity() {
             return
         }
 
+        setupListeners()
+
         when {
             showHistory -> {
                 isEditMode = false
@@ -173,29 +158,34 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
-        setupListeners()
-
         Logger.log(TAG, "=== ItemDetailActivity onCreate FINISHED ===")
     }
 
     private fun setupListeners() {
-        binding.btnBack.setOnClickListener { finish() }
+        // Назад
+        binding.toolbar.setNavigationOnClickListener { finish() }
 
-        binding.btnSave.setOnClickListener { saveChanges() }
-        binding.btnEdit.setOnClickListener {
-            itemId?.let {
-                isEditMode = true
-                showEditMode(it)
-            }
-        }
-        binding.btnPlus.setOnClickListener { changeQuantity(+1) }
-        binding.btnMinus.setOnClickListener { changeQuantity(-1) }
-        binding.btnAddPhoto.setOnClickListener { showImageSourceDialog() }
-
-        // ===== КЛИК ПО ФОТО → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
+        // Клик по фото — полноэкранный просмотр
         binding.ivPhoto.setOnClickListener { openFullscreenPhoto() }
 
-        // ===== КНОПКИ ДЕЙСТВИЙ =====
+        // Сохранить / Отмена
+        binding.btnSave.setOnClickListener { saveChanges() }
+        binding.btnCancelEdit.setOnClickListener { finish() }
+
+        // +/−
+        binding.btnPlus.setOnClickListener { changeQuantity(+1) }
+        binding.btnMinus.setOnClickListener { changeQuantity(-1) }
+
+        // Добавить фото
+        binding.btnAddPhoto.setOnClickListener { showImageSourceDialog() }
+
+        // Сканер штрих-кода
+        binding.btnScanBarcode.setOnClickListener {
+            val intent = Intent(this, BarcodeScannerActivity::class.java)
+            barcodeScannerLauncher.launch(intent)
+        }
+
+        // Действия
         binding.btnActionEdit.setOnClickListener {
             itemId?.let {
                 isEditMode = true
@@ -208,15 +198,8 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionArchive.setOnClickListener { showArchiveDialog() }
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
 
-        // ===== КНОПКА ВОЗВРАТА =====
+        // Вернуть
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
-
-        // ===== СКАНЕР ШТРИХ-КОДА =====
-        binding.btnScanBarcode.setOnClickListener {
-            Logger.log(TAG, "Scan barcode clicked")
-            val intent = Intent(this, BarcodeScannerActivity::class.java)
-            barcodeScannerLauncher.launch(intent)
-        }
     }
 
     private fun changeQuantity(delta: Int) {
@@ -242,6 +225,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = item.name
+
+                    // Поля
                     binding.etName.setText(item.name)
                     binding.etName.isEnabled = false
                     binding.etQuantity.setText(item.quantity.toString())
@@ -256,9 +241,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
                     binding.etExpiry.isEnabled = false
 
+                    // Цена
                     if (item.price != null && item.price != 0.0) {
                         binding.tvPrice.visibility = View.VISIBLE
-                        binding.tvPrice.text = "Цена: ${item.price} ₽"
+                        binding.tvPrice.text = "💰 Цена: ${item.price} ₽"
                         binding.etPrice.visibility = View.GONE
                         binding.tilPrice.visibility = View.GONE
                     } else {
@@ -267,23 +253,39 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.tilPrice.visibility = View.GONE
                     }
 
+                    // Кнопки +/− и сканер — скрыть в просмотре
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
+                    binding.btnScanBarcode.visibility = View.GONE
+                    binding.btnSave.visibility = View.GONE
+                    binding.editButtonsLayout.visibility = View.GONE
+                    binding.btnAddPhoto.visibility = View.GONE
 
+                    // Описание — если пусто, скрыть секцию
+                    val desc = item.description
+                    if (desc.isNullOrEmpty()) {
+                        binding.tvDescriptionTitle.visibility = View.GONE
+                        binding.cardDescription.visibility = View.GONE
+                    } else {
+                        binding.tvDescriptionTitle.visibility = View.VISIBLE
+                        binding.cardDescription.visibility = View.VISIBLE
+                    }
+
+                    // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
+                        binding.ivPhotoPlaceholder.visibility = View.GONE
                         binding.ivPhoto.load(localFile) { crossfade(true) }
                     } else {
                         binding.ivPhoto.visibility = View.GONE
+                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                     }
-                    binding.btnAddPhoto.visibility = View.GONE
 
-                    binding.btnSave.visibility = View.GONE
-                    binding.btnEdit.visibility = View.GONE
-                    binding.btnScanBarcode.visibility = View.GONE
+                    // Чипы
+                    applyChips(item)
 
-                    // ===== БЛОК ЗАЙМА =====
+                    // Блок займа
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
                         binding.cardLentInfo.visibility = View.VISIBLE
                         binding.tvLentPerson.text = "Кому: ${item.lentTo}"
@@ -321,6 +323,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
+
                     binding.etName.setText(item.name)
                     binding.etName.isEnabled = true
                     binding.etQuantity.setText(item.quantity.toString())
@@ -343,27 +346,70 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.btnPlus.visibility = View.VISIBLE
                     binding.btnMinus.visibility = View.VISIBLE
+                    binding.btnScanBarcode.visibility = View.VISIBLE
+                    binding.editButtonsLayout.visibility = View.VISIBLE
+                    binding.btnSave.visibility = View.VISIBLE
 
+                    // Описание — всегда видно в режиме редактирования
+                    binding.tvDescriptionTitle.visibility = View.VISIBLE
+                    binding.cardDescription.visibility = View.VISIBLE
+
+                    // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
+                        binding.ivPhotoPlaceholder.visibility = View.GONE
                         binding.ivPhoto.load(localFile) { crossfade(true) }
                         binding.btnAddPhoto.visibility = View.GONE
-                        // Клик на фото — полноэкранный просмотр (обработчик в setupListeners)
                     } else {
                         binding.ivPhoto.visibility = View.GONE
+                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                         binding.btnAddPhoto.visibility = View.VISIBLE
                     }
 
-                    binding.btnSave.visibility = View.VISIBLE
-                    binding.btnEdit.visibility = View.GONE
-                    binding.btnScanBarcode.visibility = View.VISIBLE
-
                     binding.cardLentInfo.visibility = View.GONE
+
+                    applyChips(item)
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing edit mode", e)
             }
+        }
+    }
+
+    // ============================================================
+    // ЧИПЫ-СТАТУСЫ
+    // ============================================================
+    private fun applyChips(item: ItemEntity) {
+        // Тип
+        val typeText = when (item.itemType) {
+            "food" -> "🍎 Еда"
+            "medicine" -> "💊 Лекарство"
+            else -> "📦 Другое"
+        }
+        binding.chipType.text = typeText
+        binding.chipType.visibility = View.VISIBLE
+
+        // Просрочен
+        if (item.isExpired) {
+            binding.chipExpired.visibility = View.VISIBLE
+        } else {
+            binding.chipExpired.visibility = View.GONE
+        }
+
+        // Скоро истекает
+        if (!item.isExpired && item.daysUntilExpiry in 0..3) {
+            binding.chipSoon.visibility = View.VISIBLE
+            binding.chipSoon.text = "⚠️ Осталось ${item.daysUntilExpiry} дн."
+        } else {
+            binding.chipSoon.visibility = View.GONE
+        }
+
+        // Выдан
+        if (item.isLent && !item.lentTo.isNullOrEmpty()) {
+            binding.chipLent.visibility = View.VISIBLE
+        } else {
+            binding.chipLent.visibility = View.GONE
         }
     }
 
@@ -377,6 +423,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 val history = withContext(Dispatchers.IO) { db.historyDao().getHistoryForItem(itemId) }
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "История изменений"
+
                     binding.etName.visibility = View.GONE
                     binding.etQuantity.visibility = View.GONE
                     binding.etExpiry.visibility = View.GONE
@@ -385,12 +432,13 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etPrice.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
                     binding.btnSave.visibility = View.GONE
-                    binding.btnEdit.visibility = View.GONE
+                    binding.editButtonsLayout.visibility = View.GONE
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
                     binding.cardLentInfo.visibility = View.GONE
                     binding.btnScanBarcode.visibility = View.GONE
+                    binding.chipGroupStatus.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) {
                         "История пуста"
@@ -409,7 +457,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.etDescription.setText(historyText)
                     binding.etDescription.isEnabled = false
-                    binding.etDescription.visibility = View.VISIBLE
+                    binding.cardDescription.visibility = View.VISIBLE
+                    binding.tvDescriptionTitle.visibility = View.VISIBLE
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error showing history", e)
@@ -427,9 +476,6 @@ class ItemDetailActivity : AppCompatActivity() {
             Toast.makeText(this, "Фото отсутствует", Toast.LENGTH_SHORT).show()
             return
         }
-
-        Logger.log(TAG, "Opening fullscreen photo: ${localFile.absolutePath}")
-
         val intent = Intent(this, FullscreenImageActivity::class.java).apply {
             putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
             putExtra(FullscreenImageActivity.EXTRA_TITLE, binding.tvTitle.text.toString())
@@ -507,12 +553,8 @@ class ItemDetailActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("🔍 Найти товар?")
             .setMessage("Найден штрих-код: $barcode\n\nИскать информацию о товаре в базах?")
-            .setPositiveButton("Искать") { _, _ ->
-                lookupProduct(barcode)
-            }
-            .setNegativeButton("Только код") { _, _ ->
-                Toast.makeText(this, "Штрих-код сохранён", Toast.LENGTH_SHORT).show()
-            }
+            .setPositiveButton("Искать") { _, _ -> lookupProduct(barcode) }
+            .setNegativeButton("Только код", null)
             .show()
     }
 
@@ -525,7 +567,6 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 if (result.success && result.product != null) {
                     val product = result.product
-
                     val displayName = when {
                         !product.name.isNullOrEmpty() -> product.name
                         !product.brand.isNullOrEmpty() -> product.brand
@@ -556,7 +597,6 @@ class ItemDetailActivity : AppCompatActivity() {
                             if (descriptionText.isNotEmpty()) {
                                 binding.etDescription.setText(descriptionText)
                             }
-                            Toast.makeText(this@ItemDetailActivity, "Поля заполнены", Toast.LENGTH_SHORT).show()
                         }
                         .setNeutralButton("Только название") { _, _ ->
                             displayName?.let { binding.etName.setText(it) }
@@ -564,15 +604,10 @@ class ItemDetailActivity : AppCompatActivity() {
                         .setNegativeButton("Отмена", null)
                         .show()
                 } else {
-                    Toast.makeText(
-                        this@ItemDetailActivity,
-                        "Товар не найден. Введите название вручную.",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@ItemDetailActivity, "Товар не найден", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error looking up product", e)
-                Toast.makeText(this@ItemDetailActivity, "Ошибка поиска: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -580,7 +615,6 @@ class ItemDetailActivity : AppCompatActivity() {
     // ============================================================
     // ДЕЙСТВИЯ
     // ============================================================
-
     private fun showLendDialog() {
         val id = itemId ?: return
         val container = android.widget.LinearLayout(this).apply {
