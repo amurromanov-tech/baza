@@ -49,5 +49,5 @@ object Config {
      *
      * ⚠️ Должно ТОЧНО совпадать с именем файла на Диске (с расширением .apk).
      */
-    const val APK_FILE_NAME = "app-debug.apk"
+    const val APK_FILE_NAME = "/app-debug.apk"
 }
