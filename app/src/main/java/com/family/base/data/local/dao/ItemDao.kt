@@ -93,15 +93,12 @@ interface ItemDao {
     // ЗАЙМ (ВЫДАЧА)
     // ============================================================
 
-    // Получить все выданные предметы
     @Query("SELECT * FROM items WHERE isLent = 1 AND isArchived = 0 ORDER BY lentDate DESC")
     suspend fun getLentItems(): List<ItemEntity>
 
-    // Получить выданные предметы конкретному человеку
     @Query("SELECT * FROM items WHERE isLent = 1 AND lentTo = :personName ORDER BY lentDate DESC")
     suspend fun getLentItemsByPerson(personName: String): List<ItemEntity>
 
-    // Количество выданных предметов
     @Query("SELECT COUNT(*) FROM items WHERE isLent = 1 AND isArchived = 0")
     suspend fun getLentItemsCount(): Int
 
@@ -133,13 +130,29 @@ interface ItemDao {
     // СТАТИСТИКА ЗАЙМА
     // ============================================================
 
-    // Сумма выданных предметов
     @Query("SELECT SUM(price * quantity) FROM items WHERE isLent = 1 AND isArchived = 0 AND price IS NOT NULL")
     suspend fun getTotalLentSum(): Double?
 
-    // Уникальные имена людей, кому выданы предметы
     @Query("SELECT DISTINCT lentTo FROM items WHERE isLent = 1 AND lentTo IS NOT NULL AND isArchived = 0")
     suspend fun getLentPersons(): List<String>
+
+    // ============================================================
+    // ПОИСК ПО ШТРИХ-КОДУ / QR-КОДУ
+    // ============================================================
+
+    /**
+     * Поиск активных предметов по штрих-коду.
+     * Если найдено несколько — показать список для выбора.
+     */
+    @Query("SELECT * FROM items WHERE barcode = :barcode AND isArchived = 0")
+    suspend fun getItemsByBarcode(barcode: String): List<ItemEntity>
+
+    /**
+     * Поиск всех предметов (включая архив) по штрих-коду.
+     * Используется в статистике / диагностике.
+     */
+    @Query("SELECT * FROM items WHERE barcode = :barcode")
+    suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
 }
 
 // ============================================================
