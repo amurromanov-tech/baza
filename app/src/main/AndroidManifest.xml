@@ -89,6 +89,12 @@
         <!-- Подключение к семье -->
         <activity android:name=".ui.ConnectFamilyActivity" />
 
+        <!-- Полноэкранный просмотр фото (pinch-to-zoom) -->
+        <activity
+            android:name=".ui.FullscreenImageActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BAZA.Fullscreen" />
+
         <!-- ============================================================ -->
         <!-- НАСТРОЙКИ И РАЗДЕЛЫ -->
         <!-- ============================================================ -->
