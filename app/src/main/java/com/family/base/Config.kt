@@ -18,4 +18,36 @@ object Config {
 
     // Ключ для хранения публичного ключа папки в защищённом хранилище
     const val PREF_PUBLIC_KEY = "public_key"
+
+    // ============================================================
+    // ОБНОВЛЕНИЯ ПРИЛОЖЕНИЯ
+    // ============================================================
+
+    /**
+     * Ссылка на version.json в GitHub raw.
+     * Формат: https://raw.githubusercontent.com/<USER>/<REPO>/<BRANCH>/version.json
+     *
+     * ⚠️ Замени <USER>, <REPO>, <BRANCH> на свои значения.
+     * Например: https://raw.githubusercontent.com/ivanov/baza/main/version.json
+     */
+    const val VERSION_JSON_URL =
+        "https://raw.githubusercontent.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ/main/version.json"
+
+    /**
+     * Публичная ссылка на папку или файл APK на Яндекс.Диске.
+     * Пример: https://disk.yandex.ru/d/XXXXXXXXXXXX
+     *
+     * ⚠️ UpdateManager сам получит прямую ссылку через API Яндекс.Диска.
+     * ⚠️ При создании публичной ссылки НЕ включай опцию «Запретить скачивание».
+     */
+    const val APK_YANDEX_PUBLIC_URL =
+        "https://disk.yandex.ru/d/ВАШ_ПУБЛИЧНЫЙ_КЛЮЧ"
+
+    /**
+     * Имя APK-файла в публичной папке Яндекс.Диска.
+     * Используется в UpdateManager при запросе прямой ссылки через API.
+     *
+     * ⚠️ Должно ТОЧНО совпадать с именем файла на Диске (с расширением .apk).
+     */
+    const val APK_FILE_NAME = "app-debug.apk"
 }
