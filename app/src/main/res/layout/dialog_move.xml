@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Заголовок диалога -->
+    <TextView
+        android:id="@+id/tvDialogTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Переместить"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:paddingBottom="12dp" />
+
+    <!-- Хлебные крошки -->
+    <TextView
+        android:id="@+id/tvBreadcrumbs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="📂 Корень"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:paddingTop="4dp"
+        android:paddingBottom="8dp"
+        android:maxLines="2"
+        android:ellipsize="middle" />
+
+    <!-- Кнопка "Вверх" -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnGoUp"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="⬆️ Вверх"
+        android:visibility="gone" />
+
+    <!-- Список подпапок -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvFolders"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:minHeight="120dp"
+        android:maxHeight="360dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp" />
+
+    <!-- Пусто-заглушка -->
+    <TextView
+        android:id="@+id/tvEmptyHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Подпапок нет — можно переместить сюда"
+        android:textSize="13sp"
+        android:textColor="#888888"
+        android:gravity="center"
+        android:padding="16dp"
+        android:visibility="gone" />
+
+    <!-- Кнопки действий -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="12dp"
+        android:gravity="end">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCancel"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Отмена" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnMoveHere"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="✅ Переместить сюда"
+            android:backgroundTint="#4CAF50"
+            android:textColor="@android:color/white" />
+    </LinearLayout>
+</LinearLayout>
