@@ -147,10 +147,11 @@ interface ItemDao {
     suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
 
     // ============================================================
-    // АУДИТ БАЗЫ (отчёт о недостающих данных, только активные)
+    // АУДИТ БАЗЫ (только активные предметы)
     // ============================================================
 
-    /** Без цены (0 или NULL) */
+    // -------- СУЩЕСТВУЮЩИЕ ЗАПРОСЫ --------
+
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -159,7 +160,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutPrice(): List<ItemEntity>
 
-    /** Без срока годности (только еда и лекарства, где срок важен) */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -169,7 +169,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutExpiry(): List<ItemEntity>
 
-    /** Без штрих-кода */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -178,7 +177,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutBarcode(): List<ItemEntity>
 
-    /** Без описания */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -187,7 +185,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutDescription(): List<ItemEntity>
 
-    /** Без явного типа (itemType = 'other' или NULL) */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -196,7 +193,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutType(): List<ItemEntity>
 
-    /** Выданы давно (более :thresholdDays дней назад) */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -207,7 +203,6 @@ interface ItemDao {
     """)
     suspend fun getItemsLentLongAgo(thresholdDate: Long): List<ItemEntity>
 
-    /** Просрочены, но ещё в базе (не в архиве) */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -217,7 +212,35 @@ interface ItemDao {
     """)
     suspend fun getExpiredItems(now: Long): List<ItemEntity>
 
-    // ===== СЧЁТЧИКИ ДЛЯ ЧИПОВ =====
+    // -------- НОВЫЕ ЗАПРОСЫ --------
+
+    /**
+     * Штрих-коды, которые встречаются больше одного раза среди активных предметов.
+     * Используется для поиска дубликатов.
+     */
+    @Query("""
+        SELECT barcode FROM items
+        WHERE isArchived = 0
+          AND barcode IS NOT NULL
+          AND barcode != ''
+        GROUP BY barcode
+        HAVING COUNT(*) > 1
+    """)
+    suspend fun getDuplicateBarcodes(): List<String>
+
+    /**
+     * Возвращает все активные предметы с указанным штрих-кодом.
+     * Используется для показа списка дубликатов.
+     */
+    @Query("""
+        SELECT * FROM items
+        WHERE isArchived = 0
+          AND barcode = :barcode
+        ORDER BY addedDate ASC
+    """)
+    suspend fun getItemsBySameBarcode(barcode: String): List<ItemEntity>
+
+    // -------- СЧЁТЧИКИ --------
 
     @Query("""
         SELECT COUNT(*) FROM items 
@@ -271,6 +294,26 @@ interface ItemDao {
           AND expiryDate < :now
     """)
     suspend fun countExpiredItems(now: Long): Int
+
+    /**
+     * Количество активных предметов, у которых штрих-код дублируется.
+     * (Всего предметов в группах с COUNT > 1)
+     */
+    @Query("""
+        SELECT COUNT(*) FROM items
+        WHERE isArchived = 0
+          AND barcode IS NOT NULL
+          AND barcode != ''
+          AND barcode IN (
+              SELECT barcode FROM items
+              WHERE isArchived = 0
+                AND barcode IS NOT NULL
+                AND barcode != ''
+              GROUP BY barcode
+              HAVING COUNT(*) > 1
+          )
+    """)
+    suspend fun countDuplicateBarcodeItems(): Int
 }
 
 // ============================================================
