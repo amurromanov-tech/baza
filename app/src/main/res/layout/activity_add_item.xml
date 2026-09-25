@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -49,7 +50,7 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- АВТО РЕЖИМ                                                    -->
+        <!-- АВТО РЕЖИМ -->
         <!-- ============================================================ -->
         <LinearLayout
             android:id="@+id/autoModeLayout"
@@ -123,7 +124,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Тип"
+                android:text="Тип *"
                 android:textSize="14sp"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="4dp" />
@@ -160,6 +161,31 @@
                     android:text="Другое" />
             </RadioGroup>
 
+            <!-- ===== ПОДТИП (auto) — выпадающий список ===== -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Подтип *"
+                android:textSize="14sp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilAutoSubtype"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Выберите подтип">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/autoCompleteSubtypeAuto"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:focusable="false"
+                    android:clickable="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
             <ImageView
                 android:id="@+id/ivAutoPhoto"
                 android:layout_width="100dp"
@@ -170,7 +196,7 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- РУЧНОЙ РЕЖИМ                                                  -->
+        <!-- РУЧНОЙ РЕЖИМ -->
         <!-- ============================================================ -->
         <LinearLayout
             android:id="@+id/manualModeLayout"
@@ -232,10 +258,11 @@
                     android:layout_height="wrap_content" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- ===== ТИП (manual) ===== -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Тип"
+                android:text="Тип *"
                 android:textSize="14sp"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="4dp" />
@@ -272,6 +299,31 @@
                     android:text="Другое" />
             </RadioGroup>
 
+            <!-- ===== ПОДТИП (manual) — выпадающий список ===== -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Подтип *"
+                android:textSize="14sp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilManualSubtype"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Выберите подтип">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/autoCompleteSubtypeManual"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:focusable="false"
+                    android:clickable="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
             <Button
                 android:id="@+id/btnTakePhoto"
                 android:layout_width="match_parent"
@@ -289,7 +341,7 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- КНОПКИ                                                        -->
+        <!-- КНОПКИ -->
         <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
