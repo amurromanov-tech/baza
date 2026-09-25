@@ -48,7 +48,7 @@ class AddItemActivity : AppCompatActivity() {
 
     private var photoUri: Uri? = null
 
-    // ===== ВЫБОР ИЗ ГАЛЕРЕИ (С УЧЁТОМ EXIF) =====
+    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -65,7 +65,7 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ФОТО С КАМЕРЫ (С УЧЁТОМ EXIF) =====
+    // ===== ФОТО С КАМЕРЫ =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
             val uri = photoUri ?: return@registerForActivityResult
@@ -94,22 +94,13 @@ class AddItemActivity : AppCompatActivity() {
             if (!scannedValue.isNullOrEmpty()) {
                 Logger.log(TAG, "Scanned value: $scannedValue")
 
-                // ===== ЕСЛИ ЭТО ЦИФРЫ (штрих-код) =====
                 if (scannedValue.all { it.isDigit() }) {
                     barcode = scannedValue
                     binding.etAutoBarcode.setText(scannedValue)
-                    Logger.log(TAG, "Numeric barcode: $scannedValue, searching...")
                     lookupProduct(scannedValue)
-                }
-                // ===== ЕСЛИ ЭТО ТЕКСТ (QR-код) =====
-                else {
-                    Logger.log(TAG, "Text QR code: $scannedValue")
+                } else {
                     binding.etAutoName.setText(scannedValue)
-                    Toast.makeText(
-                        this,
-                        "QR-код распознан: $scannedValue",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this, "QR-код распознан: $scannedValue", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -117,12 +108,10 @@ class AddItemActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Logger.log(TAG, "=== AddItemActivity onCreate START ===")
 
         try {
             binding = ActivityAddItemBinding.inflate(layoutInflater)
             setContentView(binding.root)
-            Logger.log(TAG, "Binding inflated")
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
             finish()
@@ -133,7 +122,6 @@ class AddItemActivity : AppCompatActivity() {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
             viewModel = ViewModelProvider(this)[MainViewModel::class.java]
-            Logger.log(TAG, "Database, repository and ViewModel initialized")
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             finish()
@@ -141,21 +129,16 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         parentFolderId = intent.getStringExtra("parent_id")
-        Logger.log(TAG, "parentFolderId: $parentFolderId")
 
-        // ===== ПРИЁМ ШТРИХ-КОДА ИЗ СКАНЕРА ПОИСКА =====
         val incomingBarcode = intent.getStringExtra("barcode")
         if (!incomingBarcode.isNullOrEmpty()) {
-            Logger.log(TAG, "Incoming barcode from search: $incomingBarcode")
             barcode = incomingBarcode
         }
 
         setupListeners()
 
-        // ===== ЕСЛИ ПРИШЁЛ КОД — ПЕРЕКЛЮЧИТЬСЯ В AUTO-РЕЖИМ И ПОИСКАТЬ =====
+        // ===== ЕСЛИ ПРИШЁЛ КОД — AUTO-РЕЖИМ + ПОИСК =====
         incomingBarcode?.let { code ->
-            Logger.log(TAG, "Auto-switching to auto mode for barcode: $code")
-
             binding.modeSelection.visibility = View.GONE
             binding.autoModeLayout.visibility = View.VISIBLE
             binding.manualModeLayout.visibility = View.GONE
@@ -163,20 +146,12 @@ class AddItemActivity : AppCompatActivity() {
             binding.etAutoBarcode.setText(code)
 
             if (code.all { it.isDigit() }) {
-                // Это штрих-код — запускаем поиск товара в базах
                 lookupProduct(code)
             } else {
-                // Это QR-код с текстом — подставляем как название
                 binding.etAutoName.setText(code)
-                Toast.makeText(
-                    this,
-                    "QR-код распознан: $code",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "QR-код распознан: $code", Toast.LENGTH_LONG).show()
             }
         }
-
-        Logger.log(TAG, "=== AddItemActivity onCreate FINISHED ===")
     }
 
     private fun setupListeners() {
@@ -184,46 +159,28 @@ class AddItemActivity : AppCompatActivity() {
             binding.modeSelection.visibility = View.GONE
             binding.manualModeLayout.visibility = View.VISIBLE
             binding.autoModeLayout.visibility = View.GONE
-            Logger.log(TAG, "Manual mode selected")
         }
 
         binding.btnAutoMode.setOnClickListener {
             binding.modeSelection.visibility = View.GONE
             binding.autoModeLayout.visibility = View.VISIBLE
             binding.manualModeLayout.visibility = View.GONE
-            Logger.log(TAG, "Auto mode selected")
         }
 
-        binding.btnCancel.setOnClickListener {
-            Logger.log(TAG, "Cancel clicked")
-            finish()
-        }
+        binding.btnCancel.setOnClickListener { finish() }
+        binding.btnSave.setOnClickListener { saveItem() }
 
-        binding.btnSave.setOnClickListener {
-            Logger.log(TAG, "Save clicked")
-            saveItem()
-        }
+        binding.etManualExpiry.setOnClickListener { showDatePickerDialog(binding.etManualExpiry) }
+        binding.etAutoExpiry.setOnClickListener { showDatePickerDialog(binding.etAutoExpiry) }
 
-        binding.etManualExpiry.setOnClickListener {
-            showDatePickerDialog(binding.etManualExpiry)
-        }
-
-        binding.etAutoExpiry.setOnClickListener {
-            showDatePickerDialog(binding.etAutoExpiry)
-        }
-
-        binding.btnTakePhoto.setOnClickListener {
-            showImageSourceDialog()
-        }
+        binding.btnTakePhoto.setOnClickListener { showImageSourceDialog() }
 
         binding.btnScanBarcode.setOnClickListener {
-            Logger.log(TAG, "Scan barcode clicked")
-            val intent = Intent(this, BarcodeScannerActivity::class.java)
-            barcodeScannerLauncher.launch(intent)
+            barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
     }
 
-    // ===== ПОИСК ТОВАРА В БАЗАХ =====
+    // ===== ПОИСК ТОВАРА В БАЗАХ + АВТО-ВЫБОР ТИПА =====
     private fun lookupProduct(barcode: String) {
         Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
         binding.etAutoName.isEnabled = false
@@ -235,7 +192,7 @@ class AddItemActivity : AppCompatActivity() {
 
                 if (result.success && result.product != null) {
                     val product = result.product
-                    Logger.log(TAG, "Product found: name=${product.name}, brand=${product.brand}, source=${product.source}")
+                    Logger.log(TAG, "Product found: name=${product.name}, source=${product.source}")
 
                     val displayName = when {
                         !product.name.isNullOrEmpty() -> product.name
@@ -262,6 +219,9 @@ class AddItemActivity : AppCompatActivity() {
 
                     binding.etAutoDescription.setText(descriptionText)
 
+                    // ===== АВТО-ВЫБОР ТИПА ПО ИСТОЧНИКУ =====
+                    autoSelectType(product.source, product.category)
+
                     Toast.makeText(
                         this@AddItemActivity,
                         "Найдено: $displayName (${product.source})",
@@ -282,51 +242,67 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Автоматически выбирает тип предмета в RadioGroup по источнику / категории.
+     *  - Open Food Facts → food
+     *  - RxNorm → medicine
+     *  - по ключевым словам в категории → food / medicine
+     *  - остальное → other
+     */
+    private fun autoSelectType(source: String?, category: String?) {
+        val sourceLower = source?.lowercase(Locale.getDefault()) ?: ""
+        val categoryLower = category?.lowercase(Locale.getDefault()) ?: ""
+
+        val type = when {
+            sourceLower.contains("open food facts") -> "food"
+            sourceLower.contains("rxnorm") -> "medicine"
+            sourceLower.contains("open library") -> "other"
+            sourceLower.contains("google books") -> "other"
+            categoryLower.contains("food") -> "food"
+            categoryLower.contains("beverage") -> "food"
+            categoryLower.contains("drink") -> "food"
+            categoryLower.contains("snack") -> "food"
+            categoryLower.contains("medicine") -> "medicine"
+            categoryLower.contains("drug") -> "medicine"
+            categoryLower.contains("vitamin") -> "medicine"
+            else -> "other"
+        }
+
+        Logger.log(TAG, "Auto-select type: source=$source, category=$category → $type")
+
+        when (type) {
+            "food" -> binding.rgAutoType.check(R.id.rbAutoFood)
+            "medicine" -> binding.rgAutoType.check(R.id.rbAutoMedicine)
+            else -> binding.rgAutoType.check(R.id.rbAutoOther)
+        }
+    }
+
     private fun showImageSourceDialog() {
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(this)
             .setTitle("Выберите источник фото")
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> {
-                        if (checkCameraPermission()) {
-                            openCamera()
-                        } else {
-                            requestCameraPermission()
-                        }
-                    }
+                    0 -> if (checkCameraPermission()) openCamera() else requestCameraPermission()
                     1 -> pickImageLauncher.launch("image/*")
                 }
             }
             .show()
     }
 
-    private fun checkCameraPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-    }
+    private fun checkCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
     private fun requestCameraPermission() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(Manifest.permission.CAMERA),
-            CAMERA_PERMISSION_REQUEST
-        )
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
     }
 
     private fun openCamera() {
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val photoFile = File(cacheDir, "IMG_$timeStamp.jpg")
-            photoUri = androidx.core.content.FileProvider.getUriForFile(
-                this,
-                "${packageName}.fileprovider",
-                photoFile
-            )
+            photoUri = androidx.core.content.FileProvider.getUriForFile(this, "${packageName}.fileprovider", photoFile)
             takePhotoLauncher.launch(photoUri)
-            Logger.log(TAG, "Camera opened")
         } catch (e: Exception) {
             Logger.log(TAG, "Error opening camera", e)
             Toast.makeText(this, "Ошибка открытия камеры: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -376,8 +352,6 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     private fun saveItem() {
-        Logger.log(TAG, "saveItem() called")
-
         val isAutoMode = binding.autoModeLayout.visibility == View.VISIBLE
 
         val name = if (isAutoMode) {
@@ -411,11 +385,22 @@ class AddItemActivity : AppCompatActivity() {
             barcode
         }
 
-        val itemType = when (binding.rgType.checkedRadioButtonId) {
-            R.id.rbFood -> "food"
-            R.id.rbMedicine -> "medicine"
-            else -> "other"
+        // ===== ТИП ИЗ ДВУХ RADIOGROUP ПО РЕЖИМУ =====
+        val itemType = if (isAutoMode) {
+            when (binding.rgAutoType.checkedRadioButtonId) {
+                R.id.rbAutoFood -> "food"
+                R.id.rbAutoMedicine -> "medicine"
+                else -> "other"
+            }
+        } else {
+            when (binding.rgType.checkedRadioButtonId) {
+                R.id.rbFood -> "food"
+                R.id.rbMedicine -> "medicine"
+                else -> "other"
+            }
         }
+
+        Logger.log(TAG, "Save: isAutoMode=$isAutoMode, itemType=$itemType")
 
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
@@ -432,9 +417,6 @@ class AddItemActivity : AppCompatActivity() {
         )
         item.computeExpiryFields()
 
-        Logger.log(TAG, "Saving item via ViewModel: name=$name, barcode=$finalBarcode")
-
-        // ===== СОХРАНЯЕМ ТОЛЬКО ЛОКАЛЬНО =====
         viewModel.createItem(item, imageBytes)
 
         Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
