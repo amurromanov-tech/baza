@@ -54,7 +54,6 @@ class MainActivity : AppCompatActivity() {
                 val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
                 val processedBytes = ImageUtils.processImage(bitmap)
                 newFolderImageBytes = processedBytes
-                Logger.log(TAG, "Folder image selected, size=${processedBytes.size}")
                 Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking folder image", e)
@@ -74,22 +73,18 @@ class MainActivity : AppCompatActivity() {
                         try {
                             ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
                             val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                            withContext(Dispatchers.IO) {
-                                db.folderDao().updateFolder(updated)
-                            }
+                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                             viewModel.uploadFolderImage(folder.id, processedBytes)
                             viewModel.syncWithDisk()
                             viewModel.loadContents()
                             Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
                             Logger.log(TAG, "Error updating folder image", e)
-                            Toast.makeText(this@MainActivity, "Ошибка обновления иконки", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking folder image", e)
-                Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -100,8 +95,20 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             val scanned = result.data?.getStringExtra("barcode")
             if (!scanned.isNullOrEmpty()) {
-                Logger.log(TAG, "Scanned barcode for search: $scanned")
                 searchByBarcode(scanned)
+            }
+        }
+    }
+
+    // ===== ПРИЁМ РЕЗУЛЬТАТА ОТ ItemDetailActivity =====
+    private val itemDetailLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                Logger.log(TAG, "Navigate to folder from ItemDetail: $folderId")
+                viewModel.navigateToFolder(folderId)
             }
         }
     }
@@ -109,7 +116,6 @@ class MainActivity : AppCompatActivity() {
     private val connectFamilyLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        Logger.log(TAG, "ConnectFamily result: resultCode=${result.resultCode}")
         if (result.resultCode == RESULT_OK) {
             viewModel.loadContents()
         }
@@ -219,7 +225,7 @@ class MainActivity : AppCompatActivity() {
     private fun openItemDetail(item: ItemEntity) {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
-        startActivity(intent)
+        itemDetailLauncher.launch(intent)   // ← используем launcher для приёма результата
     }
 
     private fun showSearchDialog() {
@@ -447,7 +453,6 @@ class MainActivity : AppCompatActivity() {
                     startFromId = folder.parentId,
                     excludedIds = excluded,
                     onConfirm = { newParentId ->
-                        Logger.log(TAG, "Move folder to: $newParentId")
                         if (newParentId == folder.parentId) {
                             Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
                         } else {
@@ -477,7 +482,6 @@ class MainActivity : AppCompatActivity() {
             startFromId = item.parentId,
             excludedIds = emptySet(),
             onConfirm = { newParentId ->
-                Logger.log(TAG, "Move item to: $newParentId")
                 if (newParentId == item.parentId) {
                     Toast.makeText(this, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
                 } else {
@@ -488,9 +492,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    /**
-     * Рекурсивно собирает id всех потомков папки.
-     */
     private suspend fun collectDescendantIds(folderId: String): Set<String> {
         val result = mutableSetOf<String>()
         val stack = ArrayDeque<String>()
@@ -512,7 +513,7 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
         intent.putExtra("edit_mode", true)
-        startActivity(intent)
+        itemDetailLauncher.launch(intent)
     }
 
     private fun confirmDeleteItem(item: ItemEntity) {
@@ -529,7 +530,7 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
         intent.putExtra("show_history", true)
-        startActivity(intent)
+        itemDetailLauncher.launch(intent)
     }
 
     private fun updateSearchIcon(query: String?) {
