@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?android:attr/colorBackground">
+
+    <!-- ============================================================ -->
+    <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
+    <!-- ============================================================ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="← Назад"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🔍 Аудит базы"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <!-- ============================================================ -->
+    <!-- ЧИПЫ-ФИЛЬТРЫ (горизонтальная прокрутка) -->
+    <!-- ============================================================ -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <!-- 💰 Без цены -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoPrice"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="💰 Без цены"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 📅 Без срока -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoExpiry"
+                style="@style/PastelChip.Soon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="📅 Без срока"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 🆔 Без штрих-кода -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoBarcode"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="🆔 Без кода"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 📝 Без описания -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoDescription"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="📝 Без описания"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 📦 Без типа -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoType"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="📦 Без типа"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 🤝 Выданы давно -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipLentLong"
+                style="@style/PastelChip.Lent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="🤝 Выданы давно"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- ⏰ Просрочены -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipExpired"
+                style="@style/PastelChip.Expired"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="⏰ Просрочены"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- ============================================================ -->
+    <!-- СЧЁТЧИК + ПОДСКАЗКА -->
+    <!-- ============================================================ -->
+    <TextView
+        android:id="@+id/tvCount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:text="Выберите категорию"
+        android:textSize="13sp"
+        android:textColor="@color/pathTextColor" />
+
+    <!-- ============================================================ -->
+    <!-- СПИСОК -->
+    <!-- ============================================================ -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvAudit"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingBottom="16dp"
+            android:clipToPadding="false"
+            tools:listitem="@layout/item_audit" />
+
+        <!-- Пусто-заглушка -->
+        <LinearLayout
+            android:id="@+id/emptyState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🎉"
+                android:textSize="64sp" />
+
+            <TextView
+                android:id="@+id/tvEmptyText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Ничего не найдено"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/pathTextColor"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvEmptySubtext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Все данные заполнены"
+                android:textSize="14sp"
+                android:textColor="@color/dateLabel"
+                android:gravity="center" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>
