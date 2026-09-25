@@ -52,7 +52,8 @@ class AuditAdapter(
         }
         holder.colorBar.setBackgroundColor(ContextCompat.getColor(context, colorRes))
 
-        // Иконка (фото или дефолт)
+        // Иконка — фото или дефолт
+        holder.ivIcon.load(null)
         val localFile = ImageUtils.getLocalImageFile(context, item.id)
         if (localFile != null && localFile.exists()) {
             holder.ivIcon.load(localFile) {
@@ -66,15 +67,19 @@ class AuditAdapter(
 
         // Путь — строим асинхронно
         holder.tvPath.text = "…"
+        val itemIdForPath = item.id
+        val parentIdForPath = item.parentId
         scope.launch {
-            val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
+            val path = withContext(Dispatchers.IO) { buildItemPath(parentIdForPath) }
             withContext(Dispatchers.Main) {
                 // Проверяем, что этот же предмет всё ещё привязан к холдеру
-                if (holder.tvName.text == item.name) {
+                val currentItem = holder.itemView.tag as? String
+                if (currentItem == itemIdForPath || currentItem == null) {
                     holder.tvPath.text = path
                 }
             }
         }
+        holder.itemView.tag = itemIdForPath
 
         // Клик
         holder.itemView.isClickable = true
