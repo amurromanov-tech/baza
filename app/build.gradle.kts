@@ -15,8 +15,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 26   // увеличивать при каждом обновлении
-        versionName = "6.0.0"   // версия для пользователя
+        versionCode = 25   // увеличивать при каждом обновлении
+        versionName = "5.0.1"   // версия для пользователя
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
@@ -94,14 +94,11 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ML Kit для сканирования штрих-кодов
+    // ML Kit для сканирования штрих-кодов (оставляем)
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
 
-     // ML Kit для распознавания текста (OCR)
-    // ⚠️ Поддерживается только Latin script (латиница + цифры).
-    // Кириллица официально не поддерживается, но цифры и структура
-    // чека распознаются достаточно для парсера.
-    implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Tesseract4Android для OCR (русский + английский)
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
 
     // CameraX
     implementation("androidx.camera:camera-core:1.3.0")
