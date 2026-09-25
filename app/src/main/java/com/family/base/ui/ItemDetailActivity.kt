@@ -275,16 +275,14 @@ class ItemDetailActivity : AppCompatActivity() {
         val viewVisibility = if (isView) View.VISIBLE else View.GONE
         val editVisibility = if (isView) View.GONE else View.VISIBLE
 
-        // Основное
         binding.chipNameView.visibility = viewVisibility
         binding.tilName.visibility = editVisibility
 
         binding.chipQuantityView.visibility = viewVisibility
         binding.quantityEditBlock.visibility = editVisibility
 
-        binding.typeEditBlock.visibility = editVisibility   // RadioGroup только в edit
+        binding.typeEditBlock.visibility = editVisibility
 
-        // Детали
         binding.chipBarcodeView.visibility = viewVisibility
         binding.barcodeEditBlock.visibility = editVisibility
 
@@ -294,11 +292,9 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.tvPrice.visibility = viewVisibility
         binding.tilPrice.visibility = editVisibility
 
-        // Описание
         binding.tvDescriptionView.visibility = viewVisibility
         binding.tilDescription.visibility = editVisibility
 
-        // Кнопки редактирования
         binding.editButtonsLayout.visibility = editVisibility
     }
 
@@ -371,10 +367,11 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etQuantity.setText(item.quantity.toString())
         binding.etQuantity.isEnabled = true
 
-        // ===== ТИП — RadioGroup =====
+        // ===== ТИП — RadioGroup (4 варианта) =====
         when (item.itemType) {
             "food" -> binding.rgTypeEdit.check(R.id.rbTypeFood)
             "medicine" -> binding.rgTypeEdit.check(R.id.rbTypeMedicine)
+            "thing" -> binding.rgTypeEdit.check(R.id.rbTypeThing)
             else -> binding.rgTypeEdit.check(R.id.rbTypeOther)
         }
 
@@ -429,6 +426,9 @@ class ItemDetailActivity : AppCompatActivity() {
         return "📂 Корень / " + parts.reversed().joinToString(" / ")
     }
 
+    // ============================================================
+    // ЧИПЫ
+    // ============================================================
     private fun applyChips(item: ItemEntity) {
         when (item.itemType) {
             "food" -> {
@@ -441,8 +441,13 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.chipType.setChipBackgroundColorResource(R.color.chipMedicineBg)
                 binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipMedicineText))
             }
+            "thing" -> {
+                binding.chipType.text = "📦 Предмет"
+                binding.chipType.setChipBackgroundColorResource(R.color.chipThingBg)
+                binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipThingText))
+            }
             else -> {
-                binding.chipType.text = "📦 Другое"
+                binding.chipType.text = "🗂 Другое"
                 binding.chipType.setChipBackgroundColorResource(R.color.chipOtherBg)
                 binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipOtherText))
             }
@@ -760,10 +765,11 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
-                // ===== НОВЫЙ ТИП ИЗ RADIOGROUP =====
+                // ===== НОВЫЙ ТИП ИЗ RADIOGROUP (4 варианта) =====
                 val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
                     R.id.rbTypeFood -> "food"
                     R.id.rbTypeMedicine -> "medicine"
+                    R.id.rbTypeThing -> "thing"
                     else -> "other"
                 }
 
@@ -776,7 +782,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     description = description,
                     expiryDate = expiryDate,
                     price = price,
-                    itemType = newItemType,   // ← обновляем тип
+                    itemType = newItemType,
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = "user"
                 )
