@@ -13,6 +13,10 @@ interface ItemDao {
     @Insert
     suspend fun insertItem(item: ItemEntity)
 
+    /** Массовая вставка (для чеков и импорта) */
+    @Insert
+    suspend fun insertItems(items: List<ItemEntity>)
+
     @Update
     suspend fun updateItem(item: ItemEntity)
 
@@ -150,8 +154,6 @@ interface ItemDao {
     // АУДИТ БАЗЫ (только активные предметы)
     // ============================================================
 
-    // -------- СУЩЕСТВУЮЩИЕ ЗАПРОСЫ --------
-
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -212,12 +214,8 @@ interface ItemDao {
     """)
     suspend fun getExpiredItems(now: Long): List<ItemEntity>
 
-    // -------- НОВЫЕ ЗАПРОСЫ --------
+    // -------- ДУБЛИКАТЫ --------
 
-    /**
-     * Штрих-коды, которые встречаются больше одного раза среди активных предметов.
-     * Используется для поиска дубликатов.
-     */
     @Query("""
         SELECT barcode FROM items
         WHERE isArchived = 0
@@ -228,10 +226,6 @@ interface ItemDao {
     """)
     suspend fun getDuplicateBarcodes(): List<String>
 
-    /**
-     * Возвращает все активные предметы с указанным штрих-кодом.
-     * Используется для показа списка дубликатов.
-     */
     @Query("""
         SELECT * FROM items
         WHERE isArchived = 0
@@ -295,10 +289,6 @@ interface ItemDao {
     """)
     suspend fun countExpiredItems(now: Long): Int
 
-    /**
-     * Количество активных предметов, у которых штрих-код дублируется.
-     * (Всего предметов в группах с COUNT > 1)
-     */
     @Query("""
         SELECT COUNT(*) FROM items
         WHERE isArchived = 0
