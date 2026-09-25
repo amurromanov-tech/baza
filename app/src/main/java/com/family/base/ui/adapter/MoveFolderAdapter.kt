@@ -30,7 +30,9 @@ class MoveFolderAdapter(
         val folder = folders[position]
         holder.tvFolderName.text = folder.name
 
-        // Тап по строке — зайти внутрь папки
+        // Явно разрешаем клик на корневой itemView
+        holder.itemView.isClickable = true
+        holder.itemView.isFocusable = true
         holder.itemView.setOnClickListener {
             onFolderClick(folder)
         }
