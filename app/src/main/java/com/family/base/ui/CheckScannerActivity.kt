@@ -36,6 +36,7 @@ class CheckScannerActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
 
+    // ===== LAUNCHER ДЛЯ CheckPreviewActivity =====
     private val checkPreviewLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -88,6 +89,9 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ЗАПУСК КАМЕРЫ
+    // ============================================================
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -116,6 +120,9 @@ class CheckScannerActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    // ============================================================
+    // СНЯТЬ ФОТО
+    // ============================================================
     private fun takePhoto() {
         val capture = imageCapture ?: run {
             Toast.makeText(this, "Камера не готова", Toast.LENGTH_SHORT).show()
@@ -141,7 +148,7 @@ class CheckScannerActivity : AppCompatActivity() {
                     ).show()
                 }
 
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileOptions) {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     Logger.log(TAG, "Photo saved: ${photoFile.absolutePath}")
                     recognizeText(photoFile)
                 }
@@ -149,6 +156,9 @@ class CheckScannerActivity : AppCompatActivity() {
         )
     }
 
+    // ============================================================
+    // РАСПОЗНАВАНИЕ ТЕКСТА
+    // ============================================================
     private fun recognizeText(photoFile: File) {
         showLoading(true, "Распознаю текст…")
 
@@ -162,9 +172,7 @@ class CheckScannerActivity : AppCompatActivity() {
 
             val image = InputImage.fromBitmap(bitmap, 0)
 
-            // ===== ИСПОЛЬЗУЕМ LATIN MODEL =====
-            // ML Kit Text Recognition v2 не поддерживает кириллицу официально,
-            // но распознаёт цифры и структуру чека достаточно для парсера.
+            // ===== LATIN MODEL =====
             val recognizer = TextRecognition.getClient(
                 TextRecognizerOptions.DEFAULT_OPTIONS
             )
@@ -185,6 +193,7 @@ class CheckScannerActivity : AppCompatActivity() {
                         return@addOnSuccessListener
                     }
 
+                    // Сохраняем фото на будущее
                     val permanentFile = File(filesDir, "last_check.jpg")
                     try {
                         photoFile.copyTo(permanentFile, overwrite = true)
@@ -192,11 +201,13 @@ class CheckScannerActivity : AppCompatActivity() {
                         Logger.log(TAG, "copyTo permanentFile error: ${e.message}")
                     }
 
+                    // Открываем CheckPreviewActivity через launcher
                     val intent = Intent(this, CheckPreviewActivity::class.java).apply {
                         putExtra(EXTRA_RECOGNIZED_TEXT, fullText)
                         putExtra(EXTRA_IMAGE_PATH, permanentFile.absolutePath)
                     }
                     checkPreviewLauncher.launch(intent)
+                    // НЕ вызываем finish() — ждём результат
                 }
                 .addOnFailureListener { e ->
                     Logger.log(TAG, "OCR failed: ${e.message}", e)
@@ -215,6 +226,9 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Загружает Bitmap с учётом EXIF-ориентации.
+     */
     private fun loadBitmapWithExif(file: File): Bitmap? {
         return try {
             val options = BitmapFactory.Options().apply {
@@ -243,6 +257,9 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ПРОГРЕСС
+    // ============================================================
     private fun showLoading(show: Boolean, text: String = "") {
         binding.loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
         if (show && text.isNotEmpty()) {
@@ -251,6 +268,9 @@ class CheckScannerActivity : AppCompatActivity() {
         binding.btnCapture.isEnabled = !show
     }
 
+    // ============================================================
+    // РАЗРЕШЕНИЯ
+    // ============================================================
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
