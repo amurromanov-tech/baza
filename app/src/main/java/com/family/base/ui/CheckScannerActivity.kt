@@ -9,11 +9,11 @@ import android.graphics.Matrix
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
@@ -22,10 +22,8 @@ import com.family.base.databinding.ActivityCheckScannerBinding
 import com.family.base.util.Logger
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.google.mlkit.vision.text.cyrillic.CyrillicTextRecognizerOptions
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -37,6 +35,22 @@ class CheckScannerActivity : AppCompatActivity() {
 
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
+
+    // ===== LAUNCHER ДЛЯ CheckPreviewActivity =====
+    private val checkPreviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            Logger.log(TAG, "CheckPreview returned RESULT_OK — передаю дальше в MainActivity")
+            // Пробрасываем результат дальше
+            setResult(RESULT_OK, result.data)
+            finish()
+        } else {
+            Logger.log(TAG, "CheckPreview cancelled — возвращаемся в сканер")
+            // Пользователь отменил — можно снова фотографировать
+            showLoading(false)
+        }
+    }
 
     companion object {
         const val EXTRA_RECOGNIZED_TEXT = "recognized_text"
@@ -145,7 +159,7 @@ class CheckScannerActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // РАСПОЗНАВАНИЕ ТЕКСТА ЧЕРЕЗ ML KIT
+    // РАСПОЗНАВАНИЕ ТЕКСТА
     // ============================================================
     private fun recognizeText(photoFile: File) {
         showLoading(true, "Распознаю текст…")
@@ -160,9 +174,6 @@ class CheckScannerActivity : AppCompatActivity() {
 
             val image = InputImage.fromBitmap(bitmap, 0)
 
-            // Используем комбинированный распознаватель:
-            // - Latin для штрих-кодов, цен, английских слов
-            // - Cyrillic для русского текста
             val recognizer = TextRecognition.getClient(
                 CyrillicTextRecognizerOptions.Builder().build()
             )
@@ -173,9 +184,8 @@ class CheckScannerActivity : AppCompatActivity() {
                     Logger.log(TAG, "Recognized text length: ${fullText.length}")
                     Logger.log(TAG, "Text preview: ${fullText.take(300)}")
 
-                    showLoading(false)
-
                     if (fullText.isBlank()) {
+                        showLoading(false)
                         Toast.makeText(
                             this,
                             "Не удалось распознать текст. Попробуйте ещё раз.",
@@ -184,17 +194,21 @@ class CheckScannerActivity : AppCompatActivity() {
                         return@addOnSuccessListener
                     }
 
-                    // Сохраняем фото на будущее (можно использовать как evidence)
+                    // Сохраняем фото на будущее
                     val permanentFile = File(filesDir, "last_check.jpg")
-                    photoFile.copyTo(permanentFile, overwrite = true)
+                    try {
+                        photoFile.copyTo(permanentFile, overwrite = true)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "copyTo permanentFile error: ${e.message}")
+                    }
 
-                    // Передаём результат в CheckPreviewActivity
+                    // ===== Открываем CheckPreviewActivity через launcher =====
                     val intent = Intent(this, CheckPreviewActivity::class.java).apply {
                         putExtra(EXTRA_RECOGNIZED_TEXT, fullText)
                         putExtra(EXTRA_IMAGE_PATH, permanentFile.absolutePath)
                     }
-                    startActivity(intent)
-                    finish()
+                    checkPreviewLauncher.launch(intent)
+                    // НЕ вызываем finish() — ждём результат
                 }
                 .addOnFailureListener { e ->
                     Logger.log(TAG, "OCR failed: ${e.message}", e)
@@ -215,7 +229,6 @@ class CheckScannerActivity : AppCompatActivity() {
 
     /**
      * Загружает Bitmap с учётом EXIF-ориентации.
-     * (упрощённая версия ImageUtils.loadBitmapFromFileWithExif)
      */
     private fun loadBitmapWithExif(file: File): Bitmap? {
         return try {
@@ -224,7 +237,6 @@ class CheckScannerActivity : AppCompatActivity() {
             }
             val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
 
-            // Простая проверка ориентации через EXIF
             val exif = androidx.exifinterface.media.ExifInterface(file.absolutePath)
             val orientation = exif.getAttributeInt(
                 androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
