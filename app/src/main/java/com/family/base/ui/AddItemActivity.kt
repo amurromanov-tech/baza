@@ -247,7 +247,7 @@ class AddItemActivity : AppCompatActivity() {
      *  - Open Food Facts → food
      *  - RxNorm → medicine
      *  - по ключевым словам в категории → food / medicine
-     *  - остальное → other
+     *  - остальное → thing (Предмет)
      */
     private fun autoSelectType(source: String?, category: String?) {
         val sourceLower = source?.lowercase(Locale.getDefault()) ?: ""
@@ -256,8 +256,8 @@ class AddItemActivity : AppCompatActivity() {
         val type = when {
             sourceLower.contains("open food facts") -> "food"
             sourceLower.contains("rxnorm") -> "medicine"
-            sourceLower.contains("open library") -> "other"
-            sourceLower.contains("google books") -> "other"
+            sourceLower.contains("open library") -> "thing"
+            sourceLower.contains("google books") -> "thing"
             categoryLower.contains("food") -> "food"
             categoryLower.contains("beverage") -> "food"
             categoryLower.contains("drink") -> "food"
@@ -265,7 +265,7 @@ class AddItemActivity : AppCompatActivity() {
             categoryLower.contains("medicine") -> "medicine"
             categoryLower.contains("drug") -> "medicine"
             categoryLower.contains("vitamin") -> "medicine"
-            else -> "other"
+            else -> "thing"
         }
 
         Logger.log(TAG, "Auto-select type: source=$source, category=$category → $type")
@@ -273,6 +273,7 @@ class AddItemActivity : AppCompatActivity() {
         when (type) {
             "food" -> binding.rgAutoType.check(R.id.rbAutoFood)
             "medicine" -> binding.rgAutoType.check(R.id.rbAutoMedicine)
+            "thing" -> binding.rgAutoType.check(R.id.rbAutoThing)
             else -> binding.rgAutoType.check(R.id.rbAutoOther)
         }
     }
@@ -390,12 +391,14 @@ class AddItemActivity : AppCompatActivity() {
             when (binding.rgAutoType.checkedRadioButtonId) {
                 R.id.rbAutoFood -> "food"
                 R.id.rbAutoMedicine -> "medicine"
+                R.id.rbAutoThing -> "thing"
                 else -> "other"
             }
         } else {
             when (binding.rgType.checkedRadioButtonId) {
                 R.id.rbFood -> "food"
                 R.id.rbMedicine -> "medicine"
+                R.id.rbThing -> "thing"
                 else -> "other"
             }
         }
