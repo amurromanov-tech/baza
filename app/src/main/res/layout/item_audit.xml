@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:background="?attr/selectableItemBackground">
+
+    <!-- Цветная полоса статуса -->
+    <View
+        android:id="@+id/colorBar"
+        android:layout_width="4dp"
+        android:layout_height="48dp"
+        android:background="@color/colorNormal" />
+
+    <!-- Иконка -->
+    <ImageView
+        android:id="@+id/ivIcon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="10dp"
+        android:src="@drawable/ic_item_default"
+        android:clickable="false"
+        android:focusable="false"
+        android:contentDescription="Иконка предмета" />
+
+    <!-- Информация -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="?android:attr/textColorPrimary"
+            android:clickable="false"
+            android:focusable="false"
+            tools:text="Чай Greenfield чёрный" />
+
+        <TextView
+            android:id="@+id/tvPath"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:layout_marginTop="2dp"
+            android:maxLines="1"
+            android:ellipsize="middle"
+            android:textColor="@color/pathTextColor"
+            android:clickable="false"
+            android:focusable="false"
+            tools:text="📂 Корень / Продукты" />
+    </LinearLayout>
+
+    <!-- Стрелка -->
+    <ImageView
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@android:drawable/ic_media_play"
+        android:alpha="0.4"
+        android:clickable="false"
+        android:focusable="false"
+        android:contentDescription="Открыть" />
+</LinearLayout>
