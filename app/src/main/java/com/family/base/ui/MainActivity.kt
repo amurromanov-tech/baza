@@ -113,6 +113,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ===== ПРИЁМ РЕЗУЛЬТАТА ОТ CheckPreviewActivity (сохранённый чек) =====
+    private val checkPreviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                Logger.log(TAG, "Navigate to purchase folder: $folderId")
+                Toast.makeText(this, "Открываю папку с покупкой…", Toast.LENGTH_SHORT).show()
+                viewModel.navigateToFolder(folderId)
+            }
+        } else {
+            Logger.log(TAG, "Check preview cancelled or failed")
+        }
+    }
+
     private val connectFamilyLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -195,6 +211,12 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        // ===== СКАНЕР ЧЕКА =====
+        binding.btnScanCheck.setOnClickListener {
+            Logger.log(TAG, "Scan check clicked")
+            checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
+        }
+
         viewModel.navigateToFolder(null)
         updateSearchIcon(viewModel.searchQueryLiveData.value)
     }
@@ -225,7 +247,7 @@ class MainActivity : AppCompatActivity() {
     private fun openItemDetail(item: ItemEntity) {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
-        itemDetailLauncher.launch(intent)   // ← используем launcher для приёма результата
+        itemDetailLauncher.launch(intent)
     }
 
     private fun showSearchDialog() {
