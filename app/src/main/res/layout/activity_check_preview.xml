@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?android:attr/colorBackground">
+
+    <!-- ============================================================ -->
+    <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
+    <!-- ============================================================ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="← Назад"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🧾 Распознано"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <!-- ============================================================ -->
+    <!-- ИНФО-ПЛАШКА -->
+    <!-- ============================================================ -->
+    <TextView
+        android:id="@+id/tvInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:text="Проверьте список, снимите галочки с лишних"
+        android:textSize="13sp"
+        android:textColor="@color/pathTextColor" />
+
+    <!-- ============================================================ -->
+    <!-- ВЫБОР ДАТЫ (когда чек от старой даты) -->
+    <!-- ============================================================ -->
+    <LinearLayout
+        android:id="@+id/dateRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="📅 Дата покупки:"
+            android:textSize="14sp"
+            android:textColor="@color/dateValue" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDate"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="25.09.2026"
+            android:textColor="@color/colorPrimary" />
+    </LinearLayout>
+
+    <!-- ============================================================ -->
+    <!-- СПИСОК ТОВАРОВ -->
+    <!-- ============================================================ -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvItems"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingBottom="8dp"
+            android:clipToPadding="false"
+            tools:listitem="@layout/item_check_preview" />
+
+        <!-- Заглушка, если ничего не распозналось -->
+        <LinearLayout
+            android:id="@+id/emptyState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="😔"
+                android:textSize="64sp" />
+
+            <TextView
+                android:id="@+id/tvEmptyText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Не удалось распознать товары"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/pathTextColor"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvEmptySubtext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Попробуйте сфотографировать чек ещё раз"
+                android:textSize="14sp"
+                android:textColor="@color/dateLabel"
+                android:gravity="center" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRetry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="📷 Попробовать снова"
+                android:backgroundTint="@color/colorPrimary"
+                android:textColor="@android:color/white"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- ============================================================ -->
+    <!-- ИТОГО + КНОПКА «ДОБАВИТЬ» -->
+    <!-- ============================================================ -->
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:background="?attr/colorSurface"
+        android:elevation="4dp">
+
+        <!-- Итого по выбранным -->
+        <TextView
+            android:id="@+id/tvTotal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Выбрано: 0 товаров, сумма 0 ₽"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/sectionTitle"
+            android:paddingBottom="8dp" />
+
+        <!-- Кнопки -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCancel"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="Отмена" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSave"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="✅ Добавить"
+                android:backgroundTint="#4CAF50"
+                android:textColor="@android:color/white"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
