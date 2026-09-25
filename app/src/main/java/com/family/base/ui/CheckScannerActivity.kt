@@ -20,10 +20,12 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.family.base.databinding.ActivityCheckScannerBinding
 import com.family.base.util.Logger
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.googlecode.tesseract.android.TessBaseAPI
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -35,6 +37,13 @@ class CheckScannerActivity : AppCompatActivity() {
 
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
+
+    // ===== TESSERACT =====
+    private var tessApi: TessBaseAPI? = null
+
+    // Папка с языковыми пакетами (tessdata)
+    private val tessDataDir: File
+        get() = File(filesDir, "tesseract")
 
     // ===== LAUNCHER ДЛЯ CheckPreviewActivity =====
     private val checkPreviewLauncher = registerForActivityResult(
@@ -53,6 +62,9 @@ class CheckScannerActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_RECOGNIZED_TEXT = "recognized_text"
         const val EXTRA_IMAGE_PATH = "image_path"
+
+        // Языки: русский + английский (для чисел)
+        private const val TESS_LANGUAGES = "rus+eng"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,6 +89,9 @@ class CheckScannerActivity : AppCompatActivity() {
 
         binding.btnCapture.setOnClickListener { takePhoto() }
 
+        // ===== ИНИЦИАЛИЗАЦИЯ TESSERACT В ФОНЕ =====
+        initTesseract()
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED) {
             startCamera()
@@ -86,6 +101,81 @@ class CheckScannerActivity : AppCompatActivity() {
                 arrayOf(Manifest.permission.CAMERA),
                 CAMERA_PERMISSION_REQUEST
             )
+        }
+    }
+
+    // ============================================================
+    // ИНИЦИАЛИЗАЦИЯ TESSERACT
+    // ============================================================
+    private fun initTesseract() {
+        showLoading(true, "Подготовка OCR…")
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // 1. Копируем traineddata из assets в filesDir/tesseract/tessdata
+                    copyTessDataIfNeeded("rus.traineddata")
+                    copyTessDataIfNeeded("eng.traineddata")
+
+                    // 2. Инициализируем Tesseract
+                    val api = TessBaseAPI()
+                    val dataPath = tessDataDir.absolutePath
+                    val initialized = api.init(dataPath, TESS_LANGUAGES)
+
+                    if (!initialized) {
+                        throw IllegalStateException("Tesseract init failed for path: $dataPath")
+                    }
+
+                    // Настройки для чеков
+                    api.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO
+                    api.setVariable("preserve_interword_spaces", "1")
+
+                    tessApi = api
+
+                    Logger.log(TAG, "Tesseract initialized, path=$dataPath, langs=$TESS_LANGUAGES")
+                }
+
+                withContext(Dispatchers.Main) {
+                    showLoading(false)
+                    Logger.log(TAG, "Tesseract ready")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Tesseract init error: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    showLoading(false)
+                    Toast.makeText(
+                        this@CheckScannerActivity,
+                        "Ошибка OCR: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Копирует traineddata из assets в filesDir/tesseract/tessdata/, если его ещё нет.
+     */
+    private fun copyTessDataIfNeeded(fileName: String) {
+        val tessdataDir = File(tessDataDir, "tessdata")
+        if (!tessdataDir.exists()) tessdataDir.mkdirs()
+
+        val targetFile = File(tessdataDir, fileName)
+        if (targetFile.exists() && targetFile.length() > 0) {
+            Logger.log(TAG, "Traineddata already exists: ${targetFile.absolutePath}")
+            return
+        }
+
+        try {
+            assets.open("tessdata/$fileName").use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Logger.log(TAG, "Copied traineddata: $fileName → ${targetFile.absolutePath}")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Failed to copy $fileName: ${e.message}", e)
+            throw e
         }
     }
 
@@ -157,72 +247,70 @@ class CheckScannerActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // РАСПОЗНАВАНИЕ ТЕКСТА
+    // РАСПОЗНАВАНИЕ ТЕКСТА (TESSERACT)
     // ============================================================
     private fun recognizeText(photoFile: File) {
         showLoading(true, "Распознаю текст…")
 
-        try {
-            val bitmap = loadBitmapWithExif(photoFile)
-            if (bitmap == null) {
-                showLoading(false)
-                Toast.makeText(this, "Не удалось загрузить фото", Toast.LENGTH_SHORT).show()
-                return
-            }
+        lifecycleScope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) {
+                    val bitmap = loadBitmapWithExif(photoFile)
+                        ?: throw IllegalStateException("Не удалось загрузить фото")
 
-            val image = InputImage.fromBitmap(bitmap, 0)
+                    val api = tessApi
+                        ?: throw IllegalStateException("Tesseract не инициализирован")
 
-            // ===== LATIN MODEL =====
-            val recognizer = TextRecognition.getClient(
-                TextRecognizerOptions.DEFAULT_OPTIONS
-            )
+                    // Обрабатываем bitmap
+                    api.setImage(bitmap)
+                    val result = api.utF8Text ?: ""
 
-            recognizer.process(image)
-                .addOnSuccessListener { visionText ->
-                    val fullText = visionText.text
-                    Logger.log(TAG, "Recognized text length: ${fullText.length}")
-                    Logger.log(TAG, "Text preview: ${fullText.take(300)}")
+                    // Освобождаем bitmap после использования
+                    bitmap.recycle()
 
-                    if (fullText.isBlank()) {
-                        showLoading(false)
-                        Toast.makeText(
-                            this,
-                            "Не удалось распознать текст. Попробуйте ещё раз.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        return@addOnSuccessListener
-                    }
+                    // Очищаем состояние для следующего распознавания
+                    api.clear()
 
-                    // Сохраняем фото на будущее
-                    val permanentFile = File(filesDir, "last_check.jpg")
-                    try {
-                        photoFile.copyTo(permanentFile, overwrite = true)
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "copyTo permanentFile error: ${e.message}")
-                    }
-
-                    // Открываем CheckPreviewActivity через launcher
-                    val intent = Intent(this, CheckPreviewActivity::class.java).apply {
-                        putExtra(EXTRA_RECOGNIZED_TEXT, fullText)
-                        putExtra(EXTRA_IMAGE_PATH, permanentFile.absolutePath)
-                    }
-                    checkPreviewLauncher.launch(intent)
-                    // НЕ вызываем finish() — ждём результат
+                    result
                 }
-                .addOnFailureListener { e ->
-                    Logger.log(TAG, "OCR failed: ${e.message}", e)
+
+                Logger.log(TAG, "Tesseract recognized length: ${text.length}")
+                Logger.log(TAG, "Text preview: ${text.take(300)}")
+
+                if (text.isBlank()) {
                     showLoading(false)
                     Toast.makeText(
                         this,
-                        "Ошибка распознавания: ${e.message}",
+                        "Не удалось распознать текст. Попробуйте ещё раз.",
                         Toast.LENGTH_LONG
                     ).show()
+                    return@launch
                 }
 
-        } catch (e: Exception) {
-            Logger.log(TAG, "recognizeText error", e)
-            showLoading(false)
-            Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+                // Сохраняем фото на будущее
+                val permanentFile = File(filesDir, "last_check.jpg")
+                try {
+                    photoFile.copyTo(permanentFile, overwrite = true)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "copyTo permanentFile error: ${e.message}")
+                }
+
+                // Открываем CheckPreviewActivity
+                val intent = Intent(this@CheckScannerActivity, CheckPreviewActivity::class.java).apply {
+                    putExtra(EXTRA_RECOGNIZED_TEXT, text)
+                    putExtra(EXTRA_IMAGE_PATH, permanentFile.absolutePath)
+                }
+                checkPreviewLauncher.launch(intent)
+
+            } catch (e: Exception) {
+                Logger.log(TAG, "recognizeText error: ${e.message}", e)
+                showLoading(false)
+                Toast.makeText(
+                    this@CheckScannerActivity,
+                    "Ошибка распознавания: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -231,10 +319,7 @@ class CheckScannerActivity : AppCompatActivity() {
      */
     private fun loadBitmapWithExif(file: File): Bitmap? {
         return try {
-            val options = BitmapFactory.Options().apply {
-                inSampleSize = 1
-            }
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
 
             val exif = androidx.exifinterface.media.ExifInterface(file.absolutePath)
             val orientation = exif.getAttributeInt(
@@ -289,6 +374,12 @@ class CheckScannerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            tessApi?.recycle()
+            tessApi = null
+        } catch (e: Exception) {
+            Logger.log(TAG, "tessApi.recycle error: ${e.message}")
+        }
         try {
             cameraExecutor.shutdown()
         } catch (e: Exception) {
