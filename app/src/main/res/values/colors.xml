@@ -30,6 +30,9 @@
     <color name="chipMedicineText">#6A1B9A</color>
     <color name="chipOtherBg">#ECEFF1</color>
     <color name="chipOtherText">#37474F</color>
+    <!-- НОВОЕ: Предмет -->
+    <color name="chipThingBg">#FFF3E0</color>
+    <color name="chipThingText">#BF360C</color>
 
     <!-- Статусы -->
     <color name="chipExpiredBg">#FFEBEE</color>
