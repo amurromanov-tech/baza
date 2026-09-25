@@ -97,10 +97,11 @@ dependencies {
     // ML Kit для сканирования штрих-кодов
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
 
-    // ML Kit для распознавания текста (OCR)
-    // base — латиница + цифры, cyrillic — русский
+     // ML Kit для распознавания текста (OCR)
+    // ⚠️ Поддерживается только Latin script (латиница + цифры).
+    // Кириллица официально не поддерживается, но цифры и структура
+    // чека распознаются достаточно для парсера.
     implementation("com.google.mlkit:text-recognition:16.0.1")
-    implementation("com.google.mlkit:text-recognition-cyrillic:16.0.0")
 
     // CameraX
     implementation("androidx.camera:camera-core:1.3.0")
