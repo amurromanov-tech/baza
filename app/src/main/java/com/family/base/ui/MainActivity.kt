@@ -428,14 +428,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПКИ (новый иерархический диалог)
+    // ПЕРЕМЕЩЕНИЕ ПАПКИ (начинаем с родителя папки)
     // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
-        Logger.log(TAG, "Show move folder dialog: ${folder.name}")
+        Logger.log(TAG, "Show move folder dialog: ${folder.name}, current parentId=${folder.parentId}")
 
         lifecycleScope.launch {
             try {
-                // Исключаем саму папку и всех её потомков
                 val excluded = withContext(Dispatchers.IO) {
                     collectDescendantIds(folder.id) + folder.id
                 }
@@ -445,12 +444,16 @@ class MainActivity : AppCompatActivity() {
                     scope = lifecycleScope,
                     db = db,
                     title = "Переместить «${folder.name}»",
-                    startFromId = null,
+                    startFromId = folder.parentId,
                     excludedIds = excluded,
                     onConfirm = { newParentId ->
                         Logger.log(TAG, "Move folder to: $newParentId")
-                        viewModel.moveFolder(folder.id, newParentId)
-                        Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
+                        if (newParentId == folder.parentId) {
+                            Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.moveFolder(folder.id, newParentId)
+                            Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             } catch (e: Exception) {
@@ -461,29 +464,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (новый иерархический диалог)
+    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (начинаем с текущей папки предмета)
     // ============================================================
     private fun showMoveItemDialog(item: ItemEntity) {
-        Logger.log(TAG, "Show move item dialog: ${item.name}")
+        Logger.log(TAG, "Show move item dialog: ${item.name}, current parentId=${item.parentId}")
 
         MoveDialogHelper.show(
             context = this,
             scope = lifecycleScope,
             db = db,
             title = "Переместить «${item.name}»",
-            startFromId = null,
-            excludedIds = emptySet(),   // предмет можно переместить в любую папку
+            startFromId = item.parentId,
+            excludedIds = emptySet(),
             onConfirm = { newParentId ->
                 Logger.log(TAG, "Move item to: $newParentId")
-                viewModel.moveItem(item.id, newParentId)
-                Toast.makeText(this, "Перемещено", Toast.LENGTH_SHORT).show()
+                if (newParentId == item.parentId) {
+                    Toast.makeText(this, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
+                } else {
+                    viewModel.moveItem(item.id, newParentId)
+                    Toast.makeText(this, "Перемещено", Toast.LENGTH_SHORT).show()
+                }
             }
         )
     }
 
     /**
      * Рекурсивно собирает id всех потомков папки.
-     * Нужно для защиты: нельзя переместить папку в саму себя или в своего потомка.
      */
     private suspend fun collectDescendantIds(folderId: String): Set<String> {
         val result = mutableSetOf<String>()
