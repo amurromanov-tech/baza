@@ -45,14 +45,22 @@ object MoveDialogHelper {
 
         var currentFolderId: String? = startFromId
 
+        // Функция загрузки содержимого — объявляем ДО адаптера
+        lateinit var loadFolder: (String?) -> Unit
+
+        // Создаём адаптер СРАЗУ с колбэком (без переприсваивания)
         val adapter = MoveFolderAdapter { clickedFolder ->
+            Logger.log(TAG, "Folder clicked: ${clickedFolder.name} (id=${clickedFolder.id})")
             currentFolderId = clickedFolder.id
-            // загрузка ниже — через локальную функцию
+            loadFolder(currentFolderId)
         }
+
         rvFolders.layoutManager = LinearLayoutManager(context)
         rvFolders.adapter = adapter
+        // Явно разрешаем клики
+        rvFolders.isClickable = true
 
-        fun loadFolder(folderId: String?) {
+        loadFolder = { folderId ->
             scope.launch {
                 try {
                     val allChildren: List<FolderEntity> = withContext(Dispatchers.IO) {
@@ -81,6 +89,8 @@ object MoveDialogHelper {
                         tvBreadcrumbs.text = crumbs
 
                         btnGoUp.visibility = if (folderId == null) View.GONE else View.VISIBLE
+
+                        Logger.log(TAG, "Loaded folder=$folderId, children=${visibleChildren.size}")
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "Error loading folder $folderId: ${e.message}", e)
@@ -88,19 +98,13 @@ object MoveDialogHelper {
             }
         }
 
-        // Переустанавливаем обработчик клика — он должен вызывать loadFolder
-        val fixedAdapter = MoveFolderAdapter { clickedFolder ->
-            currentFolderId = clickedFolder.id
-            loadFolder(currentFolderId)
-        }
-        rvFolders.adapter = fixedAdapter
-
         btnGoUp.setOnClickListener {
             scope.launch {
                 try {
                     val parent = withContext(Dispatchers.IO) {
                         currentFolderId?.let { db.folderDao().getFolderById(it)?.parentId }
                     }
+                    Logger.log(TAG, "Go up: $currentFolderId -> $parent")
                     currentFolderId = parent
                     loadFolder(currentFolderId)
                 } catch (e: Exception) {
@@ -133,8 +137,6 @@ object MoveDialogHelper {
         val parts = mutableListOf<String>()
         var id: String? = folderId
 
-        // Получаем DAO через переданный db — но проще передавать его сюда.
-        // Сейчас оставим через контекст: получим из BaseApplication.
         val ctx = com.family.base.BaseApplication.getAppContext()
         val dao = AppDatabase.getInstance(ctx).folderDao()
 
