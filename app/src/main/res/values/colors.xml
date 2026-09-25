@@ -16,21 +16,41 @@
     <color name="folder_icon_color">#FF9800</color>
     <color name="item_icon_color">#2196F3</color>
 
-    <!-- ===== ЦВЕТА СТАТУСОВ (для карточки каталога) ===== -->
+    <!-- ===== ЦВЕТА СТАТУСОВ ===== -->
     <color name="status_normal">#4CAF50</color>
     <color name="status_warning">#FFC107</color>
     <color name="status_expired">#F44336</color>
     <color name="status_lent">#FF9800</color>
 
-    <!-- ===== РЕДИЗАЙН КАРТОЧКИ ПРЕДМЕТА ===== -->
-    <color name="chipExpired">#F44336</color>
-    <color name="chipSoon">#FF9800</color>
-    <color name="chipLent">#2196F3</color>
-    <color name="chipFood">#4CAF50</color>
-    <color name="chipMedicine">#9C27B0</color>
-    <color name="chipOther">#607D8B</color>
+    <!-- ===== ЧИПЫ (пастельные: фон + тёмный текст) ===== -->
+    <!-- ТИП -->
+    <color name="chipFoodBg">#E8F5E9</color>
+    <color name="chipFoodText">#2E7D32</color>
+    <color name="chipMedicineBg">#F3E5F5</color>
+    <color name="chipMedicineText">#6A1B9A</color>
+    <color name="chipOtherBg">#ECEFF1</color>
+    <color name="chipOtherText">#37474F</color>
 
+    <!-- СТАТУСЫ -->
+    <color name="chipExpiredBg">#FFEBEE</color>
+    <color name="chipExpiredText">#C62828</color>
+    <color name="chipSoonBg">#FFF8E1</color>
+    <color name="chipSoonText">#E65100</color>
+    <color name="chipLentBg">#E3F2FD</color>
+    <color name="chipLentText">#0D47A1</color>
+
+    <!-- ===== СЕКЦИИ И ЗАГОЛОВКИ ===== -->
     <color name="sectionTitle">#FF5722</color>
     <color name="cardSurface">#FFFFFF</color>
     <color name="cardSurfaceDark">#1E1E1E</color>
+
+    <!-- ===== ПУТЬ И ДАТЫ ===== -->
+    <color name="pathTextColor">#546E7A</color>
+    <color name="pathChipBg">#ECEFF1</color>
+    <color name="dateLabel">#78909C</color>
+    <color name="dateValue">#263238</color>
+
+    <!-- ===== ЦЕНА ===== -->
+    <color name="priceChipBg">#FFF3E0</color>
+    <color name="priceChipText">#E65100</color>
 </resources>
