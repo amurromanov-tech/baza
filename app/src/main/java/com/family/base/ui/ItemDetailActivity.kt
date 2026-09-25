@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -22,12 +23,14 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityItemDetailBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +57,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var isEditMode = false
     private var currentParentId: String? = null
+
+    // ===== ПОДТИП =====
+    private var currentEditType: String = "thing"
+    private var selectedEditSubtype: String? = null
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -138,6 +145,7 @@ class ItemDetailActivity : AppCompatActivity() {
         }
 
         setupListeners()
+        setupSubtypeEditDropdown()
 
         when {
             showHistory -> { isEditMode = false; showHistory(itemId!!) }
@@ -177,6 +185,43 @@ class ItemDetailActivity : AppCompatActivity() {
                 finish()
             }
         }
+
+        // ===== ТИП (edit) → пересобрать подтипы =====
+        binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
+            currentEditType = when (checkedId) {
+                R.id.rbTypeFood -> "food"
+                R.id.rbTypeMedicine -> "medicine"
+                R.id.rbTypeThing -> "thing"
+                else -> "other"
+            }
+            selectedEditSubtype = null
+            updateSubtypeDropdown(currentEditType)
+        }
+    }
+
+    // ============================================================
+    // ПОДТИП: ВЫПАДАЮЩИЙ СПИСОК В РЕДАКТИРОВАНИИ
+    // ============================================================
+    private fun setupSubtypeEditDropdown() {
+        val view = binding.autoCompleteSubtypeEdit
+        view.setOnItemClickListener { _, _, position, _ ->
+            val subtypes = SubtypeCatalog.getSubtypes(currentEditType)
+            if (position in subtypes.indices) {
+                selectedEditSubtype = subtypes[position].key
+                Logger.log(TAG, "Subtype chosen: ${selectedEditSubtype}")
+            }
+        }
+    }
+
+    private fun updateSubtypeDropdown(type: String) {
+        val subtypes = SubtypeCatalog.getSubtypes(type)
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_dropdown_item_1line,
+            subtypes.map { it.displayName }
+        )
+        binding.autoCompleteSubtypeEdit.setAdapter(adapter)
+        binding.autoCompleteSubtypeEdit.setText("", false)
     }
 
     private fun changeQuantity(delta: Int) {
@@ -282,6 +327,8 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.quantityEditBlock.visibility = editVisibility
 
         binding.typeEditBlock.visibility = editVisibility
+        binding.subtypeEditBlock.visibility = editVisibility
+        binding.chipSubtypeView.visibility = viewVisibility
 
         binding.chipBarcodeView.visibility = viewVisibility
         binding.barcodeEditBlock.visibility = editVisibility
@@ -306,6 +353,15 @@ class ItemDetailActivity : AppCompatActivity() {
         // Количество
         binding.chipQuantityView.text = "📦 ×${item.quantity}"
         binding.chipQuantityView.visibility = View.VISIBLE
+
+        // ===== ПОДТИП (чип) =====
+        val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
+        if (subtypeDisplay != null) {
+            binding.chipSubtypeView.text = subtypeDisplay
+            binding.chipSubtypeView.visibility = View.VISIBLE
+        } else {
+            binding.chipSubtypeView.visibility = View.GONE
+        }
 
         // Штрих-код
         if (!item.barcode.isNullOrEmpty()) {
@@ -367,12 +423,23 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etQuantity.setText(item.quantity.toString())
         binding.etQuantity.isEnabled = true
 
-        // ===== ТИП — RadioGroup (4 варианта) =====
-        when (item.itemType) {
+        // Тип
+        currentEditType = item.itemType ?: "thing"
+        when (currentEditType) {
             "food" -> binding.rgTypeEdit.check(R.id.rbTypeFood)
             "medicine" -> binding.rgTypeEdit.check(R.id.rbTypeMedicine)
             "thing" -> binding.rgTypeEdit.check(R.id.rbTypeThing)
             else -> binding.rgTypeEdit.check(R.id.rbTypeOther)
+        }
+
+        // Подтип
+        selectedEditSubtype = item.itemSubtype
+        updateSubtypeDropdown(currentEditType)
+        if (!item.itemSubtype.isNullOrEmpty()) {
+            val subtypeDisplay = SubtypeCatalog.getDisplayName(currentEditType, item.itemSubtype)
+            if (subtypeDisplay != null) {
+                binding.autoCompleteSubtypeEdit.setText(subtypeDisplay, false)
+            }
         }
 
         // Штрих-код
@@ -479,6 +546,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tilName.visibility = View.GONE
                     binding.quantityEditBlock.visibility = View.GONE
                     binding.typeEditBlock.visibility = View.GONE
+                    binding.subtypeEditBlock.visibility = View.GONE
                     binding.barcodeEditBlock.visibility = View.GONE
                     binding.tilExpiry.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
@@ -765,7 +833,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
-                // ===== НОВЫЙ ТИП ИЗ RADIOGROUP (4 варианта) =====
+                // Тип
                 val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
                     R.id.rbTypeFood -> "food"
                     R.id.rbTypeMedicine -> "medicine"
@@ -773,7 +841,17 @@ class ItemDetailActivity : AppCompatActivity() {
                     else -> "other"
                 }
 
-                Logger.log(TAG, "Save: newItemType=$newItemType (was ${item.itemType})")
+                // Подтип (обязателен)
+                val newItemSubtype = selectedEditSubtype
+                if (newItemSubtype.isNullOrEmpty()) {
+                    Toast.makeText(this@ItemDetailActivity, "Выберите подтип", Toast.LENGTH_SHORT).show()
+                    binding.tilSubtypeEdit.error = "Выберите подтип"
+                    binding.tilSubtypeEdit.requestFocus()
+                    return@launch
+                }
+                binding.tilSubtypeEdit.error = null
+
+                Logger.log(TAG, "Save: type=$newItemType, subtype=$newItemSubtype")
 
                 val updated = item.copy(
                     name = name,
@@ -783,6 +861,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     expiryDate = expiryDate,
                     price = price,
                     itemType = newItemType,
+                    itemSubtype = newItemSubtype,
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = "user"
                 )
@@ -794,8 +873,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     db.historyDao().insertEntry(
                         HistoryEntry(
                             itemId = id, action = "update",
-                            oldValue = "Тип: ${item.itemType}",
-                            newValue = "Тип: $newItemType",
+                            oldValue = "Тип: ${item.itemType}, подтип: ${item.itemSubtype}",
+                            newValue = "Тип: $newItemType, подтип: $newItemSubtype",
                             changedBy = "user"
                         )
                     )
