@@ -11,18 +11,11 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
-    <!-- ============================================================ -->
-    <!-- QUERIES (для Android 11+)                                     -->
-    <!-- Нужно, чтобы intent.resolveActivity() и запуск установщика   -->
-    <!-- APK работали на Android 11+ (package visibility)             -->
-    <!-- ============================================================ -->
     <queries>
-        <!-- Установщик APK -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/vnd.android.package-archive" />
         </intent>
-        <!-- Браузер (для OAuth и внешних ссылок) -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
@@ -39,10 +32,6 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 
-        <!-- ===== FILE PROVIDER ===== -->
-        <!-- Используется для:                                        -->
-        <!-- 1. Передачи файла APK установщику (обновления)           -->
-        <!-- 2. Передачи фото камере (съёмка предметов)               -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -57,7 +46,6 @@
         <!-- ГЛАВНЫЕ ACTIVITIES -->
         <!-- ============================================================ -->
 
-        <!-- Вход (launcher) -->
         <activity
             android:name=".ui.LoginActivity"
             android:exported="true">
@@ -67,10 +55,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Главный экран -->
         <activity android:name=".ui.MainActivity" />
 
-        <!-- Сканер штрих-кодов (только портрет) -->
         <activity
             android:name=".ui.BarcodeScannerActivity"
             android:exported="false"
@@ -80,16 +66,10 @@
         <!-- ЭКРАНЫ ДОБАВЛЕНИЯ И РЕДАКТИРОВАНИЯ -->
         <!-- ============================================================ -->
 
-        <!-- Добавление предмета -->
         <activity android:name=".ui.AddItemActivity" />
-
-        <!-- Детали предмета -->
         <activity android:name=".ui.ItemDetailActivity" />
-
-        <!-- Подключение к семье -->
         <activity android:name=".ui.ConnectFamilyActivity" />
 
-        <!-- Полноэкранный просмотр фото (pinch-to-zoom) -->
         <activity
             android:name=".ui.FullscreenImageActivity"
             android:exported="false"
@@ -99,33 +79,22 @@
         <!-- НАСТРОЙКИ И РАЗДЕЛЫ -->
         <!-- ============================================================ -->
 
-        <!-- Настройки (главный экран) -->
         <activity android:name=".ui.SettingsActivity" />
-
-        <!-- Статистика и учёт -->
         <activity android:name=".ui.StatsAndAccountingActivity" />
-
-        <!-- Резервное копирование -->
         <activity android:name=".ui.BackupActivity" />
-
-        <!-- Диагностика -->
         <activity android:name=".ui.DiagnosticsActivity" />
-
-        <!-- Настройки приложения (тема, язык и т.д.) -->
         <activity android:name=".ui.AppSettingsActivity" />
 
         <!-- ============================================================ -->
         <!-- СТАТИСТИКА, АРХИВ, ЗАЙМЫ -->
         <!-- ============================================================ -->
 
-        <!-- Статистика расходов -->
         <activity android:name=".ui.StatisticsActivity" />
-
-        <!-- Архив предметов -->
         <activity android:name=".ui.ArchiveActivity" />
-
-        <!-- Выданные предметы -->
         <activity android:name=".ui.LentItemsActivity" />
+
+        <!-- Аудит базы (отчёт о недостающих данных) -->
+        <activity android:name=".ui.AuditActivity" />
 
         <!-- ============================================================ -->
         <!-- OAUTH REDIRECT -->
