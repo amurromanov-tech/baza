@@ -23,7 +23,7 @@
     <color name="status_lent">#FF9800</color>
 
     <!-- ===== ЧИПЫ (пастельные: фон + тёмный текст) ===== -->
-    <!-- ТИП -->
+    <!-- Тип -->
     <color name="chipFoodBg">#E8F5E9</color>
     <color name="chipFoodText">#2E7D32</color>
     <color name="chipMedicineBg">#F3E5F5</color>
@@ -31,7 +31,7 @@
     <color name="chipOtherBg">#ECEFF1</color>
     <color name="chipOtherText">#37474F</color>
 
-    <!-- СТАТУСЫ -->
+    <!-- Статусы -->
     <color name="chipExpiredBg">#FFEBEE</color>
     <color name="chipExpiredText">#C62828</color>
     <color name="chipSoonBg">#FFF8E1</color>
@@ -53,4 +53,27 @@
     <!-- ===== ЦЕНА ===== -->
     <color name="priceChipBg">#FFF3E0</color>
     <color name="priceChipText">#E65100</color>
+
+    <!-- ===== ЧИПЫ-ПОЛЯ (для просмотра) ===== -->
+    <!-- Название -->
+    <color name="chipNameBg">#FCE4EC</color>
+    <color name="chipNameText">#880E4F</color>
+
+    <!-- Количество -->
+    <color name="chipQuantityBg">#E0F7FA</color>
+    <color name="chipQuantityText">#006064</color>
+
+    <!-- Штрих-код -->
+    <color name="chipBarcodeBg">#E8EAF6</color>
+    <color name="chipBarcodeText">#283593</color>
+
+    <!-- Срок годности -->
+    <color name="chipExpiryBg">#FFF3E0</color>
+    <color name="chipExpiryText">#BF360C</color>
+
+    <!-- Описание (карточка) -->
+    <color name="descriptionBg">#F5F5F5</color>
+    <color name="descriptionText">#37474F</color>
+    <color name="descriptionBgDark">#1E1E1E</color>
+    <color name="descriptionTextDark">#CFD8DC</color>
 </resources>
