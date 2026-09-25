@@ -3,7 +3,6 @@
 
     <!-- ============================================================ -->
     <!-- ПОЛНОЭКРАННАЯ ТЕМА ДЛЯ ПРОСМОТРА ФОТО                         -->
-    <!-- Используется в FullscreenImageActivity                       -->
     <!-- ============================================================ -->
     <style name="Theme.BAZA.Fullscreen" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
@@ -15,7 +14,7 @@
     </style>
 
     <!-- ============================================================ -->
-    <!-- СТИЛИ КНОПОК ДЕЙСТВИЙ (устаревшие, оставлены для совместимости) -->
+    <!-- УСТАРЕВШИЕ СТИЛИ (для совместимости)                          -->
     <!-- ============================================================ -->
     <style name="ActionButton" parent="Widget.MaterialComponents.Button">
         <item name="android:textSize">13sp</item>
@@ -26,33 +25,27 @@
         <item name="cornerRadius">10dp</item>
         <item name="android:textColor">@android:color/white</item>
     </style>
-
     <style name="ActionButton.Edit" parent="ActionButton">
         <item name="backgroundTint">#2196F3</item>
     </style>
-
     <style name="ActionButton.Lend" parent="ActionButton">
         <item name="backgroundTint">#FF9800</item>
     </style>
-
     <style name="ActionButton.Move" parent="ActionButton">
         <item name="backgroundTint">#9C27B0</item>
     </style>
-
     <style name="ActionButton.Copy" parent="ActionButton">
         <item name="backgroundTint">#00BCD4</item>
     </style>
-
     <style name="ActionButton.Archive" parent="ActionButton">
         <item name="backgroundTint">#607D8B</item>
     </style>
-
     <style name="ActionButton.Delete" parent="ActionButton">
         <item name="backgroundTint">#F44336</item>
     </style>
 
     <!-- ============================================================ -->
-    <!-- РЕДИЗАЙН: СТИЛИ ДЛЯ КАРТОЧКИ ПРЕДМЕТА                        -->
+    <!-- КАРТОЧКА ПРЕДМЕТА: СЕКЦИИ                                     -->
     <!-- ============================================================ -->
 
     <!-- Заголовок секции -->
@@ -75,17 +68,105 @@
         <item name="android:layout_marginBottom">8dp</item>
     </style>
 
-    <!-- Чип-статус -->
-    <style name="StatusChip" parent="Widget.MaterialComponents.Chip.Entry">
+    <!-- ============================================================ -->
+    <!-- ЧИПЫ-СТАТУСЫ (ПАСТЕЛЬНЫЕ)                                    -->
+    <!-- ============================================================ -->
+
+    <!-- Базовый чип-статус: пастельный фон, тёмный текст -->
+    <style name="PastelChip" parent="Widget.MaterialComponents.Chip.Entry">
         <item name="android:textSize">12sp</item>
-        <item name="android:textColor">@android:color/white</item>
-        <item name="chipBackgroundColor">@color/colorPrimary</item>
+        <item name="android:textStyle">bold</item>
         <item name="chipMinHeight">28dp</item>
-        <item name="chipStartPadding">8dp</item>
-        <item name="chipEndPadding">8dp</item>
+        <item name="chipStartPadding">10dp</item>
+        <item name="chipEndPadding">10dp</item>
+        <item name="chipStrokeWidth">0dp</item>
     </style>
 
-    <!-- Круглая кнопка действия -->
+    <!-- Тип: Еда -->
+    <style name="PastelChip.Food" parent="PastelChip">
+        <item name="android:textColor">@color/chipFoodText</item>
+        <item name="chipBackgroundColor">@color/chipFoodBg</item>
+    </style>
+
+    <!-- Тип: Лекарство -->
+    <style name="PastelChip.Medicine" parent="PastelChip">
+        <item name="android:textColor">@color/chipMedicineText</item>
+        <item name="chipBackgroundColor">@color/chipMedicineBg</item>
+    </style>
+
+    <!-- Тип: Другое -->
+    <style name="PastelChip.Other" parent="PastelChip">
+        <item name="android:textColor">@color/chipOtherText</item>
+        <item name="chipBackgroundColor">@color/chipOtherBg</item>
+    </style>
+
+    <!-- Просрочен -->
+    <style name="PastelChip.Expired" parent="PastelChip">
+        <item name="android:textColor">@color/chipExpiredText</item>
+        <item name="chipBackgroundColor">@color/chipExpiredBg</item>
+    </style>
+
+    <!-- Скоро истекает -->
+    <style name="PastelChip.Soon" parent="PastelChip">
+        <item name="android:textColor">@color/chipSoonText</item>
+        <item name="chipBackgroundColor">@color/chipSoonBg</item>
+    </style>
+
+    <!-- Выдан -->
+    <style name="PastelChip.Lent" parent="PastelChip">
+        <item name="android:textColor">@color/chipLentText</item>
+        <item name="chipBackgroundColor">@color/chipLentBg</item>
+    </style>
+
+    <!-- Устаревший алиас StatusChip (для совместимости, если где-то ещё используется) -->
+    <style name="StatusChip" parent="PastelChip.Other" />
+
+    <!-- ============================================================ -->
+    <!-- ПУТЬ / МЕСТОНАХОЖДЕНИЕ                                       -->
+    <!-- ============================================================ -->
+    <style name="PathChip" parent="Widget.MaterialComponents.Chip.Action">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/pathTextColor</item>
+        <item name="chipBackgroundColor">@color/pathChipBg</item>
+        <item name="chipStartPadding">12dp</item>
+        <item name="chipEndPadding">12dp</item>
+        <item name="chipMinHeight">32dp</item>
+        <item name="chipIconVisible">false</item>
+        <item name="chipStrokeWidth">0dp</item>
+    </style>
+
+    <!-- ============================================================ -->
+    <!-- ДАТЫ                                                         -->
+    <!-- ============================================================ -->
+    <style name="DateLabel" parent="">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/dateLabel</item>
+        <item name="android:layout_marginTop">6dp</item>
+    </style>
+
+    <style name="DateValue" parent="">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/dateValue</item>
+    </style>
+
+    <!-- ============================================================ -->
+    <!-- ЦЕНА (ЧИП)                                                   -->
+    <!-- ============================================================ -->
+    <style name="PriceChip" parent="Widget.MaterialComponents.Chip.Action">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/priceChipText</item>
+        <item name="chipBackgroundColor">@color/priceChipBg</item>
+        <item name="chipStartPadding">12dp</item>
+        <item name="chipEndPadding">12dp</item>
+        <item name="chipMinHeight">34dp</item>
+        <item name="chipStrokeWidth">0dp</item>
+    </style>
+
+    <!-- ============================================================ -->
+    <!-- КРУГЛЫЕ КНОПКИ ДЕЙСТВИЙ                                      -->
+    <!-- ============================================================ -->
     <style name="RoundActionButton" parent="Widget.MaterialComponents.Button">
         <item name="android:layout_width">56dp</item>
         <item name="android:layout_height">56dp</item>
@@ -96,32 +177,25 @@
         <item name="cornerRadius">28dp</item>
         <item name="android:textColor">@android:color/white</item>
     </style>
-
     <style name="RoundActionButton.Edit" parent="RoundActionButton">
         <item name="backgroundTint">#2196F3</item>
     </style>
-
     <style name="RoundActionButton.Lend" parent="RoundActionButton">
         <item name="backgroundTint">#FF9800</item>
     </style>
-
     <style name="RoundActionButton.Move" parent="RoundActionButton">
         <item name="backgroundTint">#9C27B0</item>
     </style>
-
     <style name="RoundActionButton.Copy" parent="RoundActionButton">
         <item name="backgroundTint">#00BCD4</item>
     </style>
-
     <style name="RoundActionButton.Archive" parent="RoundActionButton">
         <item name="backgroundTint">#607D8B</item>
     </style>
-
     <style name="RoundActionButton.Delete" parent="RoundActionButton">
         <item name="backgroundTint">#F44336</item>
     </style>
 
-    <!-- Подпись под круглой кнопкой -->
     <style name="RoundActionLabel" parent="">
         <item name="android:textSize">11sp</item>
         <item name="android:gravity">center</item>
