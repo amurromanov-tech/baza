@@ -151,7 +151,7 @@ interface ItemDao {
     suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
 
     // ============================================================
-    // АУДИТ БАЗЫ (только активные предметы)
+    // АУДИТ БАЗЫ
     // ============================================================
 
     @Query("""
@@ -187,10 +187,14 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutDescription(): List<ItemEntity>
 
+    /**
+     * Без типа: только NULL или пустая строка.
+     * «thing», «other», «food», «medicine» — все считаются указанными.
+     */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
-          AND (itemType IS NULL OR itemType = '' OR itemType = 'other')
+          AND (itemType IS NULL OR itemType = '')
         ORDER BY name ASC
     """)
     suspend fun getItemsWithoutType(): List<ItemEntity>
@@ -265,10 +269,13 @@ interface ItemDao {
     """)
     suspend fun countItemsWithoutDescription(): Int
 
+    /**
+     * Без типа: только NULL или пустая строка.
+     */
     @Query("""
         SELECT COUNT(*) FROM items 
         WHERE isArchived = 0 
-          AND (itemType IS NULL OR itemType = '' OR itemType = 'other')
+          AND (itemType IS NULL OR itemType = '')
     """)
     suspend fun countItemsWithoutType(): Int
 
