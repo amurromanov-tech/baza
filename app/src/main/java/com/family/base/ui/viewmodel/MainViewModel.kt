@@ -48,14 +48,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var allItems: List<ItemEntity> = emptyList()
     private var searchQuery: String? = null
 
-    // ===== ГЛОБАЛЬНЫЙ СКОУП ДЛЯ СИНХРОНИЗАЦИИ =====
     private val globalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         Logger.log(TAG, "MainViewModel initialized")
         viewModelScope.launch {
             checkFirstLaunch()
-            // Автоматическая синхронизация ОТКЛЮЧЕНА
         }
     }
 
@@ -164,6 +162,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
+    // СОЗДАНИЕ ПРЕДМЕТОВ (одиночное)
+    // ============================================================
+
+    fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
+
+            imageBytes?.let { bytes ->
+                val appContext = getApplication<Application>().applicationContext
+                ImageUtils.saveImageLocally(appContext, item.id, bytes)
+            }
+
+            loadContents()
+
+            syncQueueDao.addToQueue(
+                SyncQueueEntity(
+                    entityType = "item",
+                    entityId = item.id,
+                    action = "create",
+                    parentId = item.parentId,
+                    data = null,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            syncStatus.postValue(SyncStatus.PENDING)
+        }
+    }
+
+    // ============================================================
+    // СОЗДАНИЕ ПРЕДМЕТОВ (массовое — для чеков)
+    // ============================================================
+
+    /**
+     * Массовая вставка предметов (например, из чека).
+     * Каждый предмет получает указанный folderId как parentId.
+     * Возвращает количество успешно вставленных предметов.
+     */
+    suspend fun createItemsBatch(items: List<ItemEntity>, folderId: String?): Int {
+        if (items.isEmpty()) return 0
+
+        Logger.log(TAG, "createItemsBatch: ${items.size} items, folderId=$folderId")
+
+        return try {
+            // Проставляем parentId каждому предмету
+            val prepared = items.map { it.copy(parentId = folderId) }
+
+            // Массовая вставка
+            withContext(Dispatchers.IO) {
+                db.itemDao().insertItems(prepared)
+            }
+
+            // Очередь синхронизации
+            withContext(Dispatchers.IO) {
+                prepared.forEach { item ->
+                    syncQueueDao.addToQueue(
+                        SyncQueueEntity(
+                            entityType = "item",
+                            entityId = item.id,
+                            action = "create",
+                            parentId = folderId,
+                            data = null,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+
+            Logger.log(TAG, "createItemsBatch: inserted ${prepared.size} items")
+
+            // Обновляем UI
+            loadContents()
+            syncStatus.postValue(SyncStatus.PENDING)
+
+            prepared.size
+
+        } catch (e: Exception) {
+            Logger.log(TAG, "createItemsBatch error: ${e.message}", e)
+            0
+        }
+    }
+
+    // ============================================================
     // СИНХРОНИЗАЦИЯ
     // ============================================================
 
@@ -182,25 +262,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
-                // 1. Скачиваем данные с диска
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
-
-                // 2. Объединяем с локальными
                 mergeData(diskFolders, diskItems)
 
-                // 3. Загружаем несинхронизированные фото (локальные → на диск)
                 uploadUnsyncedImages()
-
-                // 3.1. Загружаем несинхронизированные иконки папок (локальные → на диск)
                 uploadUnsyncedFolderImages()
-
-                // 4. Скачиваем фото с диска (для ВСЕХ предметов из БД)
                 syncImages()
-
-                // 4.1. Скачиваем иконки папок с диска (для ВСЕХ папок из БД)
                 syncFolderImages()
 
-                // 5. Обрабатываем очередь
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     syncStatus.postValue(SyncStatus.PENDING)
@@ -216,13 +285,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // ЗАГРУЗКА НЕСИНХРОНИЗИРОВАННЫХ ФОТО (ЛОКАЛЬНЫЕ → НА ДИСК)
-    // ============================================================
     private suspend fun uploadUnsyncedImages() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
-
         var uploadedCount = 0
 
         allItems.forEach { item ->
@@ -232,7 +297,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (item.imageUrl.isNullOrEmpty()) {
                 try {
                     val bytes = localFile.readBytes()
-                    Logger.log(TAG, "Uploading image for item ${item.id}, size=${bytes.size}")
                     val success = repository.uploadItemImage(item.id, bytes)
                     if (success) {
                         val updated = item.copy(imageUrl = "images/${item.id}.jpg")
@@ -247,13 +311,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "Uploaded $uploadedCount images")
     }
 
-    // ============================================================
-    // ЗАГРУЗКА НЕСИНХРОНИЗИРОВАННЫХ ИКОНОК ПАПОК (ЛОКАЛЬНЫЕ → НА ДИСК)
-    // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
-
         var uploadedCount = 0
 
         allFolders.forEach { folder ->
@@ -263,14 +323,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (folder.iconUrl.isNullOrEmpty()) {
                 try {
                     val bytes = localFile.readBytes()
-                    Logger.log(TAG, "Uploading folder image for ${folder.id}, size=${bytes.size}")
                     val success = repository.uploadFolderImage(folder.id, bytes)
                     if (success) {
                         val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
                         withContext(Dispatchers.IO) {
                             db.folderDao().updateFolder(updated)
-                            // ВАЖНО: фиксируем iconUrl в folders.json на Диске,
-                            // чтобы другие устройства знали о наличии иконки
                             repository.updateFolderOnDisk(updated)
                         }
                         uploadedCount++
@@ -283,24 +340,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "Uploaded $uploadedCount folder images")
     }
 
-    // ============================================================
-    // СКАЧИВАНИЕ ФОТО С ДИСКА (ДЛЯ ВСЕХ ПРЕДМЕТОВ ИЗ БД)
-    // ============================================================
     private suspend fun syncImages() {
         val appContext = getApplication<Application>().applicationContext
-
-        // ===== БЕРЁМ ВСЕ ПРЕДМЕТЫ ИЗ БД (включая архивные) =====
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
-
         val itemsWithImages = allItems.filter { !it.imageUrl.isNullOrEmpty() }
-        if (itemsWithImages.isEmpty()) {
-            Logger.log(TAG, "No images to sync (download)")
-            return
-        }
 
-        Logger.log(TAG, "Syncing ${itemsWithImages.size} images (download)...")
+        if (itemsWithImages.isEmpty()) return
+
         var downloadedCount = 0
-
         itemsWithImages.forEach { item ->
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile != null && localFile.exists()) return@forEach
@@ -311,37 +358,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     ImageUtils.saveImageLocally(appContext, item.id, bytes)
                     downloadedCount++
-                    Logger.log(TAG, "Downloaded image: ${item.id}")
-                } else {
-                    Logger.log(TAG, "Image not found on disk: ${item.id}")
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to download image ${item.id}: ${e.message}")
             }
         }
-
         Logger.log(TAG, "Images downloaded: $downloadedCount")
         loadContents()
     }
 
-    // ============================================================
-    // СКАЧИВАНИЕ ИКОНОК ПАПОК С ДИСКА
-    // ============================================================
     private suspend fun syncFolderImages() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
-        if (allFolders.isEmpty()) {
-            Logger.log(TAG, "No folders to sync images for")
-            return
-        }
+        if (allFolders.isEmpty()) return
 
-        // ❗ НЕ фильтруем по iconUrl: после импорта бэкапа он может быть пустым,
-        //    но файл иконки на Яндекс.Диске физически существует.
-        //    Пытаемся скачать для ВСЕХ папок, у которых локально файла нет.
-        Logger.log(TAG, "Syncing folder images (download) for ${allFolders.size} folders...")
         var downloadedCount = 0
-
         allFolders.forEach { folder ->
             val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             if (localFile != null && localFile.exists() && localFile.length() > 0L) return@forEach
@@ -352,24 +384,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     if (bytes != null) {
                         ImageUtils.saveImageLocally(appContext, "folder_${folder.id}", bytes)
-
-                        // Восстанавливаем iconUrl, если был пуст
                         if (folder.iconUrl.isNullOrEmpty()) {
                             val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
                             withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                         }
-
                         downloadedCount++
-                        Logger.log(TAG, "Downloaded folder image: ${folder.id}")
                     }
-                } else {
-                    Logger.log(TAG, "Folder image not found on disk: ${folder.id}")
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to download folder image ${folder.id}: ${e.message}")
             }
         }
-
         Logger.log(TAG, "Folder images downloaded: $downloadedCount")
     }
 
@@ -394,10 +419,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (local == null) {
                     db.folderDao().insertFolder(diskFolder)
                 } else if (diskFolder.updatedAt > local.updatedAt) {
-                    // Мержим: не теряем локальный iconUrl, если на Диске пусто
-                    val merged = diskFolder.copy(
-                        iconUrl = diskFolder.iconUrl ?: local.iconUrl
-                    )
+                    val merged = diskFolder.copy(iconUrl = diskFolder.iconUrl ?: local.iconUrl)
                     db.folderDao().updateFolder(merged)
                 }
             }
@@ -407,10 +429,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (local == null) {
                     db.itemDao().insertItem(diskItem)
                 } else if (diskItem.updatedDate > local.updatedDate) {
-                    // Аналогично не теряем imageUrl
-                    val merged = diskItem.copy(
-                        imageUrl = diskItem.imageUrl ?: local.imageUrl
-                    )
+                    val merged = diskItem.copy(imageUrl = diskItem.imageUrl ?: local.imageUrl)
                     db.itemDao().updateItem(merged)
                 }
             }
@@ -453,7 +472,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (entry.action) {
             "create" -> db.folderDao().getFolderById(entry.entityId)?.let {
                 repository.createFolderOnDisk(it)
-                // Если у папки уже есть локальная иконка — сразу загрузим её на Диск
                 val appContext = getApplication<Application>().applicationContext
                 val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${it.id}")
                 if (localFile != null && localFile.exists() && it.iconUrl.isNullOrEmpty()) {
@@ -535,7 +553,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    Logger.log(TAG, "Item lent locally: $itemId")
 
                     globalScope.launch {
                         try {
@@ -593,7 +610,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    Logger.log(TAG, "Item returned locally: $itemId")
 
                     globalScope.launch {
                         try {
@@ -767,7 +783,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     db.itemDao().insertItem(copy)
 
-                    // Копируем фото, если есть
                     val appContext = getApplication<Application>().applicationContext
                     val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
                     if (localFile != null && localFile.exists()) {
@@ -954,35 +969,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Logger.log(TAG, "Error moving item: ${e.message}")
             }
-        }
-    }
-
-    // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ
-    // ============================================================
-
-    fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
-
-            imageBytes?.let { bytes ->
-                val appContext = getApplication<Application>().applicationContext
-                ImageUtils.saveImageLocally(appContext, item.id, bytes)
-            }
-
-            loadContents()
-
-            syncQueueDao.addToQueue(
-                SyncQueueEntity(
-                    entityType = "item",
-                    entityId = item.id,
-                    action = "create",
-                    parentId = item.parentId,
-                    data = null,
-                    timestamp = System.currentTimeMillis()
-                )
-            )
-            syncStatus.postValue(SyncStatus.PENDING)
         }
     }
 
