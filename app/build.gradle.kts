@@ -15,8 +15,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 25   // увеличивать при каждом обновлении
-        versionName = "5.0.1"   // версия для пользователя
+        versionCode = 26   // увеличивать при каждом обновлении
+        versionName = "6.0.0"   // версия для пользователя
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
@@ -96,7 +96,13 @@ dependencies {
 
     // ML Kit для сканирования штрих-кодов
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
-   // ... остальные зависимости
+
+    // ML Kit для распознавания текста (OCR)
+    // base — латиница + цифры, cyrillic — русский
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:text-recognition-cyrillic:16.0.0")
+
+    // CameraX
     implementation("androidx.camera:camera-core:1.3.0")
     implementation("androidx.camera:camera-camera2:1.3.0")
     implementation("androidx.camera:camera-lifecycle:1.3.0")
