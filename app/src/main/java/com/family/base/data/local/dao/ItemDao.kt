@@ -140,19 +140,137 @@ interface ItemDao {
     // ПОИСК ПО ШТРИХ-КОДУ / QR-КОДУ
     // ============================================================
 
-    /**
-     * Поиск активных предметов по штрих-коду.
-     * Если найдено несколько — показать список для выбора.
-     */
     @Query("SELECT * FROM items WHERE barcode = :barcode AND isArchived = 0")
     suspend fun getItemsByBarcode(barcode: String): List<ItemEntity>
 
-    /**
-     * Поиск всех предметов (включая архив) по штрих-коду.
-     * Используется в статистике / диагностике.
-     */
     @Query("SELECT * FROM items WHERE barcode = :barcode")
     suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
+
+    // ============================================================
+    // АУДИТ БАЗЫ (отчёт о недостающих данных, только активные)
+    // ============================================================
+
+    /** Без цены (0 или NULL) */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND (price IS NULL OR price = 0)
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutPrice(): List<ItemEntity>
+
+    /** Без срока годности (только еда и лекарства, где срок важен) */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND expiryDate IS NULL
+          AND (itemType = 'food' OR itemType = 'medicine')
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutExpiry(): List<ItemEntity>
+
+    /** Без штрих-кода */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND (barcode IS NULL OR barcode = '')
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutBarcode(): List<ItemEntity>
+
+    /** Без описания */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND (description IS NULL OR description = '')
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutDescription(): List<ItemEntity>
+
+    /** Без явного типа (itemType = 'other' или NULL) */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND (itemType IS NULL OR itemType = '' OR itemType = 'other')
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutType(): List<ItemEntity>
+
+    /** Выданы давно (более :thresholdDays дней назад) */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND isLent = 1 
+          AND lentDate IS NOT NULL 
+          AND lentDate < :thresholdDate
+        ORDER BY lentDate ASC
+    """)
+    suspend fun getItemsLentLongAgo(thresholdDate: Long): List<ItemEntity>
+
+    /** Просрочены, но ещё в базе (не в архиве) */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND expiryDate IS NOT NULL 
+          AND expiryDate < :now
+        ORDER BY expiryDate ASC
+    """)
+    suspend fun getExpiredItems(now: Long): List<ItemEntity>
+
+    // ===== СЧЁТЧИКИ ДЛЯ ЧИПОВ =====
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND (price IS NULL OR price = 0)
+    """)
+    suspend fun countItemsWithoutPrice(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND expiryDate IS NULL
+          AND (itemType = 'food' OR itemType = 'medicine')
+    """)
+    suspend fun countItemsWithoutExpiry(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND (barcode IS NULL OR barcode = '')
+    """)
+    suspend fun countItemsWithoutBarcode(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND (description IS NULL OR description = '')
+    """)
+    suspend fun countItemsWithoutDescription(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND (itemType IS NULL OR itemType = '' OR itemType = 'other')
+    """)
+    suspend fun countItemsWithoutType(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND isLent = 1 
+          AND lentDate IS NOT NULL 
+          AND lentDate < :thresholdDate
+    """)
+    suspend fun countItemsLentLongAgo(thresholdDate: Long): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND expiryDate IS NOT NULL 
+          AND expiryDate < :now
+    """)
+    suspend fun countExpiredItems(now: Long): Int
 }
 
 // ============================================================
