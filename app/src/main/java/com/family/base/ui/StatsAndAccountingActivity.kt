@@ -44,6 +44,12 @@ class StatsAndAccountingActivity : AppCompatActivity() {
             startActivity(Intent(this, LentItemsActivity::class.java))
         }
 
+        // ===== АУДИТ БАЗЫ =====
+        binding.btnAudit.setOnClickListener {
+            Logger.log(TAG, "Audit clicked")
+            startActivity(Intent(this, AuditActivity::class.java))
+        }
+
         Logger.log(TAG, "=== StatsAndAccountingActivity onCreate FINISHED ===")
     }
 
