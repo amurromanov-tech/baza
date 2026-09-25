@@ -31,7 +31,6 @@
                 android:layout_height="match_parent"
                 android:scaleType="centerCrop"
                 android:contentDescription="Фото предмета"
-                android:background="#E0E0E0"
                 app:layout_collapseMode="parallax" />
 
             <!-- ПЛЕЙСХОЛДЕР, если фото нет -->
@@ -45,11 +44,13 @@
                 android:contentDescription="Нет фото"
                 app:layout_collapseMode="parallax" />
 
-            <!-- ЗАТЕМНЕНИЕ -->
+            <!-- ЗАТЕМНЕНИЕ (только если есть фото) -->
             <View
+                android:id="@+id/photoOverlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="#66000000"
+                android:visibility="gone"
                 app:layout_collapseMode="pin" />
 
             <!-- КНОПКА НАЗАД -->
@@ -95,7 +96,7 @@
             android:padding="16dp">
 
             <!-- ============================================================ -->
-            <!-- ЧИПЫ-СТАТУСЫ (LinearLayout вместо ChipGroup) -->
+            <!-- ЧИПЫ-СТАТУСЫ (ПАСТЕЛЬНЫЕ) -->
             <!-- ============================================================ -->
             <LinearLayout
                 android:id="@+id/chipGroupStatus"
@@ -107,7 +108,7 @@
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipType"
-                    style="@style/StatusChip"
+                    style="@style/PastelChip.Other"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="📦 Другое"
@@ -115,34 +116,72 @@
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipExpired"
-                    style="@style/StatusChip"
+                    style="@style/PastelChip.Expired"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:text="⏰ Просрочен"
-                    android:visibility="gone"
-                    app:chipBackgroundColor="@color/chipExpired" />
+                    android:visibility="gone" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipSoon"
-                    style="@style/StatusChip"
+                    style="@style/PastelChip.Soon"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:text="⚠️ Скоро"
-                    android:visibility="gone"
-                    app:chipBackgroundColor="@color/chipSoon" />
+                    android:visibility="gone" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipLent"
-                    style="@style/StatusChip"
+                    style="@style/PastelChip.Lent"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:text="🤝 Выдан"
-                    android:visibility="gone"
-                    app:chipBackgroundColor="@color/chipLent" />
+                    android:visibility="gone" />
             </LinearLayout>
+
+            <!-- ============================================================ -->
+            <!-- СЕКЦИЯ: МЕСТОНАХОЖДЕНИЕ -->
+            <!-- ============================================================ -->
+            <TextView
+                style="@style/SectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📍 Местонахождение" />
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/SectionCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:id="@+id/tvItemPath"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textSize="14sp"
+                        android:textColor="@color/pathTextColor"
+                        android:lineSpacingExtra="4dp"
+                        tools:text="📂 Корень / Продукты / Чай" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGoToFolder"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Перейти в папку →"
+                        android:textColor="@color/colorPrimary"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- ============================================================ -->
             <!-- СЕКЦИЯ: ОСНОВНОЕ -->
@@ -305,7 +344,7 @@
                             android:clickable="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- Цена -->
+                    <!-- Цена (режим редактирования) -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilPrice"
                         android:layout_width="match_parent"
@@ -322,17 +361,79 @@
                             android:inputType="numberDecimal" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- Цена для просмотра -->
-                    <TextView
+                    <!-- Цена для просмотра (чип) -->
+                    <com.google.android.material.chip.Chip
                         android:id="@+id/tvPrice"
+                        style="@style/PriceChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:visibility="gone"
+                        tools:text="💰 100 ₽"
+                        tools:visibility="visible" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ============================================================ -->
+            <!-- СЕКЦИЯ: ДАТЫ -->
+            <!-- ============================================================ -->
+            <TextView
+                android:id="@+id/tvDatesTitle"
+                style="@style/SectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📅 Даты" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardDates"
+                style="@style/SectionCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        style="@style/DateLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Добавлено" />
+                    <TextView
+                        android:id="@+id/tvDateAdded"
+                        style="@style/DateValue"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:padding="12dp"
-                        android:background="#F5F5F5"
-                        android:textAppearance="?attr/textAppearanceBody1"
+                        tools:text="01.10.2026" />
+
+                    <TextView
+                        style="@style/DateLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Последнее изменение" />
+                    <TextView
+                        android:id="@+id/tvDateModified"
+                        style="@style/DateValue"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        tools:text="05.10.2026" />
+
+                    <TextView
+                        android:id="@+id/tvDateExpiryLabel"
+                        style="@style/DateLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Срок годности"
+                        android:visibility="gone" />
+                    <TextView
+                        android:id="@+id/tvDateExpiry"
+                        style="@style/DateValue"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
                         android:visibility="gone"
-                        tools:text="💰 Цена: 100 ₽" />
+                        tools:text="15.12.2026" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
