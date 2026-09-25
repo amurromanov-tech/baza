@@ -93,8 +93,24 @@
         <activity android:name=".ui.ArchiveActivity" />
         <activity android:name=".ui.LentItemsActivity" />
 
-        <!-- Аудит базы (отчёт о недостающих данных) -->
+        <!-- Аудит базы -->
         <activity android:name=".ui.AuditActivity" />
+
+        <!-- ============================================================ -->
+        <!-- OCR ЧЕКОВ (новое) -->
+        <!-- ============================================================ -->
+
+        <!-- Сканер чека (камера + ML Kit OCR) -->
+        <activity
+            android:name=".ui.CheckScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- Экран проверки распознанных товаров -->
+        <activity
+            android:name=".ui.CheckPreviewActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <!-- ============================================================ -->
         <!-- OAUTH REDIRECT -->
