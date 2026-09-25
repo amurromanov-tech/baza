@@ -53,6 +53,7 @@ class ItemDetailActivity : AppCompatActivity() {
     private var itemId: String? = null
 
     private var isEditMode = false
+    private var currentParentId: String? = null
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -166,7 +167,7 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
-        // Переход в папку, где лежит предмет
+        // Кнопка перехода в папку
         binding.btnGoToFolder.setOnClickListener {
             val parentId = currentParentId
             if (parentId != null) {
@@ -179,13 +180,14 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    private var currentParentId: String? = null
-
     private fun changeQuantity(delta: Int) {
         val currentQty = binding.etQuantity.text.toString().toIntOrNull() ?: 1
         binding.etQuantity.setText((currentQty + delta).coerceAtLeast(0).toString())
     }
 
+    // ============================================================
+    // ПРОСМОТР ДЕТАЛЕЙ
+    // ============================================================
     private fun showDetails(itemId: String) {
         isEditMode = false
         lifecycleScope.launch {
@@ -194,39 +196,15 @@ class ItemDetailActivity : AppCompatActivity() {
                 if (item == null) { finish(); return@launch }
 
                 currentParentId = item.parentId
-
-                // Загружаем путь и название папки
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = item.name
-                    binding.etName.setText(item.name); binding.etName.isEnabled = false
-                    binding.etQuantity.setText(item.quantity.toString()); binding.etQuantity.isEnabled = false
-                    binding.etDescription.setText(item.description ?: ""); binding.etDescription.isEnabled = false
-                    binding.etBarcode.setText(item.barcode ?: ""); binding.etBarcode.isEnabled = false
 
-                    item.expiryDate?.let { binding.etExpiry.setText(dateFormat.format(Date(it))) }
-                    binding.etExpiry.isEnabled = false
-
-                    // Цена — как чип
-                    if (item.price != null && item.price != 0.0) {
-                        binding.tvPrice.visibility = View.VISIBLE
-                        binding.tvPrice.text = "💰 ${item.price} ₽"
-                        binding.etPrice.visibility = View.GONE
-                        binding.tilPrice.visibility = View.GONE
-                    } else {
-                        binding.tvPrice.visibility = View.GONE
-                        binding.etPrice.visibility = View.GONE
-                        binding.tilPrice.visibility = View.GONE
-                    }
-
-                    // Скрываем ненужное в режиме просмотра
-                    binding.btnPlus.visibility = View.GONE
-                    binding.btnMinus.visibility = View.GONE
-                    binding.btnScanBarcode.visibility = View.GONE
-                    binding.btnSave.visibility = View.GONE
-                    binding.editButtonsLayout.visibility = View.GONE
-                    binding.btnAddPhoto.visibility = View.GONE
+                    // ===== РЕЖИМ ПРОСМОТРА =====
+                    showViewMode(true)
+                    fillViewFields(item, path)
+                    applyChips(item)
 
                     // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
@@ -240,33 +218,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                         binding.photoOverlay.visibility = View.VISIBLE
                     }
-
-                    // Путь
-                    binding.tvItemPath.text = path
-                    binding.btnGoToFolder.visibility = if (item.parentId != null) View.VISIBLE else View.GONE
-
-                    // Даты
-                    binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
-                    binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
-                    if (item.expiryDate != null) {
-                        binding.tvDateExpiryLabel.visibility = View.VISIBLE
-                        binding.tvDateExpiry.visibility = View.VISIBLE
-                        binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
-                    } else {
-                        binding.tvDateExpiryLabel.visibility = View.GONE
-                        binding.tvDateExpiry.visibility = View.GONE
-                    }
-
-                    // Описание — если пусто, скрываем
-                    if (item.description.isNullOrEmpty()) {
-                        binding.tvDescriptionTitle.visibility = View.GONE
-                        binding.cardDescription.visibility = View.GONE
-                    } else {
-                        binding.tvDescriptionTitle.visibility = View.VISIBLE
-                        binding.cardDescription.visibility = View.VISIBLE
-                    }
-
-                    applyChips(item)
 
                     // Займ
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
@@ -283,6 +234,9 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // РЕЖИМ РЕДАКТИРОВАНИЯ
+    // ============================================================
     private fun showEditMode(itemId: String) {
         isEditMode = true
         lifecycleScope.launch {
@@ -291,34 +245,15 @@ class ItemDetailActivity : AppCompatActivity() {
                 if (item == null) { finish(); return@launch }
 
                 currentParentId = item.parentId
-
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
-                    binding.etName.setText(item.name); binding.etName.isEnabled = true
-                    binding.etQuantity.setText(item.quantity.toString()); binding.etQuantity.isEnabled = true
-                    binding.etDescription.setText(item.description ?: ""); binding.etDescription.isEnabled = true
-                    binding.etBarcode.setText(item.barcode ?: ""); binding.etBarcode.isEnabled = true
 
-                    item.expiryDate?.let { binding.etExpiry.setText(dateFormat.format(Date(it))) }
-                    binding.etExpiry.isEnabled = true
-                    binding.etExpiry.setOnClickListener { showDatePickerDialog() }
-
-                    // Цена — редактируемая
-                    binding.tvPrice.visibility = View.GONE
-                    binding.etPrice.visibility = View.VISIBLE
-                    binding.tilPrice.visibility = View.VISIBLE
-                    binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
-
-                    binding.btnPlus.visibility = View.VISIBLE
-                    binding.btnMinus.visibility = View.VISIBLE
-                    binding.btnScanBarcode.visibility = View.VISIBLE
-                    binding.editButtonsLayout.visibility = View.VISIBLE
-                    binding.btnSave.visibility = View.VISIBLE
-
-                    binding.tvDescriptionTitle.visibility = View.VISIBLE
-                    binding.cardDescription.visibility = View.VISIBLE
+                    // ===== РЕЖИМ РЕДАКТИРОВАНИЯ =====
+                    showViewMode(false)
+                    fillEditFields(item, path)
+                    applyChips(item)
 
                     // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
@@ -335,26 +270,145 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.btnAddPhoto.visibility = View.VISIBLE
                     }
 
-                    // Путь
-                    binding.tvItemPath.text = path
-                    binding.btnGoToFolder.visibility = View.GONE
-
-                    // Даты
-                    binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
-                    binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
-                    if (item.expiryDate != null) {
-                        binding.tvDateExpiryLabel.visibility = View.VISIBLE
-                        binding.tvDateExpiry.visibility = View.VISIBLE
-                        binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
-                    } else {
-                        binding.tvDateExpiryLabel.visibility = View.GONE
-                        binding.tvDateExpiry.visibility = View.GONE
-                    }
-
                     binding.cardLentInfo.visibility = View.GONE
-                    applyChips(item)
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing edit mode", e) }
+        }
+    }
+
+    // ============================================================
+    // ПЕРЕКЛЮЧЕНИЕ VIEW / EDIT
+    // ============================================================
+    private fun showViewMode(isView: Boolean) {
+        val viewVisibility = if (isView) View.VISIBLE else View.GONE
+        val editVisibility = if (isView) View.GONE else View.VISIBLE
+
+        // Основное
+        binding.chipNameView.visibility = viewVisibility
+        binding.tilName.visibility = editVisibility
+
+        binding.chipQuantityView.visibility = viewVisibility
+        binding.quantityEditBlock.visibility = editVisibility
+
+        // Детали
+        binding.chipBarcodeView.visibility = viewVisibility
+        binding.barcodeEditBlock.visibility = editVisibility
+
+        binding.chipExpiryView.visibility = viewVisibility
+        binding.tilExpiry.visibility = editVisibility
+
+        binding.tvPrice.visibility = viewVisibility
+        binding.tilPrice.visibility = editVisibility
+
+        // Описание
+        binding.tvDescriptionView.visibility = viewVisibility
+        binding.tilDescription.visibility = editVisibility
+
+        // Кнопки редактирования
+        binding.editButtonsLayout.visibility = editVisibility
+    }
+
+    private fun fillViewFields(item: ItemEntity, path: String) {
+        // Название
+        binding.chipNameView.text = "📝 ${item.name}"
+        binding.chipNameView.visibility = View.VISIBLE
+
+        // Количество
+        binding.chipQuantityView.text = "📦 ×${item.quantity}"
+        binding.chipQuantityView.visibility = View.VISIBLE
+
+        // Штрих-код
+        if (!item.barcode.isNullOrEmpty()) {
+            binding.chipBarcodeView.text = "🔢 ${item.barcode}"
+            binding.chipBarcodeView.visibility = View.VISIBLE
+        } else {
+            binding.chipBarcodeView.visibility = View.GONE
+        }
+
+        // Срок годности
+        if (item.expiryDate != null) {
+            binding.chipExpiryView.text = "⏰ до ${dateFormat.format(Date(item.expiryDate!!))}"
+            binding.chipExpiryView.visibility = View.VISIBLE
+        } else {
+            binding.chipExpiryView.visibility = View.GONE
+        }
+
+        // Цена
+        if (item.price != null && item.price != 0.0) {
+            binding.tvPrice.text = "💰 ${item.price} ₽"
+            binding.tvPrice.visibility = View.VISIBLE
+        } else {
+            binding.tvPrice.visibility = View.GONE
+        }
+
+        // Описание
+        if (!item.description.isNullOrEmpty()) {
+            binding.tvDescriptionView.text = item.description
+            binding.tvDescriptionTitle.visibility = View.VISIBLE
+            binding.cardDescription.visibility = View.VISIBLE
+        } else {
+            binding.tvDescriptionTitle.visibility = View.GONE
+            binding.cardDescription.visibility = View.GONE
+        }
+
+        // Путь
+        binding.tvItemPath.text = path
+        binding.btnGoToFolder.visibility = if (item.parentId != null) View.VISIBLE else View.GONE
+
+        // Даты
+        binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
+        binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+        if (item.expiryDate != null) {
+            binding.tvDateExpiryLabel.visibility = View.VISIBLE
+            binding.tvDateExpiry.visibility = View.VISIBLE
+            binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
+        } else {
+            binding.tvDateExpiryLabel.visibility = View.GONE
+            binding.tvDateExpiry.visibility = View.GONE
+        }
+    }
+
+    private fun fillEditFields(item: ItemEntity, path: String) {
+        // Название
+        binding.etName.setText(item.name)
+        binding.etName.isEnabled = true
+
+        // Количество
+        binding.etQuantity.setText(item.quantity.toString())
+        binding.etQuantity.isEnabled = true
+
+        // Штрих-код
+        binding.etBarcode.setText(item.barcode ?: "")
+        binding.etBarcode.isEnabled = true
+
+        // Срок годности
+        item.expiryDate?.let { binding.etExpiry.setText(dateFormat.format(Date(it))) }
+        binding.etExpiry.isEnabled = true
+        binding.etExpiry.setOnClickListener { showDatePickerDialog() }
+
+        // Цена
+        binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
+
+        // Описание
+        binding.etDescription.setText(item.description ?: "")
+        binding.etDescription.isEnabled = true
+        binding.tvDescriptionTitle.visibility = View.VISIBLE
+        binding.cardDescription.visibility = View.VISIBLE
+
+        // Путь
+        binding.tvItemPath.text = path
+        binding.btnGoToFolder.visibility = View.GONE
+
+        // Даты
+        binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
+        binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+        if (item.expiryDate != null) {
+            binding.tvDateExpiryLabel.visibility = View.VISIBLE
+            binding.tvDateExpiry.visibility = View.VISIBLE
+            binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
+        } else {
+            binding.tvDateExpiryLabel.visibility = View.GONE
+            binding.tvDateExpiry.visibility = View.GONE
         }
     }
 
@@ -378,7 +432,6 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun applyChips(item: ItemEntity) {
-        // Тип
         when (item.itemType) {
             "food" -> {
                 binding.chipType.text = "🍎 Еда"
@@ -398,19 +451,19 @@ class ItemDetailActivity : AppCompatActivity() {
         }
         binding.chipType.visibility = View.VISIBLE
 
-        // Просрочен
         binding.chipExpired.visibility = if (item.isExpired) View.VISIBLE else View.GONE
 
-        // Скоро
         if (!item.isExpired && item.daysUntilExpiry in 0..3) {
             binding.chipSoon.visibility = View.VISIBLE
             binding.chipSoon.text = "⚠️ Осталось ${item.daysUntilExpiry} дн."
         } else binding.chipSoon.visibility = View.GONE
 
-        // Выдан
         binding.chipLent.visibility = if (item.isLent && !item.lentTo.isNullOrEmpty()) View.VISIBLE else View.GONE
     }
 
+    // ============================================================
+    // ИСТОРИЯ
+    // ============================================================
     private fun showHistory(itemId: String) {
         isEditMode = false
         lifecycleScope.launch {
@@ -418,20 +471,17 @@ class ItemDetailActivity : AppCompatActivity() {
                 val history = withContext(Dispatchers.IO) { db.historyDao().getHistoryForItem(itemId) }
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "История изменений"
-                    binding.etName.visibility = View.GONE
-                    binding.etQuantity.visibility = View.GONE
-                    binding.etExpiry.visibility = View.GONE
-                    binding.etBarcode.visibility = View.GONE
-                    binding.tvPrice.visibility = View.GONE
-                    binding.etPrice.visibility = View.GONE
+
+                    showViewMode(false)
+                    binding.tilName.visibility = View.GONE
+                    binding.quantityEditBlock.visibility = View.GONE
+                    binding.barcodeEditBlock.visibility = View.GONE
+                    binding.tilExpiry.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
                     binding.btnSave.visibility = View.GONE
                     binding.editButtonsLayout.visibility = View.GONE
-                    binding.btnPlus.visibility = View.GONE
-                    binding.btnMinus.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
                     binding.cardLentInfo.visibility = View.GONE
-                    binding.btnScanBarcode.visibility = View.GONE
                     binding.chipGroupStatus.visibility = View.GONE
                     binding.tvItemPath.visibility = View.GONE
                     binding.btnGoToFolder.visibility = View.GONE
@@ -448,8 +498,9 @@ class ItemDetailActivity : AppCompatActivity() {
                         }
                     }
 
-                    binding.etDescription.setText(historyText)
-                    binding.etDescription.isEnabled = false
+                    // Показываем описание в view-режиме
+                    binding.tvDescriptionView.text = historyText
+                    binding.tvDescriptionView.visibility = View.VISIBLE
                     binding.cardDescription.visibility = View.VISIBLE
                     binding.tvDescriptionTitle.visibility = View.VISIBLE
                 }
@@ -667,7 +718,7 @@ class ItemDetailActivity : AppCompatActivity() {
         val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
 
         AlertDialog.Builder(this)
-            .setTitle("📦 В архив: ${binding.etName.text}")
+            .setTitle("📦 В архив: ${binding.tvTitle.text}")
             .setItems(reasons) { _, which ->
                 viewModel.archiveItem(id, reasonKeys[which], null)
                 Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
