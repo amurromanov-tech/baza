@@ -506,26 +506,40 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (новый иерархический диалог)
+    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (начинаем с текущей папки предмета)
     // ============================================================
     private fun showMoveDialog() {
         val id = itemId ?: return
-        val itemName = binding.etName.text.toString().ifEmpty { "предмет" }
+        lifecycleScope.launch {
+            try {
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
+                if (item == null) {
+                    Toast.makeText(this@ItemDetailActivity, "Предмет не найден", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
 
-        MoveDialogHelper.show(
-            context = this,
-            scope = lifecycleScope,
-            db = db,
-            title = "Переместить «$itemName»",
-            startFromId = null,
-            excludedIds = emptySet(),
-            onConfirm = { newParentId ->
-                Logger.log(TAG, "Move item to: $newParentId")
-                viewModel.moveItem(id, newParentId)
-                Toast.makeText(this, "Перемещено", Toast.LENGTH_SHORT).show()
-                finish()
+                MoveDialogHelper.show(
+                    context = this@ItemDetailActivity,
+                    scope = lifecycleScope,
+                    db = db,
+                    title = "Переместить «${item.name}»",
+                    startFromId = item.parentId,
+                    excludedIds = emptySet(),
+                    onConfirm = { newParentId ->
+                        Logger.log(TAG, "Move item to: $newParentId")
+                        if (newParentId == item.parentId) {
+                            Toast.makeText(this@ItemDetailActivity, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.moveItem(id, newParentId)
+                            Toast.makeText(this@ItemDetailActivity, "Перемещено", Toast.LENGTH_SHORT).show()
+                            finish()
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error showing move dialog", e)
             }
-        )
+        }
     }
 
     private fun showCopyDialog() {
