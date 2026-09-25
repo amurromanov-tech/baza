@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -18,12 +19,14 @@ import androidx.lifecycle.lifecycleScope
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityAddItemBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -47,6 +50,12 @@ class AddItemActivity : AppCompatActivity() {
     private var barcode: String? = null
 
     private var photoUri: Uri? = null
+
+    // ===== ТЕКУЩИЕ ПОДТИПЫ =====
+    private var currentAutoType: String = "thing"
+    private var currentManualType: String = "thing"
+    private var selectedAutoSubtype: String? = null
+    private var selectedManualSubtype: String? = null
 
     // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -136,6 +145,9 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         setupListeners()
+        initSubtypeDropdowns()
+        updateSubtypesForAuto(currentAutoType)
+        updateSubtypesForManual(currentManualType)
 
         // ===== ЕСЛИ ПРИШЁЛ КОД — AUTO-РЕЖИМ + ПОИСК =====
         incomingBarcode?.let { code ->
@@ -178,9 +190,85 @@ class AddItemActivity : AppCompatActivity() {
         binding.btnScanBarcode.setOnClickListener {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
+
+        // ===== ТИП AUTO → пересобрать подтипы =====
+        binding.rgAutoType.setOnCheckedChangeListener { _, checkedId ->
+            currentAutoType = when (checkedId) {
+                R.id.rbAutoFood -> "food"
+                R.id.rbAutoMedicine -> "medicine"
+                R.id.rbAutoThing -> "thing"
+                else -> "other"
+            }
+            selectedAutoSubtype = null
+            updateSubtypesForAuto(currentAutoType)
+        }
+
+        // ===== ТИП MANUAL → пересобрать подтипы =====
+        binding.rgType.setOnCheckedChangeListener { _, checkedId ->
+            currentManualType = when (checkedId) {
+                R.id.rbFood -> "food"
+                R.id.rbMedicine -> "medicine"
+                R.id.rbThing -> "thing"
+                else -> "other"
+            }
+            selectedManualSubtype = null
+            updateSubtypesForManual(currentManualType)
+        }
     }
 
-    // ===== ПОИСК ТОВАРА В БАЗАХ + АВТО-ВЫБОР ТИПА =====
+    // ============================================================
+    // ПОДТИПЫ: ВЫПАДАЮЩИЕ СПИСКИ
+    // ============================================================
+    private fun initSubtypeDropdowns() {
+        // Настраиваем оба AutoCompleteTextView
+        setupDropdown(binding.autoCompleteSubtypeAuto, isAuto = true)
+        setupDropdown(binding.autoCompleteSubtypeManual, isAuto = false)
+    }
+
+    private fun setupDropdown(view: MaterialAutoCompleteTextView, isAuto: Boolean) {
+        view.setOnItemClickListener { _, _, position, _ ->
+            val subtypes = SubtypeCatalog.getSubtypes(
+                if (isAuto) currentAutoType else currentManualType
+            )
+            if (position in subtypes.indices) {
+                val chosen = subtypes[position]
+                if (isAuto) {
+                    selectedAutoSubtype = chosen.key
+                } else {
+                    selectedManualSubtype = chosen.key
+                }
+                Logger.log(TAG, "Subtype chosen: ${chosen.key} (isAuto=$isAuto)")
+            }
+        }
+    }
+
+    private fun updateSubtypesForAuto(type: String) {
+        val subtypes = SubtypeCatalog.getSubtypes(type)
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_dropdown_item_1line,
+            subtypes.map { it.displayName }
+        )
+        binding.autoCompleteSubtypeAuto.setAdapter(adapter)
+        binding.autoCompleteSubtypeAuto.setText("", false)
+        binding.autoCompleteSubtypeAuto.hint = "Выберите подтип"
+    }
+
+    private fun updateSubtypesForManual(type: String) {
+        val subtypes = SubtypeCatalog.getSubtypes(type)
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_dropdown_item_1line,
+            subtypes.map { it.displayName }
+        )
+        binding.autoCompleteSubtypeManual.setAdapter(adapter)
+        binding.autoCompleteSubtypeManual.setText("", false)
+        binding.autoCompleteSubtypeManual.hint = "Выберите подтип"
+    }
+
+    // ============================================================
+    // ПОИСК ТОВАРА + АВТО-ВЫБОР ТИПА
+    // ============================================================
     private fun lookupProduct(barcode: String) {
         Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
         binding.etAutoName.isEnabled = false
@@ -219,7 +307,6 @@ class AddItemActivity : AppCompatActivity() {
 
                     binding.etAutoDescription.setText(descriptionText)
 
-                    // ===== АВТО-ВЫБОР ТИПА ПО ИСТОЧНИКУ =====
                     autoSelectType(product.source, product.category)
 
                     Toast.makeText(
@@ -242,13 +329,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Автоматически выбирает тип предмета в RadioGroup по источнику / категории.
-     *  - Open Food Facts → food
-     *  - RxNorm → medicine
-     *  - по ключевым словам в категории → food / medicine
-     *  - остальное → thing (Предмет)
-     */
     private fun autoSelectType(source: String?, category: String?) {
         val sourceLower = source?.lowercase(Locale.getDefault()) ?: ""
         val categoryLower = category?.lowercase(Locale.getDefault()) ?: ""
@@ -268,14 +348,18 @@ class AddItemActivity : AppCompatActivity() {
             else -> "thing"
         }
 
-        Logger.log(TAG, "Auto-select type: source=$source, category=$category → $type")
+        Logger.log(TAG, "Auto-select type: source=$source → $type")
 
+        currentAutoType = type
         when (type) {
             "food" -> binding.rgAutoType.check(R.id.rbAutoFood)
             "medicine" -> binding.rgAutoType.check(R.id.rbAutoMedicine)
             "thing" -> binding.rgAutoType.check(R.id.rbAutoThing)
             else -> binding.rgAutoType.check(R.id.rbAutoOther)
         }
+        // после смены типа — пересобрать подтипы
+        selectedAutoSubtype = null
+        updateSubtypesForAuto(type)
     }
 
     private fun showImageSourceDialog() {
@@ -352,6 +436,9 @@ class AddItemActivity : AppCompatActivity() {
         ).show()
     }
 
+    // ============================================================
+    // СОХРАНЕНИЕ
+    // ============================================================
     private fun saveItem() {
         val isAutoMode = binding.autoModeLayout.visibility == View.VISIBLE
 
@@ -386,24 +473,30 @@ class AddItemActivity : AppCompatActivity() {
             barcode
         }
 
-        // ===== ТИП ИЗ ДВУХ RADIOGROUP ПО РЕЖИМУ =====
-        val itemType = if (isAutoMode) {
-            when (binding.rgAutoType.checkedRadioButtonId) {
-                R.id.rbAutoFood -> "food"
-                R.id.rbAutoMedicine -> "medicine"
-                R.id.rbAutoThing -> "thing"
-                else -> "other"
+        // ===== ТИП =====
+        val itemType = if (isAutoMode) currentAutoType else currentManualType
+
+        // ===== ПОДТИП (ОБЯЗАТЕЛЬНО) =====
+        val itemSubtype = if (isAutoMode) selectedAutoSubtype else selectedManualSubtype
+
+        if (itemSubtype.isNullOrEmpty()) {
+            Toast.makeText(this, "Выберите подтип", Toast.LENGTH_SHORT).show()
+            // Показать ошибку на поле
+            if (isAutoMode) {
+                binding.tilAutoSubtype.error = "Выберите подтип"
+                binding.tilAutoSubtype.requestFocus()
+            } else {
+                binding.tilManualSubtype.error = "Выберите подтип"
+                binding.tilManualSubtype.requestFocus()
             }
-        } else {
-            when (binding.rgType.checkedRadioButtonId) {
-                R.id.rbFood -> "food"
-                R.id.rbMedicine -> "medicine"
-                R.id.rbThing -> "thing"
-                else -> "other"
-            }
+            return
         }
 
-        Logger.log(TAG, "Save: isAutoMode=$isAutoMode, itemType=$itemType")
+        // Сбрасываем ошибку, если всё ок
+        binding.tilAutoSubtype.error = null
+        binding.tilManualSubtype.error = null
+
+        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype")
 
         val item = ItemEntity(
             id = UUID.randomUUID().toString(),
@@ -416,6 +509,7 @@ class AddItemActivity : AppCompatActivity() {
             expiryDate = expiryDate,
             addedBy = "user",
             itemType = itemType,
+            itemSubtype = itemSubtype,
             imageUrl = if (imageBytes != null) "${UUID.randomUUID()}.jpg" else null
         )
         item.computeExpiryFields()
