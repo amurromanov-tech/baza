@@ -119,7 +119,7 @@
                     android:minLines="2" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- ===== ТИП: RadioGroup вместо текстового поля ===== -->
+            <!-- ===== ТИП (auto) ===== -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -147,10 +147,16 @@
                     android:text="Лекарство" />
 
                 <RadioButton
-                    android:id="@+id/rbAutoOther"
+                    android:id="@+id/rbAutoThing"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
+                    android:text="Предмет" />
+
+                <RadioButton
+                    android:id="@+id/rbAutoOther"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="Другое" />
             </RadioGroup>
 
@@ -253,10 +259,16 @@
                     android:text="Лекарство" />
 
                 <RadioButton
-                    android:id="@+id/rbOther"
+                    android:id="@+id/rbThing"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
+                    android:text="Предмет" />
+
+                <RadioButton
+                    android:id="@+id/rbOther"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="Другое" />
             </RadioGroup>
 
