@@ -90,6 +90,13 @@
             android:contentDescription="Add item"
             android:src="@drawable/ic_add_photo" />
 
+        <!-- ===== НОВАЯ КНОПКА: Сканировать чек ===== -->
+        <ImageButton
+            android:id="@+id/btnScanCheck"
+            style="@style/BottomNavButton"
+            android:contentDescription="Сканировать чек"
+            android:src="@android:drawable/ic_menu_agenda" />
+
         <ImageButton
             android:id="@+id/btnHome"
             style="@style/BottomNavButton"
