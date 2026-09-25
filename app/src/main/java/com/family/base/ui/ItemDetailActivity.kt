@@ -167,7 +167,6 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
-        // Кнопка перехода в папку
         binding.btnGoToFolder.setOnClickListener {
             val parentId = currentParentId
             if (parentId != null) {
@@ -200,13 +199,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = item.name
-
-                    // ===== РЕЖИМ ПРОСМОТРА =====
                     showViewMode(true)
                     fillViewFields(item, path)
                     applyChips(item)
 
-                    // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -219,7 +215,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.photoOverlay.visibility = View.VISIBLE
                     }
 
-                    // Займ
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
                         binding.cardLentInfo.visibility = View.VISIBLE
                         binding.tvLentPerson.text = "Кому: ${item.lentTo}"
@@ -249,13 +244,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
-
-                    // ===== РЕЖИМ РЕДАКТИРОВАНИЯ =====
                     showViewMode(false)
                     fillEditFields(item, path)
                     applyChips(item)
 
-                    // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
@@ -289,6 +281,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.chipQuantityView.visibility = viewVisibility
         binding.quantityEditBlock.visibility = editVisibility
+
+        binding.typeEditBlock.visibility = editVisibility   // RadioGroup только в edit
 
         // Детали
         binding.chipBarcodeView.visibility = viewVisibility
@@ -377,6 +371,13 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etQuantity.setText(item.quantity.toString())
         binding.etQuantity.isEnabled = true
 
+        // ===== ТИП — RadioGroup =====
+        when (item.itemType) {
+            "food" -> binding.rgTypeEdit.check(R.id.rbTypeFood)
+            "medicine" -> binding.rgTypeEdit.check(R.id.rbTypeMedicine)
+            else -> binding.rgTypeEdit.check(R.id.rbTypeOther)
+        }
+
         // Штрих-код
         binding.etBarcode.setText(item.barcode ?: "")
         binding.etBarcode.isEnabled = true
@@ -412,9 +413,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Строит путь к предмету: "📂 Корень / Продукты / Чай"
-     */
     private suspend fun buildItemPath(parentId: String?): String {
         if (parentId == null) return "📂 Корень (всё в одном месте)"
 
@@ -475,6 +473,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     showViewMode(false)
                     binding.tilName.visibility = View.GONE
                     binding.quantityEditBlock.visibility = View.GONE
+                    binding.typeEditBlock.visibility = View.GONE
                     binding.barcodeEditBlock.visibility = View.GONE
                     binding.tilExpiry.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
@@ -498,7 +497,6 @@ class ItemDetailActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Показываем описание в view-режиме
                     binding.tvDescriptionView.text = historyText
                     binding.tvDescriptionView.visibility = View.VISIBLE
                     binding.cardDescription.visibility = View.VISIBLE
@@ -743,6 +741,9 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // СОХРАНЕНИЕ
+    // ============================================================
     private fun saveChanges() {
         val id = itemId ?: return
         lifecycleScope.launch {
@@ -759,10 +760,25 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
+                // ===== НОВЫЙ ТИП ИЗ RADIOGROUP =====
+                val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
+                    R.id.rbTypeFood -> "food"
+                    R.id.rbTypeMedicine -> "medicine"
+                    else -> "other"
+                }
+
+                Logger.log(TAG, "Save: newItemType=$newItemType (was ${item.itemType})")
+
                 val updated = item.copy(
-                    name = name, quantity = quantity, barcode = barcode,
-                    description = description, expiryDate = expiryDate, price = price,
-                    updatedDate = System.currentTimeMillis(), updatedBy = "user"
+                    name = name,
+                    quantity = quantity,
+                    barcode = barcode,
+                    description = description,
+                    expiryDate = expiryDate,
+                    price = price,
+                    itemType = newItemType,   // ← обновляем тип
+                    updatedDate = System.currentTimeMillis(),
+                    updatedBy = "user"
                 )
                 updated.computeExpiryFields()
 
@@ -772,8 +788,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     db.historyDao().insertEntry(
                         HistoryEntry(
                             itemId = id, action = "update",
-                            oldValue = "Изменены поля",
-                            newValue = "Название: $name, Количество: $quantity",
+                            oldValue = "Тип: ${item.itemType}",
+                            newValue = "Тип: $newItemType",
                             changedBy = "user"
                         )
                     )
