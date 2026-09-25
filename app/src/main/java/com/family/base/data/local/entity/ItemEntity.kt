@@ -24,20 +24,21 @@ data class ItemEntity(
     var daysUntilExpiry: Int = Int.MAX_VALUE,
     var isExpired: Boolean = false,
     val itemType: String? = null,
+    val itemSubtype: String? = null,   // ← НОВОЕ: подтип (milk, bread, antibiotics ...)
     val price: Double? = null,
 
     // ===== АРХИВ =====
     val isArchived: Boolean = false,
-    val archivedReason: String? = null,   // "eaten", "broken", "thrown", "gifted", "sold", "expired", "other"
+    val archivedReason: String? = null,
     val archivedDate: Long? = null,
     val archivedNote: String? = null,
 
     // ===== ЗАЙМ (ВЫДАЧА) =====
-    val isLent: Boolean = false,          // Флаг: предмет выдан
-    val lentTo: String? = null,           // Кому выдан (например, "Иванов")
-    val lentDate: Long? = null,           // Когда выдан
-    val lentNote: String? = null,         // Заметка (например, "на неделю")
-    val returnDate: Long? = null          // Планируемая дата возврата
+    val isLent: Boolean = false,
+    val lentTo: String? = null,
+    val lentDate: Long? = null,
+    val lentNote: String? = null,
+    val returnDate: Long? = null
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
