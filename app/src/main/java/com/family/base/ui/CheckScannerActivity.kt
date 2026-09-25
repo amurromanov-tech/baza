@@ -269,7 +269,7 @@ class CheckScannerActivity : AppCompatActivity() {
                 if (text.isBlank()) {
                     showLoading(false)
                     Toast.makeText(
-                        this,
+                        this@CheckScannerActivity,
                         "Не удалось распознать текст. Попробуйте ещё раз.",
                         Toast.LENGTH_LONG
                     ).show()
