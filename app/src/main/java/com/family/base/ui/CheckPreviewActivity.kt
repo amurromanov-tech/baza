@@ -8,13 +8,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.model.CheckItem
 import com.family.base.data.parser.CheckParser
 import com.family.base.databinding.ActivityCheckPreviewBinding
 import com.family.base.ui.adapter.CheckPreviewAdapter
 import com.family.base.util.Logger
+import com.family.base.util.PurchaseFolderHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
