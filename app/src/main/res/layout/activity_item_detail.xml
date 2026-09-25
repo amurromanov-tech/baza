@@ -90,9 +90,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <!-- ============================================================ -->
-            <!-- ЧИПЫ-СТАТУСЫ -->
-            <!-- ============================================================ -->
+            <!-- ===== ЧИПЫ-СТАТУСЫ ===== -->
             <LinearLayout
                 android:id="@+id/chipGroupStatus"
                 android:layout_width="match_parent"
@@ -137,9 +135,7 @@
                     android:visibility="gone" />
             </LinearLayout>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: МЕСТОНАХОЖДЕНИЕ -->
-            <!-- ============================================================ -->
+            <!-- ===== МЕСТОНАХОЖДЕНИЕ ===== -->
             <TextView
                 style="@style/SectionTitle"
                 android:layout_width="wrap_content"
@@ -178,9 +174,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ОСНОВНОЕ                                             -->
-            <!-- ============================================================ -->
+            <!-- ===== ОСНОВНОЕ ===== -->
             <TextView
                 style="@style/SectionTitle"
                 android:layout_width="wrap_content"
@@ -282,12 +276,52 @@
                             app:cornerRadius="12dp"
                             android:backgroundTint="#4CAF50" />
                     </LinearLayout>
+
+                    <!-- Тип: RadioGroup (edit) -->
+                    <LinearLayout
+                        android:id="@+id/typeEditBlock"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="12dp"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Тип"
+                            android:textSize="14sp"
+                            android:layout_marginBottom="4dp" />
+
+                        <RadioGroup
+                            android:id="@+id/rgTypeEdit"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <RadioButton
+                                android:id="@+id/rbTypeFood"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Еда" />
+
+                            <RadioButton
+                                android:id="@+id/rbTypeMedicine"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Лекарство" />
+
+                            <RadioButton
+                                android:id="@+id/rbTypeOther"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Другое" />
+                        </RadioGroup>
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ДЕТАЛИ                                               -->
-            <!-- ============================================================ -->
+            <!-- ===== ДЕТАЛИ ===== -->
             <TextView
                 style="@style/SectionTitle"
                 android:layout_width="wrap_content"
@@ -408,9 +442,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ДАТЫ                                                 -->
-            <!-- ============================================================ -->
+            <!-- ===== ДАТЫ ===== -->
             <TextView
                 android:id="@+id/tvDatesTitle"
                 style="@style/SectionTitle"
@@ -471,9 +503,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ОПИСАНИЕ                                             -->
-            <!-- ============================================================ -->
+            <!-- ===== ОПИСАНИЕ ===== -->
             <TextView
                 android:id="@+id/tvDescriptionTitle"
                 style="@style/SectionTitle"
@@ -492,15 +522,13 @@
                     android:layout_height="wrap_content"
                     android:padding="16dp">
 
-                    <!-- Описание: обычный текст (view) -->
                     <TextView
                         android:id="@+id/tvDescriptionView"
                         style="@style/DescriptionText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        tools:text="Чёрный чай Greenfield в пакетиках. Куплен в Пятёрочке." />
+                        tools:text="Чёрный чай Greenfield в пакетиках." />
 
-                    <!-- Описание: TextInput (edit) -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilDescription"
                         android:layout_width="match_parent"
@@ -520,9 +548,7 @@
                 </FrameLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ЗАЙМ                                                 -->
-            <!-- ============================================================ -->
+            <!-- ===== ЗАЙМ ===== -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardLentInfo"
                 style="@style/SectionCard"
@@ -586,9 +612,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============================================================ -->
-            <!-- КНОПКИ РЕЖИМА РЕДАКТИРОВАНИЯ -->
-            <!-- ============================================================ -->
+            <!-- ===== КНОПКИ РЕЖИМА РЕДАКТИРОВАНИЯ ===== -->
             <LinearLayout
                 android:id="@+id/editButtonsLayout"
                 android:layout_width="match_parent"
@@ -619,7 +643,7 @@
                     app:cornerRadius="12dp" />
             </LinearLayout>
 
-            <!-- Кнопка "Добавить фото" -->
+            <!-- ===== ДОБАВИТЬ ФОТО ===== -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnAddPhoto"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -629,9 +653,7 @@
                 android:text="📷 Добавить фото"
                 android:visibility="gone" />
 
-            <!-- ============================================================ -->
-            <!-- СЕКЦИЯ: ДЕЙСТВИЯ -->
-            <!-- ============================================================ -->
+            <!-- ===== ДЕЙСТВИЯ ===== -->
             <TextView
                 android:id="@+id/tvActionsTitle"
                 style="@style/SectionTitle"
