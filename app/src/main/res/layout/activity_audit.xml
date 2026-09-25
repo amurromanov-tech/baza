@@ -30,7 +30,33 @@
             android:text="🔍 Аудит базы"
             android:textAppearance="?attr/textAppearanceHeadline6"
             android:gravity="center" />
+
+        <!-- Кнопка сортировки -->
+        <ImageButton
+            android:id="@+id/btnSort"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@android:drawable/ic_menu_sort_by_size"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Сортировка"
+            android:tint="?attr/colorControlNormal" />
     </LinearLayout>
+
+    <!-- ============================================================ -->
+    <!-- ВЕРХНЯЯ СВОДКА: «124 предмета • 23 требуют внимания» -->
+    <!-- ============================================================ -->
+    <TextView
+        android:id="@+id/tvSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:text="Загрузка…"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@color/sectionTitle"
+        tools:text="📦 124 предмета • ⚠️ 23 требуют внимания" />
 
     <!-- ============================================================ -->
     <!-- ЧИПЫ-ФИЛЬТРЫ (горизонтальная прокрутка) -->
@@ -48,12 +74,24 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
+            <!-- 🚨 ВСЕ ПРОБЛЕМЫ -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipAllProblems"
+                style="@style/PastelChip.Expired"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🚨 Все проблемы"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
             <!-- 💰 Без цены -->
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipNoPrice"
                 style="@style/PastelChip.Other"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
                 android:text="💰 Без цены"
                 android:checkable="true"
                 android:clickable="true"
@@ -103,6 +141,30 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:text="📦 Без типа"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 📷 Без фото -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoPhoto"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="📷 Без фото"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 👥 Дубликаты кода -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipDuplicates"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="👥 Дубликаты кода"
                 android:checkable="true"
                 android:clickable="true"
                 android:focusable="true" />
