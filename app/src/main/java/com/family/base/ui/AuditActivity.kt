@@ -89,7 +89,7 @@ class AuditActivity : AppCompatActivity() {
     private fun openItemInEditMode(item: ItemEntity) {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
-        intent.putExtra("edit_mode", true)   // ← сразу в редактирование
+        intent.putExtra("edit_mode", true)
         startActivity(intent)
     }
 
@@ -115,7 +115,6 @@ class AuditActivity : AppCompatActivity() {
                 val thresholdDate = System.currentTimeMillis() - (LENT_LONG_DAYS * 24 * 60 * 60 * 1000)
                 val now = System.currentTimeMillis()
 
-                // Собираем все счётчики
                 val noPrice = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutPrice() }
                 val noExpiry = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutExpiry() }
                 val noBarcode = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutBarcode() }
@@ -124,21 +123,14 @@ class AuditActivity : AppCompatActivity() {
                 val lentLong = withContext(Dispatchers.IO) { db.itemDao().countItemsLentLongAgo(thresholdDate) }
                 val expired = withContext(Dispatchers.IO) { db.itemDao().countExpiredItems(now) }
 
-                // Дубликаты
                 val duplicates = withContext(Dispatchers.IO) { loadDuplicateItems() }
-
-                // Без фото — считаем по файловой системе
                 val noPhoto = withContext(Dispatchers.IO) { loadItemsWithoutPhoto() }
-
-                // Все проблемы
                 val allProblems = withContext(Dispatchers.IO) { loadAllProblemItems() }
 
                 withContext(Dispatchers.Main) {
-                    // Сводка
                     val totalActive = withContext(Dispatchers.IO) { db.itemDao().getActiveItemsCount() }
                     binding.tvSummary.text = "📦 $totalActive ${pluralizeItem(totalActive)} • ⚠️ ${allProblems.size} требуют внимания"
 
-                    // Счётчики на чипах
                     setChipText(binding.chipAllProblems, "🚨 Все проблемы", allProblems.size)
                     setChipText(binding.chipNoPrice, "💰 Без цены", noPrice)
                     setChipText(binding.chipNoExpiry, "📅 Без срока", noExpiry)
@@ -316,8 +308,7 @@ class AuditActivity : AppCompatActivity() {
 
             Sort.EXPIRY_ASC -> items.sortedWith(
                 compareBy(
-                    // сначала с датой, отсортированные по возрастанию
-                    { it.expiryDate == null },        // false (0) — с датой, true (1) — без
+                    { it.expiryDate == null },
                     { it.expiryDate ?: Long.MAX_VALUE }
                 )
             )
@@ -333,7 +324,6 @@ class AuditActivity : AppCompatActivity() {
             .setSingleChoiceItems(options, checkedItem) { dialog, which ->
                 currentSort = Sort.values()[which]
                 dialog.dismiss()
-                // Если есть текущий фильтр — перезагружаем с новой сортировкой
                 if (currentFilter != Filter.NONE) {
                     loadItems(currentFilter)
                 }
