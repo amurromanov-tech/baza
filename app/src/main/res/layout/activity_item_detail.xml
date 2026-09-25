@@ -101,10 +101,10 @@
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipType"
-                    style="@style/PastelChip.Other"
+                    style="@style/PastelChip.Thing"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="📦 Другое"
+                    android:text="📦 Предмет"
                     android:visibility="gone" />
 
                 <com.google.android.material.chip.Chip
@@ -310,6 +310,12 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Лекарство" />
+
+                            <RadioButton
+                                android:id="@+id/rbTypeThing"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Предмет" />
 
                             <RadioButton
                                 android:id="@+id/rbTypeOther"
