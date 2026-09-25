@@ -45,10 +45,8 @@
     </style>
 
     <!-- ============================================================ -->
-    <!-- КАРТОЧКА ПРЕДМЕТА: СЕКЦИИ                                     -->
+    <!-- СЕКЦИИ                                                       -->
     <!-- ============================================================ -->
-
-    <!-- Заголовок секции -->
     <style name="SectionTitle" parent="">
         <item name="android:textSize">13sp</item>
         <item name="android:textStyle">bold</item>
@@ -60,7 +58,6 @@
         <item name="android:layout_marginStart">4dp</item>
     </style>
 
-    <!-- Секция-карточка -->
     <style name="SectionCard" parent="Widget.MaterialComponents.CardView">
         <item name="cardCornerRadius">12dp</item>
         <item name="cardElevation">2dp</item>
@@ -71,8 +68,6 @@
     <!-- ============================================================ -->
     <!-- ЧИПЫ-СТАТУСЫ (ПАСТЕЛЬНЫЕ)                                    -->
     <!-- ============================================================ -->
-
-    <!-- Базовый чип-статус: пастельный фон, тёмный текст -->
     <style name="PastelChip" parent="Widget.MaterialComponents.Chip.Entry">
         <item name="android:textSize">12sp</item>
         <item name="android:textStyle">bold</item>
@@ -82,48 +77,78 @@
         <item name="chipStrokeWidth">0dp</item>
     </style>
 
-    <!-- Тип: Еда -->
     <style name="PastelChip.Food" parent="PastelChip">
         <item name="android:textColor">@color/chipFoodText</item>
         <item name="chipBackgroundColor">@color/chipFoodBg</item>
     </style>
-
-    <!-- Тип: Лекарство -->
     <style name="PastelChip.Medicine" parent="PastelChip">
         <item name="android:textColor">@color/chipMedicineText</item>
         <item name="chipBackgroundColor">@color/chipMedicineBg</item>
     </style>
-
-    <!-- Тип: Другое -->
     <style name="PastelChip.Other" parent="PastelChip">
         <item name="android:textColor">@color/chipOtherText</item>
         <item name="chipBackgroundColor">@color/chipOtherBg</item>
     </style>
-
-    <!-- Просрочен -->
     <style name="PastelChip.Expired" parent="PastelChip">
         <item name="android:textColor">@color/chipExpiredText</item>
         <item name="chipBackgroundColor">@color/chipExpiredBg</item>
     </style>
-
-    <!-- Скоро истекает -->
     <style name="PastelChip.Soon" parent="PastelChip">
         <item name="android:textColor">@color/chipSoonText</item>
         <item name="chipBackgroundColor">@color/chipSoonBg</item>
     </style>
-
-    <!-- Выдан -->
     <style name="PastelChip.Lent" parent="PastelChip">
         <item name="android:textColor">@color/chipLentText</item>
         <item name="chipBackgroundColor">@color/chipLentBg</item>
     </style>
 
-    <!-- Устаревший алиас StatusChip (для совместимости, если где-то ещё используется) -->
     <style name="StatusChip" parent="PastelChip.Other" />
 
     <!-- ============================================================ -->
-    <!-- ПУТЬ / МЕСТОНАХОЖДЕНИЕ                                       -->
+    <!-- ЧИПЫ-ПОЛЯ (для просмотра) — «как цена»                       -->
     <!-- ============================================================ -->
+    <style name="FieldChip" parent="Widget.MaterialComponents.Chip.Action">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="chipStartPadding">14dp</item>
+        <item name="chipEndPadding">14dp</item>
+        <item name="chipMinHeight">36dp</item>
+        <item name="chipStrokeWidth">0dp</item>
+        <item name="chipIconVisible">false</item>
+    </style>
+
+    <!-- Название -->
+    <style name="FieldChip.Name" parent="FieldChip">
+        <item name="android:textColor">@color/chipNameText</item>
+        <item name="chipBackgroundColor">@color/chipNameBg</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- Количество -->
+    <style name="FieldChip.Quantity" parent="FieldChip">
+        <item name="android:textColor">@color/chipQuantityText</item>
+        <item name="chipBackgroundColor">@color/chipQuantityBg</item>
+    </style>
+
+    <!-- Штрих-код -->
+    <style name="FieldChip.Barcode" parent="FieldChip">
+        <item name="android:textColor">@color/chipBarcodeText</item>
+        <item name="chipBackgroundColor">@color/chipBarcodeBg</item>
+    </style>
+
+    <!-- Срок годности -->
+    <style name="FieldChip.Expiry" parent="FieldChip">
+        <item name="android:textColor">@color/chipExpiryText</item>
+        <item name="chipBackgroundColor">@color/chipExpiryBg</item>
+    </style>
+
+    <!-- Цена -->
+    <style name="PriceChip" parent="FieldChip">
+        <item name="android:textColor">@color/priceChipText</item>
+        <item name="chipBackgroundColor">@color/priceChipBg</item>
+    </style>
+
+    <!-- Путь -->
     <style name="PathChip" parent="Widget.MaterialComponents.Chip.Action">
         <item name="android:textSize">13sp</item>
         <item name="android:textColor">@color/pathTextColor</item>
@@ -148,20 +173,6 @@
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textColor">@color/dateValue</item>
-    </style>
-
-    <!-- ============================================================ -->
-    <!-- ЦЕНА (ЧИП)                                                   -->
-    <!-- ============================================================ -->
-    <style name="PriceChip" parent="Widget.MaterialComponents.Chip.Action">
-        <item name="android:textSize">14sp</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:textColor">@color/priceChipText</item>
-        <item name="chipBackgroundColor">@color/priceChipBg</item>
-        <item name="chipStartPadding">12dp</item>
-        <item name="chipEndPadding">12dp</item>
-        <item name="chipMinHeight">34dp</item>
-        <item name="chipStrokeWidth">0dp</item>
     </style>
 
     <!-- ============================================================ -->
@@ -202,6 +213,15 @@
         <item name="android:layout_marginTop">4dp</item>
         <item name="android:maxLines">1</item>
         <item name="android:ellipsize">end</item>
+    </style>
+
+    <!-- ============================================================ -->
+    <!-- ОПИСАНИЕ (карточка без рамок)                                -->
+    <!-- ============================================================ -->
+    <style name="DescriptionText" parent="">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/descriptionText</item>
+        <item name="android:lineSpacingExtra">4dp</item>
     </style>
 
 </resources>
