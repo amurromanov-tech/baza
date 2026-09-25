@@ -19,6 +19,7 @@ import coil.load
 import com.family.base.Config
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.remote.ProductLookupService
@@ -39,6 +40,7 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var binding: ActivityItemDetailBinding
     private val TAG = "ItemDetailActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    private val dateTimeFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
     private lateinit var viewModel: MainViewModel
@@ -61,6 +63,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
                 binding.ivPhotoPlaceholder.visibility = View.GONE
+                binding.photoOverlay.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
@@ -79,6 +82,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhoto.setImageBitmap(bitmap)
                 binding.ivPhoto.visibility = View.VISIBLE
                 binding.ivPhotoPlaceholder.visibility = View.GONE
+                binding.photoOverlay.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
             } catch (e: Exception) {
                 Logger.log(TAG, "Error processing camera photo", e)
@@ -161,7 +165,21 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionArchive.setOnClickListener { showArchiveDialog() }
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
+
+        // Переход в папку, где лежит предмет
+        binding.btnGoToFolder.setOnClickListener {
+            val parentId = currentParentId
+            if (parentId != null) {
+                val resultIntent = Intent().apply {
+                    putExtra("navigate_to_folder_id", parentId)
+                }
+                setResult(RESULT_OK, resultIntent)
+                finish()
+            }
+        }
     }
+
+    private var currentParentId: String? = null
 
     private fun changeQuantity(delta: Int) {
         val currentQty = binding.etQuantity.text.toString().toIntOrNull() ?: 1
@@ -175,6 +193,11 @@ class ItemDetailActivity : AppCompatActivity() {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) { finish(); return@launch }
 
+                currentParentId = item.parentId
+
+                // Загружаем путь и название папки
+                val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
+
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = item.name
                     binding.etName.setText(item.name); binding.etName.isEnabled = false
@@ -185,9 +208,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     item.expiryDate?.let { binding.etExpiry.setText(dateFormat.format(Date(it))) }
                     binding.etExpiry.isEnabled = false
 
+                    // Цена — как чип
                     if (item.price != null && item.price != 0.0) {
                         binding.tvPrice.visibility = View.VISIBLE
-                        binding.tvPrice.text = "💰 Цена: ${item.price} ₽"
+                        binding.tvPrice.text = "💰 ${item.price} ₽"
                         binding.etPrice.visibility = View.GONE
                         binding.tilPrice.visibility = View.GONE
                     } else {
@@ -196,6 +220,7 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.tilPrice.visibility = View.GONE
                     }
 
+                    // Скрываем ненужное в режиме просмотра
                     binding.btnPlus.visibility = View.GONE
                     binding.btnMinus.visibility = View.GONE
                     binding.btnScanBarcode.visibility = View.GONE
@@ -203,6 +228,36 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.editButtonsLayout.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
 
+                    // Фото
+                    val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
+                    if (localFile != null && localFile.exists()) {
+                        binding.ivPhoto.visibility = View.VISIBLE
+                        binding.ivPhotoPlaceholder.visibility = View.GONE
+                        binding.photoOverlay.visibility = View.VISIBLE
+                        binding.ivPhoto.load(localFile) { crossfade(true) }
+                    } else {
+                        binding.ivPhoto.visibility = View.GONE
+                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
+                        binding.photoOverlay.visibility = View.VISIBLE
+                    }
+
+                    // Путь
+                    binding.tvItemPath.text = path
+                    binding.btnGoToFolder.visibility = if (item.parentId != null) View.VISIBLE else View.GONE
+
+                    // Даты
+                    binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
+                    binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+                    if (item.expiryDate != null) {
+                        binding.tvDateExpiryLabel.visibility = View.VISIBLE
+                        binding.tvDateExpiry.visibility = View.VISIBLE
+                        binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
+                    } else {
+                        binding.tvDateExpiryLabel.visibility = View.GONE
+                        binding.tvDateExpiry.visibility = View.GONE
+                    }
+
+                    // Описание — если пусто, скрываем
                     if (item.description.isNullOrEmpty()) {
                         binding.tvDescriptionTitle.visibility = View.GONE
                         binding.cardDescription.visibility = View.GONE
@@ -211,18 +266,9 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.cardDescription.visibility = View.VISIBLE
                     }
 
-                    val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
-                    if (localFile != null && localFile.exists()) {
-                        binding.ivPhoto.visibility = View.VISIBLE
-                        binding.ivPhotoPlaceholder.visibility = View.GONE
-                        binding.ivPhoto.load(localFile) { crossfade(true) }
-                    } else {
-                        binding.ivPhoto.visibility = View.GONE
-                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
-                    }
-
                     applyChips(item)
 
+                    // Займ
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
                         binding.cardLentInfo.visibility = View.VISIBLE
                         binding.tvLentPerson.text = "Кому: ${item.lentTo}"
@@ -244,6 +290,10 @@ class ItemDetailActivity : AppCompatActivity() {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) { finish(); return@launch }
 
+                currentParentId = item.parentId
+
+                val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
+
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
                     binding.etName.setText(item.name); binding.etName.isEnabled = true
@@ -255,6 +305,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.etExpiry.isEnabled = true
                     binding.etExpiry.setOnClickListener { showDatePickerDialog() }
 
+                    // Цена — редактируемая
                     binding.tvPrice.visibility = View.GONE
                     binding.etPrice.visibility = View.VISIBLE
                     binding.tilPrice.visibility = View.VISIBLE
@@ -269,16 +320,35 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tvDescriptionTitle.visibility = View.VISIBLE
                     binding.cardDescription.visibility = View.VISIBLE
 
+                    // Фото
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
                         binding.ivPhoto.visibility = View.VISIBLE
                         binding.ivPhotoPlaceholder.visibility = View.GONE
+                        binding.photoOverlay.visibility = View.VISIBLE
                         binding.ivPhoto.load(localFile) { crossfade(true) }
                         binding.btnAddPhoto.visibility = View.GONE
                     } else {
                         binding.ivPhoto.visibility = View.GONE
                         binding.ivPhotoPlaceholder.visibility = View.VISIBLE
+                        binding.photoOverlay.visibility = View.VISIBLE
                         binding.btnAddPhoto.visibility = View.VISIBLE
+                    }
+
+                    // Путь
+                    binding.tvItemPath.text = path
+                    binding.btnGoToFolder.visibility = View.GONE
+
+                    // Даты
+                    binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
+                    binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+                    if (item.expiryDate != null) {
+                        binding.tvDateExpiryLabel.visibility = View.VISIBLE
+                        binding.tvDateExpiry.visibility = View.VISIBLE
+                        binding.tvDateExpiry.text = dateFormat.format(Date(item.expiryDate!!))
+                    } else {
+                        binding.tvDateExpiryLabel.visibility = View.GONE
+                        binding.tvDateExpiry.visibility = View.GONE
                     }
 
                     binding.cardLentInfo.visibility = View.GONE
@@ -288,22 +358,56 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyChips(item: ItemEntity) {
-        val typeText = when (item.itemType) {
-            "food" -> "🍎 Еда"
-            "medicine" -> "💊 Лекарство"
-            else -> "📦 Другое"
+    /**
+     * Строит путь к предмету: "📂 Корень / Продукты / Чай"
+     */
+    private suspend fun buildItemPath(parentId: String?): String {
+        if (parentId == null) return "📂 Корень (всё в одном месте)"
+
+        val parts = mutableListOf<String>()
+        var id: String? = parentId
+
+        while (id != null) {
+            val folder: FolderEntity = db.folderDao().getFolderById(id) ?: break
+            parts.add(folder.name)
+            id = folder.parentId
         }
-        binding.chipType.text = typeText
+
+        if (parts.isEmpty()) return "📂 Корень"
+        return "📂 Корень / " + parts.reversed().joinToString(" / ")
+    }
+
+    private fun applyChips(item: ItemEntity) {
+        // Тип
+        when (item.itemType) {
+            "food" -> {
+                binding.chipType.text = "🍎 Еда"
+                binding.chipType.setChipBackgroundColorResource(R.color.chipFoodBg)
+                binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipFoodText))
+            }
+            "medicine" -> {
+                binding.chipType.text = "💊 Лекарство"
+                binding.chipType.setChipBackgroundColorResource(R.color.chipMedicineBg)
+                binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipMedicineText))
+            }
+            else -> {
+                binding.chipType.text = "📦 Другое"
+                binding.chipType.setChipBackgroundColorResource(R.color.chipOtherBg)
+                binding.chipType.setTextColor(ContextCompat.getColor(this, R.color.chipOtherText))
+            }
+        }
         binding.chipType.visibility = View.VISIBLE
 
+        // Просрочен
         binding.chipExpired.visibility = if (item.isExpired) View.VISIBLE else View.GONE
 
+        // Скоро
         if (!item.isExpired && item.daysUntilExpiry in 0..3) {
             binding.chipSoon.visibility = View.VISIBLE
             binding.chipSoon.text = "⚠️ Осталось ${item.daysUntilExpiry} дн."
         } else binding.chipSoon.visibility = View.GONE
 
+        // Выдан
         binding.chipLent.visibility = if (item.isLent && !item.lentTo.isNullOrEmpty()) View.VISIBLE else View.GONE
     }
 
@@ -329,11 +433,15 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.cardLentInfo.visibility = View.GONE
                     binding.btnScanBarcode.visibility = View.GONE
                     binding.chipGroupStatus.visibility = View.GONE
+                    binding.tvItemPath.visibility = View.GONE
+                    binding.btnGoToFolder.visibility = View.GONE
+                    binding.tvDateExpiryLabel.visibility = View.GONE
+                    binding.tvDateExpiry.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) "История пуста"
                     else history.joinToString("\n\n") { entry ->
                         buildString {
-                            append("📅 ${dateFormat.format(Date(entry.changedAt))}\n")
+                            append("📅 ${dateTimeFormat.format(Date(entry.changedAt))}\n")
                             append("👤 ${entry.changedBy}\n")
                             append("📝 ${entry.action}")
                             if (entry.oldValue != null && entry.newValue != null) append(": ${entry.oldValue} → ${entry.newValue}")
@@ -505,9 +613,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (начинаем с текущей папки предмета)
-    // ============================================================
     private fun showMoveDialog() {
         val id = itemId ?: return
         lifecycleScope.launch {
