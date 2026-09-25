@@ -18,6 +18,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.family.base.databinding.ActivityCheckScannerBinding
 import com.family.base.util.Logger
 import com.googlecode.tesseract.android.TessBaseAPI
@@ -41,7 +42,6 @@ class CheckScannerActivity : AppCompatActivity() {
     // ===== TESSERACT =====
     private var tessApi: TessBaseAPI? = null
 
-    // Папка с языковыми пакетами (tessdata)
     private val tessDataDir: File
         get() = File(filesDir, "tesseract")
 
@@ -63,7 +63,6 @@ class CheckScannerActivity : AppCompatActivity() {
         const val EXTRA_RECOGNIZED_TEXT = "recognized_text"
         const val EXTRA_IMAGE_PATH = "image_path"
 
-        // Языки: русский + английский (для чисел)
         private const val TESS_LANGUAGES = "rus+eng"
     }
 
@@ -89,7 +88,7 @@ class CheckScannerActivity : AppCompatActivity() {
 
         binding.btnCapture.setOnClickListener { takePhoto() }
 
-        // ===== ИНИЦИАЛИЗАЦИЯ TESSERACT В ФОНЕ =====
+        // Инициализация Tesseract
         initTesseract()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -113,11 +112,9 @@ class CheckScannerActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    // 1. Копируем traineddata из assets в filesDir/tesseract/tessdata
                     copyTessDataIfNeeded("rus.traineddata")
                     copyTessDataIfNeeded("eng.traineddata")
 
-                    // 2. Инициализируем Tesseract
                     val api = TessBaseAPI()
                     val dataPath = tessDataDir.absolutePath
                     val initialized = api.init(dataPath, TESS_LANGUAGES)
@@ -126,7 +123,6 @@ class CheckScannerActivity : AppCompatActivity() {
                         throw IllegalStateException("Tesseract init failed for path: $dataPath")
                     }
 
-                    // Настройки для чеков
                     api.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO
                     api.setVariable("preserve_interword_spaces", "1")
 
@@ -153,9 +149,6 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Копирует traineddata из assets в filesDir/tesseract/tessdata/, если его ещё нет.
-     */
     private fun copyTessDataIfNeeded(fileName: String) {
         val tessdataDir = File(tessDataDir, "tessdata")
         if (!tessdataDir.exists()) tessdataDir.mkdirs()
@@ -261,14 +254,10 @@ class CheckScannerActivity : AppCompatActivity() {
                     val api = tessApi
                         ?: throw IllegalStateException("Tesseract не инициализирован")
 
-                    // Обрабатываем bitmap
                     api.setImage(bitmap)
                     val result = api.utF8Text ?: ""
 
-                    // Освобождаем bitmap после использования
                     bitmap.recycle()
-
-                    // Очищаем состояние для следующего распознавания
                     api.clear()
 
                     result
@@ -287,7 +276,6 @@ class CheckScannerActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Сохраняем фото на будущее
                 val permanentFile = File(filesDir, "last_check.jpg")
                 try {
                     photoFile.copyTo(permanentFile, overwrite = true)
@@ -295,7 +283,6 @@ class CheckScannerActivity : AppCompatActivity() {
                     Logger.log(TAG, "copyTo permanentFile error: ${e.message}")
                 }
 
-                // Открываем CheckPreviewActivity
                 val intent = Intent(this@CheckScannerActivity, CheckPreviewActivity::class.java).apply {
                     putExtra(EXTRA_RECOGNIZED_TEXT, text)
                     putExtra(EXTRA_IMAGE_PATH, permanentFile.absolutePath)
@@ -314,9 +301,6 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Загружает Bitmap с учётом EXIF-ориентации.
-     */
     private fun loadBitmapWithExif(file: File): Bitmap? {
         return try {
             val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
@@ -342,9 +326,6 @@ class CheckScannerActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПРОГРЕСС
-    // ============================================================
     private fun showLoading(show: Boolean, text: String = "") {
         binding.loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
         if (show && text.isNotEmpty()) {
@@ -353,9 +334,6 @@ class CheckScannerActivity : AppCompatActivity() {
         binding.btnCapture.isEnabled = !show
     }
 
-    // ============================================================
-    // РАЗРЕШЕНИЯ
-    // ============================================================
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
