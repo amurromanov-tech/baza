@@ -9,17 +9,19 @@
     android:paddingEnd="8dp"
     android:paddingTop="12dp"
     android:paddingBottom="12dp"
+    android:clickable="true"
+    android:focusable="true"
     android:background="?attr/selectableItemBackground">
 
-    <!-- Иконка папки -->
     <ImageView
         android:id="@+id/ivFolderIcon"
         android:layout_width="32dp"
         android:layout_height="32dp"
         android:src="@drawable/ic_folder_default"
+        android:clickable="false"
+        android:focusable="false"
         android:contentDescription="Папка" />
 
-    <!-- Название папки -->
     <TextView
         android:id="@+id/tvFolderName"
         android:layout_width="0dp"
@@ -30,9 +32,10 @@
         android:maxLines="1"
         android:ellipsize="end"
         android:textColor="?android:attr/textColorPrimary"
+        android:clickable="false"
+        android:focusable="false"
         tools:text="Продукты" />
 
-    <!-- Стрелка "зайти внутрь" -->
     <ImageView
         android:id="@+id/ivArrow"
         android:layout_width="24dp"
@@ -40,5 +43,7 @@
         android:src="@android:drawable/ic_media_play"
         android:rotation="0"
         android:alpha="0.5"
+        android:clickable="false"
+        android:focusable="false"
         android:contentDescription="Открыть" />
 </LinearLayout>
