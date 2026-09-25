@@ -89,7 +89,6 @@
         <item name="android:textColor">@color/chipOtherText</item>
         <item name="chipBackgroundColor">@color/chipOtherBg</item>
     </style>
-    <!-- НОВОЕ: Предмет -->
     <style name="PastelChip.Thing" parent="PastelChip">
         <item name="android:textColor">@color/chipThingText</item>
         <item name="chipBackgroundColor">@color/chipThingBg</item>
@@ -145,6 +144,12 @@
     <style name="FieldChip.Expiry" parent="FieldChip">
         <item name="android:textColor">@color/chipExpiryText</item>
         <item name="chipBackgroundColor">@color/chipExpiryBg</item>
+    </style>
+
+    <!-- НОВОЕ: Подтип -->
+    <style name="FieldChip.Subtype" parent="FieldChip">
+        <item name="android:textColor">@color/chipSubtypeText</item>
+        <item name="chipBackgroundColor">@color/chipSubtypeBg</item>
     </style>
 
     <!-- Цена -->
