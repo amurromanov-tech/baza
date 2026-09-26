@@ -6,6 +6,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.family.base.BaseApplication
 import com.family.base.databinding.ActivityAppSettingsBinding
 import com.family.base.util.Logger
 
@@ -39,7 +40,7 @@ class AppSettingsActivity : AppCompatActivity() {
 
         setupLanguageSpinner()
         setupSortSpinner()
-        setupDarkThemeSwitch()
+        setupThemeSelector()
         setupNotificationsSwitch()
         loadSettings()
 
@@ -88,17 +89,35 @@ class AppSettingsActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ТЁМНАЯ ТЕМА
+    // ТЕМА (RadioGroup: Светлая / Тёмная / Как в системе)
     // ============================================================
-    private fun setupDarkThemeSwitch() {
-        binding.switchDarkTheme.setOnCheckedChangeListener { _, isChecked ->
-            Logger.log(TAG, "Dark theme: $isChecked")
-            saveSetting("dark_theme", isChecked)
-            Toast.makeText(
-                this@AppSettingsActivity,
-                "Смена темы будет доступна в следующем обновлении",
-                Toast.LENGTH_SHORT
-            ).show()
+    private fun setupThemeSelector() {
+        binding.radioGroupTheme.setOnCheckedChangeListener { _, checkedId ->
+            val mode = when (checkedId) {
+                binding.radioLight.id -> BaseApplication.THEME_LIGHT
+                binding.radioDark.id -> BaseApplication.THEME_DARK
+                binding.radioSystem.id -> BaseApplication.THEME_SYSTEM
+                else -> return@setOnCheckedChangeListener
+            }
+
+            Logger.log(TAG, "Theme selected: $mode")
+
+            val current = BaseApplication.getSavedThemeMode(this)
+            if (current == mode) {
+                Logger.log(TAG, "Theme unchanged, skipping")
+                return@setOnCheckedChangeListener
+            }
+
+            // Сохраняем и применяем мгновенно
+            BaseApplication.saveThemeMode(this, mode)
+            BaseApplication.applySavedTheme(this)
+
+            val label = when (mode) {
+                BaseApplication.THEME_LIGHT -> "Светлая тема"
+                BaseApplication.THEME_DARK -> "Тёмная тема"
+                else -> "Как в системе"
+            }
+            Toast.makeText(this@AppSettingsActivity, "Тема: $label", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -122,10 +141,16 @@ class AppSettingsActivity : AppCompatActivity() {
     // ============================================================
     private fun loadSettings() {
         try {
-            val prefs = getSharedPreferences("baza_settings", MODE_PRIVATE)
+            val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
 
-            // Тёмная тема
-            binding.switchDarkTheme.isChecked = prefs.getBoolean("dark_theme", false)
+            // Тема
+            val themeMode = BaseApplication.getSavedThemeMode(this)
+            Logger.log(TAG, "Loaded theme mode: $themeMode")
+            when (themeMode) {
+                BaseApplication.THEME_LIGHT -> binding.radioLight.isChecked = true
+                BaseApplication.THEME_DARK -> binding.radioDark.isChecked = true
+                else -> binding.radioSystem.isChecked = true
+            }
 
             // Уведомления
             binding.switchNotifications.isChecked = prefs.getBoolean("notifications_enabled", true)
@@ -151,7 +176,7 @@ class AppSettingsActivity : AppCompatActivity() {
     // ============================================================
     private fun saveSetting(key: String, value: Any) {
         try {
-            val prefs = getSharedPreferences("baza_settings", MODE_PRIVATE)
+            val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
             prefs.edit().apply {
                 when (value) {
                     is Boolean -> putBoolean(key, value)
