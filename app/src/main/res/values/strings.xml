@@ -6,4 +6,12 @@
     <string name="go_up">Level up</string>
     <string name="settings">Settings</string>
     <string name="item_icon">Item icon</string>
+
+    <!-- ===== НАСТРОЙКИ: ТЕМА ===== -->
+    <string name="settings_title">⚙️ Настройки приложения</string>
+    <string name="settings_section_appearance">ВНЕШНИЙ ВИД</string>
+    <string name="settings_theme_light">☀️ Светлая тема</string>
+    <string name="settings_theme_dark">🌙 Тёмная тема</string>
+    <string name="settings_theme_system">⚙️ Как в системе</string>
+    <string name="settings_theme_hint">Выберите оформление приложения. «Как в системе» автоматически переключается вместе с настройками Android.</string>
 </resources>
