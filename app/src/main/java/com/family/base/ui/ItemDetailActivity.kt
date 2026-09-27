@@ -211,38 +211,42 @@ class ItemDetailActivity : AppCompatActivity() {
     // ============================================================
     private fun animateQuantity(target: Int) {
         quantityAnimator?.cancel()
-        if (target <= 0) {
-            binding.chipQuantityView.text = "📦 ×0"
-            return
-        }
-        quantityAnimator = ValueAnimator.ofInt(0, target).apply {
-            duration = 400L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { anim ->
-                val value = anim.animatedValue as Int
-                binding.chipQuantityView.text = "📦 ×$value"
+        binding.chipQuantityView.post {
+            if (target <= 0) {
+                binding.chipQuantityView.text = "📦 ×0"
+                return@post
             }
-            start()
+            quantityAnimator = ValueAnimator.ofInt(0, target).apply {
+                duration = 400L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    val value = anim.animatedValue as Int
+                    binding.chipQuantityView.text = "📦 ×$value"
+                }
+                start()
+            }
         }
     }
 
     private fun animatePrice(target: Double) {
         priceAnimator?.cancel()
-        if (target <= 0.0) return
-        val isWhole = target == target.toLong().toDouble()
-        priceAnimator = ValueAnimator.ofFloat(0f, target.toFloat()).apply {
-            duration = 600L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { anim ->
-                val value = anim.animatedValue as Float
-                val formatted = if (isWhole) {
-                    value.toLong().toString()
-                } else {
-                    String.format(Locale.getDefault(), "%.2f", value)
+        binding.tvPrice.post {
+            if (target <= 0.0) return@post
+            val isWhole = target == target.toLong().toDouble()
+            priceAnimator = ValueAnimator.ofFloat(0f, target.toFloat()).apply {
+                duration = 600L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    val value = anim.animatedValue as Float
+                    val formatted = if (isWhole) {
+                        value.toLong().toString()
+                    } else {
+                        String.format(Locale.getDefault(), "%.2f", value)
+                    }
+                    binding.tvPrice.text = "💰 $formatted ₽"
                 }
-                binding.tvPrice.text = "💰 $formatted ₽"
+                start()
             }
-            start()
         }
     }
 
@@ -261,22 +265,16 @@ class ItemDetailActivity : AppCompatActivity() {
         val now = System.currentTimeMillis()
         val added = item.addedDate
 
-        // Полный срок жизни: от addedDate до expiryDate
         val totalSpan = (expiry - added).coerceAtLeast(1L)
-        // Прошло с момента добавления
         val elapsed = (now - added).coerceAtLeast(0L)
-        // Процент "пройденного пути" (0 = только что добавили, 100 = срок наступил)
         val progressPercent = ((elapsed.toFloat() / totalSpan.toFloat()) * 100f)
             .coerceIn(0f, 100f)
             .toInt()
 
-        // Сколько дней осталось (может быть отрицательным)
         val daysLeft = TimeUnit.MILLISECONDS.toDays(expiry - now).toInt()
 
-        // Цвет и текст по состоянию
         val (color, label) = when {
             daysLeft < 0 -> {
-                // Просрочено
                 val overdue = -daysLeft
                 Pair(Color.parseColor("#F44336"), "⏰ Просрочен на $overdue дн. (100%)")
             }
