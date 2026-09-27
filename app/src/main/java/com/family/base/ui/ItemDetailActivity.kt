@@ -1,12 +1,14 @@
 package com.family.base.ui
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,6 +59,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var isEditMode = false
     private var currentParentId: String? = null
+
+    // ===== АНИМАЦИИ =====
+    private var quantityAnimator: ValueAnimator? = null
+    private var priceAnimator: ValueAnimator? = null
 
     // ===== ПОДТИП =====
     private var currentEditType: String = "thing"
@@ -186,7 +192,6 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
-        // ===== ТИП (edit) → пересобрать подтипы =====
         binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
             currentEditType = when (checkedId) {
                 R.id.rbTypeFood -> "food"
@@ -196,6 +201,47 @@ class ItemDetailActivity : AppCompatActivity() {
             }
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
+        }
+    }
+
+    // ============================================================
+    // АНИМАЦИИ СЧЁТЧИКОВ
+    // ============================================================
+    private fun animateQuantity(target: Int) {
+        quantityAnimator?.cancel()
+        if (target <= 0) {
+            binding.chipQuantityView.text = "📦 ×0"
+            return
+        }
+        quantityAnimator = ValueAnimator.ofInt(0, target).apply {
+            duration = 400L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { anim ->
+                val value = anim.animatedValue as Int
+                binding.chipQuantityView.text = "📦 ×$value"
+            }
+            start()
+        }
+    }
+
+    private fun animatePrice(target: Double) {
+        priceAnimator?.cancel()
+        if (target <= 0.0) return
+        // Если цена целая — анимируем целыми; если дробная — с копейками
+        val isWhole = target == target.toLong().toDouble()
+        priceAnimator = ValueAnimator.ofFloat(0f, target.toFloat()).apply {
+            duration = 600L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { anim ->
+                val value = anim.animatedValue as Float
+                val formatted = if (isWhole) {
+                    value.toLong().toString()
+                } else {
+                    String.format(Locale.getDefault(), "%.2f", value)
+                }
+                binding.tvPrice.text = "💰 $formatted ₽"
+            }
+            start()
         }
     }
 
@@ -349,8 +395,9 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.chipNameView.text = "📝 ${item.name}"
         binding.chipNameView.visibility = View.VISIBLE
 
-        binding.chipQuantityView.text = "📦 ×${item.quantity}"
+        // ===== Количество: анимируется =====
         binding.chipQuantityView.visibility = View.VISIBLE
+        animateQuantity(item.quantity)
 
         val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
         if (subtypeDisplay != null) {
@@ -374,9 +421,10 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipExpiryView.visibility = View.GONE
         }
 
+        // ===== Цена: анимируется =====
         if (item.price != null && item.price != 0.0) {
-            binding.tvPrice.text = "💰 ${item.price} ₽"
             binding.tvPrice.visibility = View.VISIBLE
+            animatePrice(item.price!!)
         } else {
             binding.tvPrice.visibility = View.GONE
         }
@@ -795,9 +843,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // СОХРАНЕНИЕ
-    // ============================================================
     private fun saveChanges() {
         val id = itemId ?: return
         lifecycleScope.launch {
@@ -814,7 +859,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
-                // Тип
                 val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
                     R.id.rbTypeFood -> "food"
                     R.id.rbTypeMedicine -> "medicine"
@@ -822,7 +866,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     else -> "other"
                 }
 
-                // Подтип (обязателен)
                 val newItemSubtype = selectedEditSubtype
                 if (newItemSubtype.isNullOrEmpty()) {
                     Toast.makeText(this@ItemDetailActivity, "Выберите подтип", Toast.LENGTH_SHORT).show()
@@ -834,9 +877,6 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 Logger.log(TAG, "Save: type=$newItemType, subtype=$newItemSubtype, hasNewImage=${newImageBytes != null}")
 
-                // ===== ВАЖНО: если фото новое, сбрасываем imageUrl =====
-                // Это заставит синхронизацию подхватить свежий локальный файл
-                // и перезалить его на Яндекс.Диск.
                 val newImageUrl = if (newImageBytes != null) null else item.imageUrl
 
                 val updated = item.copy(
@@ -848,23 +888,20 @@ class ItemDetailActivity : AppCompatActivity() {
                     price = price,
                     itemType = newItemType,
                     itemSubtype = newItemSubtype,
-                    imageUrl = newImageUrl,   // ← ИСПРАВЛЕНО
+                    imageUrl = newImageUrl,
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = "user"
                 )
                 updated.computeExpiryFields()
 
-                // Сохраняем фото локально (если новое)
                 newImageBytes?.let { bytes ->
                     withContext(Dispatchers.IO) {
                         ImageUtils.saveImageLocally(applicationContext, id, bytes)
                     }
                 }
 
-                // Обновляем через ViewModel — это поставит в очередь синхронизации
                 viewModel.updateItemFull(updated)
 
-                // История
                 withContext(Dispatchers.IO) {
                     db.historyDao().insertEntry(
                         HistoryEntry(
@@ -889,6 +926,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        quantityAnimator?.cancel()
+        priceAnimator?.cancel()
         Logger.log(TAG, "onDestroy called")
     }
 }
