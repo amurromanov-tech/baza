@@ -346,15 +346,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun fillViewFields(item: ItemEntity, path: String) {
-        // Название
         binding.chipNameView.text = "📝 ${item.name}"
         binding.chipNameView.visibility = View.VISIBLE
 
-        // Количество
         binding.chipQuantityView.text = "📦 ×${item.quantity}"
         binding.chipQuantityView.visibility = View.VISIBLE
 
-        // ===== ПОДТИП (чип) =====
         val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
         if (subtypeDisplay != null) {
             binding.chipSubtypeView.text = subtypeDisplay
@@ -363,7 +360,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipSubtypeView.visibility = View.GONE
         }
 
-        // Штрих-код
         if (!item.barcode.isNullOrEmpty()) {
             binding.chipBarcodeView.text = "🔢 ${item.barcode}"
             binding.chipBarcodeView.visibility = View.VISIBLE
@@ -371,7 +367,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipBarcodeView.visibility = View.GONE
         }
 
-        // Срок годности
         if (item.expiryDate != null) {
             binding.chipExpiryView.text = "⏰ до ${dateFormat.format(Date(item.expiryDate!!))}"
             binding.chipExpiryView.visibility = View.VISIBLE
@@ -379,7 +374,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipExpiryView.visibility = View.GONE
         }
 
-        // Цена
         if (item.price != null && item.price != 0.0) {
             binding.tvPrice.text = "💰 ${item.price} ₽"
             binding.tvPrice.visibility = View.VISIBLE
@@ -387,7 +381,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.tvPrice.visibility = View.GONE
         }
 
-        // Описание
         if (!item.description.isNullOrEmpty()) {
             binding.tvDescriptionView.text = item.description
             binding.tvDescriptionTitle.visibility = View.VISIBLE
@@ -397,11 +390,9 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.cardDescription.visibility = View.GONE
         }
 
-        // Путь
         binding.tvItemPath.text = path
         binding.btnGoToFolder.visibility = if (item.parentId != null) View.VISIBLE else View.GONE
 
-        // Даты
         binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
         binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
         if (item.expiryDate != null) {
@@ -415,15 +406,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun fillEditFields(item: ItemEntity, path: String) {
-        // Название
         binding.etName.setText(item.name)
         binding.etName.isEnabled = true
 
-        // Количество
         binding.etQuantity.setText(item.quantity.toString())
         binding.etQuantity.isEnabled = true
 
-        // Тип
         currentEditType = item.itemType ?: "thing"
         when (currentEditType) {
             "food" -> binding.rgTypeEdit.check(R.id.rbTypeFood)
@@ -432,7 +420,6 @@ class ItemDetailActivity : AppCompatActivity() {
             else -> binding.rgTypeEdit.check(R.id.rbTypeOther)
         }
 
-        // Подтип
         selectedEditSubtype = item.itemSubtype
         updateSubtypeDropdown(currentEditType)
         if (!item.itemSubtype.isNullOrEmpty()) {
@@ -442,29 +429,23 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
-        // Штрих-код
         binding.etBarcode.setText(item.barcode ?: "")
         binding.etBarcode.isEnabled = true
 
-        // Срок годности
         item.expiryDate?.let { binding.etExpiry.setText(dateFormat.format(Date(it))) }
         binding.etExpiry.isEnabled = true
         binding.etExpiry.setOnClickListener { showDatePickerDialog() }
 
-        // Цена
         binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
 
-        // Описание
         binding.etDescription.setText(item.description ?: "")
         binding.etDescription.isEnabled = true
         binding.tvDescriptionTitle.visibility = View.VISIBLE
         binding.cardDescription.visibility = View.VISIBLE
 
-        // Путь
         binding.tvItemPath.text = path
         binding.btnGoToFolder.visibility = View.GONE
 
-        // Даты
         binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
         binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
         if (item.expiryDate != null) {
@@ -851,7 +832,12 @@ class ItemDetailActivity : AppCompatActivity() {
                 }
                 binding.tilSubtypeEdit.error = null
 
-                Logger.log(TAG, "Save: type=$newItemType, subtype=$newItemSubtype")
+                Logger.log(TAG, "Save: type=$newItemType, subtype=$newItemSubtype, hasNewImage=${newImageBytes != null}")
+
+                // ===== ВАЖНО: если фото новое, сбрасываем imageUrl =====
+                // Это заставит синхронизацию подхватить свежий локальный файл
+                // и перезалить его на Яндекс.Диск.
+                val newImageUrl = if (newImageBytes != null) null else item.imageUrl
 
                 val updated = item.copy(
                     name = name,
@@ -862,14 +848,24 @@ class ItemDetailActivity : AppCompatActivity() {
                     price = price,
                     itemType = newItemType,
                     itemSubtype = newItemSubtype,
+                    imageUrl = newImageUrl,   // ← ИСПРАВЛЕНО
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = "user"
                 )
                 updated.computeExpiryFields()
 
+                // Сохраняем фото локально (если новое)
+                newImageBytes?.let { bytes ->
+                    withContext(Dispatchers.IO) {
+                        ImageUtils.saveImageLocally(applicationContext, id, bytes)
+                    }
+                }
+
+                // Обновляем через ViewModel — это поставит в очередь синхронизации
+                viewModel.updateItemFull(updated)
+
+                // История
                 withContext(Dispatchers.IO) {
-                    db.itemDao().updateItem(updated)
-                    newImageBytes?.let { bytes -> ImageUtils.saveImageLocally(applicationContext, id, bytes) }
                     db.historyDao().insertEntry(
                         HistoryEntry(
                             itemId = id, action = "update",
