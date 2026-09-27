@@ -50,10 +50,23 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
+        observeSyncResult()
         setupListeners()
         showCurrentVersion()
 
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
+    }
+
+    // ============================================================
+    // НАБЛЮДЕНИЕ ЗА РЕЗУЛЬТАТОМ СИНХРОНИЗАЦИИ
+    // ============================================================
+    private fun observeSyncResult() {
+        viewModel.syncResultMessage.observe(this) { message ->
+            if (!message.isNullOrEmpty()) {
+                Logger.log(TAG, "Sync result: $message")
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun showCurrentVersion() {
@@ -71,7 +84,6 @@ class SettingsActivity : AppCompatActivity() {
         // ===== СИНХРОНИЗАЦИЯ =====
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
-            Toast.makeText(this, "Синхронизация запущена...", Toast.LENGTH_SHORT).show()
             viewModel.forceSync()
         }
 
