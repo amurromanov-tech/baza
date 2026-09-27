@@ -220,7 +220,6 @@ class AddItemActivity : AppCompatActivity() {
     // ПОДТИПЫ: ВЫПАДАЮЩИЕ СПИСКИ
     // ============================================================
     private fun initSubtypeDropdowns() {
-        // Настраиваем оба AutoCompleteTextView
         setupDropdown(binding.autoCompleteSubtypeAuto, isAuto = true)
         setupDropdown(binding.autoCompleteSubtypeManual, isAuto = false)
     }
@@ -357,7 +356,6 @@ class AddItemActivity : AppCompatActivity() {
             "thing" -> binding.rgAutoType.check(R.id.rbAutoThing)
             else -> binding.rgAutoType.check(R.id.rbAutoOther)
         }
-        // после смены типа — пересобрать подтипы
         selectedAutoSubtype = null
         updateSubtypesForAuto(type)
     }
@@ -481,7 +479,6 @@ class AddItemActivity : AppCompatActivity() {
 
         if (itemSubtype.isNullOrEmpty()) {
             Toast.makeText(this, "Выберите подтип", Toast.LENGTH_SHORT).show()
-            // Показать ошибку на поле
             if (isAutoMode) {
                 binding.tilAutoSubtype.error = "Выберите подтип"
                 binding.tilAutoSubtype.requestFocus()
@@ -496,10 +493,15 @@ class AddItemActivity : AppCompatActivity() {
         binding.tilAutoSubtype.error = null
         binding.tilManualSubtype.error = null
 
-        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype")
+        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype, hasImage=${imageBytes != null}")
 
+        val newItemId = UUID.randomUUID().toString()
+
+        // ===== ВАЖНО: imageUrl = null, если фото есть =====
+        // Репозиторий сам проставит "images/<itemId>.jpg" после успешной загрузки на Диск.
+        // Это гарантирует, что uploadUnsyncedImages и uploadItemImageIfExists подхватят файл.
         val item = ItemEntity(
-            id = UUID.randomUUID().toString(),
+            id = newItemId,
             name = name,
             parentId = parentFolderId,
             quantity = quantity,
@@ -510,7 +512,7 @@ class AddItemActivity : AppCompatActivity() {
             addedBy = "user",
             itemType = itemType,
             itemSubtype = itemSubtype,
-            imageUrl = if (imageBytes != null) "${UUID.randomUUID()}.jpg" else null
+            imageUrl = null  // ← ИСПРАВЛЕНО: было "${UUID.randomUUID()}.jpg"
         )
         item.computeExpiryFields()
 
