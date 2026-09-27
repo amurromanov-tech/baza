@@ -5,6 +5,7 @@ import android.animation.ValueAnimator
 import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
@@ -39,6 +40,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 class ItemDetailActivity : AppCompatActivity() {
 
@@ -227,7 +229,6 @@ class ItemDetailActivity : AppCompatActivity() {
     private fun animatePrice(target: Double) {
         priceAnimator?.cancel()
         if (target <= 0.0) return
-        // Если цена целая — анимируем целыми; если дробная — с копейками
         val isWhole = target == target.toLong().toDouble()
         priceAnimator = ValueAnimator.ofFloat(0f, target.toFloat()).apply {
             duration = 600L
@@ -243,6 +244,52 @@ class ItemDetailActivity : AppCompatActivity() {
             }
             start()
         }
+    }
+
+    // ============================================================
+    // ПРОГРЕСС-БАР СРОКА ГОДНОСТИ
+    // ============================================================
+    private fun updateExpiryProgress(item: ItemEntity) {
+        val expiry = item.expiryDate
+        if (expiry == null) {
+            binding.expiryProgressBlock.visibility = View.GONE
+            return
+        }
+
+        binding.expiryProgressBlock.visibility = View.VISIBLE
+
+        val now = System.currentTimeMillis()
+        val added = item.addedDate
+
+        // Полный срок жизни: от addedDate до expiryDate
+        val totalSpan = (expiry - added).coerceAtLeast(1L)
+        // Прошло с момента добавления
+        val elapsed = (now - added).coerceAtLeast(0L)
+        // Процент "пройденного пути" (0 = только что добавили, 100 = срок наступил)
+        val progressPercent = ((elapsed.toFloat() / totalSpan.toFloat()) * 100f)
+            .coerceIn(0f, 100f)
+            .toInt()
+
+        // Сколько дней осталось (может быть отрицательным)
+        val daysLeft = TimeUnit.MILLISECONDS.toDays(expiry - now).toInt()
+
+        // Цвет и текст по состоянию
+        val (color, label) = when {
+            daysLeft < 0 -> {
+                // Просрочено
+                val overdue = -daysLeft
+                Pair(Color.parseColor("#F44336"), "⏰ Просрочен на $overdue дн. (100%)")
+            }
+            daysLeft == 0 -> Pair(Color.parseColor("#F44336"), "⏰ Истекает сегодня!")
+            daysLeft in 1..3 -> Pair(Color.parseColor("#FF9800"), "⚠️ Осталось $daysLeft дн. ($progressPercent%)")
+            daysLeft in 4..14 -> Pair(Color.parseColor("#FFC107"), "⏳ Осталось $daysLeft дн. ($progressPercent%)")
+            else -> Pair(Color.parseColor("#4CAF50"), "✅ Осталось $daysLeft дн. ($progressPercent%)")
+        }
+
+        binding.expiryProgress.setIndicatorColor(color)
+        binding.expiryProgress.setProgressCompat(progressPercent, true)
+        binding.tvExpiryProgressLabel.text = label
+        binding.tvExpiryProgressLabel.setTextColor(color)
     }
 
     // ============================================================
@@ -293,6 +340,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     showViewMode(true)
                     fillViewFields(item, path)
                     applyChips(item)
+                    updateExpiryProgress(item)
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -338,6 +386,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     showViewMode(false)
                     fillEditFields(item, path)
                     applyChips(item)
+                    updateExpiryProgress(item)
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -395,7 +444,6 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.chipNameView.text = "📝 ${item.name}"
         binding.chipNameView.visibility = View.VISIBLE
 
-        // ===== Количество: анимируется =====
         binding.chipQuantityView.visibility = View.VISIBLE
         animateQuantity(item.quantity)
 
@@ -421,7 +469,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipExpiryView.visibility = View.GONE
         }
 
-        // ===== Цена: анимируется =====
         if (item.price != null && item.price != 0.0) {
             binding.tvPrice.visibility = View.VISIBLE
             animatePrice(item.price!!)
@@ -588,6 +635,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.btnGoToFolder.visibility = View.GONE
                     binding.tvDateExpiryLabel.visibility = View.GONE
                     binding.tvDateExpiry.visibility = View.GONE
+                    binding.expiryProgressBlock.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) "История пуста"
                     else history.joinToString("\n\n") { entry ->
