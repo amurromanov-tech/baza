@@ -7,12 +7,19 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
     companion object {
         private var instance: BaseApplication? = null
+
+        // ============================================================
+        // ГЛОБАЛЬНЫЙ VIEWMODEL — живёт всё время жизни приложения
+        // ============================================================
+        lateinit var mainViewModel: MainViewModel
+            private set
 
         // ============================================================
         // НАСТРОЙКИ ТЕМЫ (SharedPreferences)
@@ -28,26 +35,16 @@ class BaseApplication : Application(), ImageLoaderFactory {
             return instance?.applicationContext ?: throw IllegalStateException("Application not initialized")
         }
 
-        /**
-         * Читает сохранённый режим темы из SharedPreferences.
-         * Возвращает "light", "dark" или "system" (по умолчанию — "system").
-         */
         fun getSavedThemeMode(context: Context): String {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return prefs.getString(KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM
         }
 
-        /**
-         * Сохраняет режим темы в SharedPreferences.
-         */
         fun saveThemeMode(context: Context, mode: String) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().putString(KEY_THEME_MODE, mode).apply()
         }
 
-        /**
-         * Преобразует строку режима в константу AppCompatDelegate.
-         */
         fun toNightMode(mode: String): Int {
             return when (mode) {
                 THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
@@ -56,9 +53,6 @@ class BaseApplication : Application(), ImageLoaderFactory {
             }
         }
 
-        /**
-         * Применяет сохранённую тему. Вызывается из onCreate() и из AppSettingsActivity.
-         */
         fun applySavedTheme(context: Context) {
             val mode = getSavedThemeMode(context)
             val nightMode = toNightMode(mode)
@@ -71,11 +65,14 @@ class BaseApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         instance = this
 
-        // Инициализируем Logger
         Logger.init(this)
 
-        // ВАЖНО: применяем сохранённую тему до создания UI
+        // Применяем сохранённую тему до создания UI
         applySavedTheme(this)
+
+        // Создаём глобальный MainViewModel — живёт всё время жизни приложения
+        mainViewModel = MainViewModel(this)
+        Logger.log("BaseApplication", "Global MainViewModel initialized")
     }
 
     override fun newImageLoader(): ImageLoader {
@@ -88,7 +85,7 @@ class BaseApplication : Application(), ImageLoaderFactory {
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(100 * 1024 * 1024) // 100 MB
+                    .maxSizeBytes(100 * 1024 * 1024)
                     .build()
             }
             .build()
