@@ -9,7 +9,12 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.AlphaAnimation
+import android.view.animation.AnimationSet
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.ScaleAnimation
+import android.view.animation.TranslateAnimation
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -67,6 +72,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var currentEditType: String = "thing"
     private var selectedEditSubtype: String? = null
+
+    // ===== АНИМАЦИЯ ПОЯВЛЕНИЯ =====
+    private val APPEAR_DURATION = 250L
+    private val APPEAR_STAGGER = 50L
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -201,6 +210,44 @@ class ItemDetailActivity : AppCompatActivity() {
             }
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
+        }
+    }
+
+    // ============================================================
+    // АНИМАЦИЯ ПОЯВЛЕНИЯ КОНТЕНТА
+    // ============================================================
+    private fun animateContentAppearance() {
+        val views = listOf(
+            binding.chipGroupStatus,
+            binding.contentContainer.getChildAt(1),  // SectionTitle "Местонахождение"
+            binding.contentContainer.getChildAt(2),  // Card местонахождение
+            binding.contentContainer.getChildAt(3),  // SectionTitle "Основное"
+            binding.contentContainer.getChildAt(4),  // Card основное
+            binding.contentContainer.getChildAt(5),  // SectionTitle "Детали"
+            binding.contentContainer.getChildAt(6),  // Card детали
+            binding.contentContainer.getChildAt(7),  // SectionTitle "Даты"
+            binding.contentContainer.getChildAt(8),  // Card даты
+            binding.contentContainer.getChildAt(9),  // SectionTitle "Описание"
+            binding.contentContainer.getChildAt(10), // Card описание
+            binding.contentContainer.getChildAt(11), // Card займ
+            binding.contentContainer.getChildAt(12), // editButtonsLayout
+            binding.contentContainer.getChildAt(13), // btnAddPhoto
+            binding.contentContainer.getChildAt(14), // SectionTitle "Действия"
+            binding.contentContainer.getChildAt(15), // Ряд 1 действий
+            binding.contentContainer.getChildAt(16)  // Ряд 2 действий
+        )
+
+        views.forEachIndexed { index, view ->
+            view.alpha = 0f
+            view.translationY = 40f
+
+            view.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(index * APPEAR_STAGGER)
+                .setDuration(APPEAR_DURATION)
+                .setInterpolator(AccelerateDecelerateInterpolator())
+                .start()
         }
     }
 
@@ -359,6 +406,9 @@ class ItemDetailActivity : AppCompatActivity() {
                             binding.tvLentNote.text = "Заметка: ${item.lentNote}"
                         } else binding.tvLentNote.visibility = View.GONE
                     } else binding.cardLentInfo.visibility = View.GONE
+
+                    // Запускаем анимацию появления
+                    animateContentAppearance()
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing details", e) }
         }
