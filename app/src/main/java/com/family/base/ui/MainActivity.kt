@@ -3,6 +3,7 @@ package com.family.base.ui
 import android.content.Intent
 import android.os.Bundle
 import android.provider.MediaStore
+import android.view.View
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
 import android.view.animation.RotateAnimation
@@ -25,10 +26,13 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityMainBinding
 import com.family.base.ui.adapter.CatalogAdapter
 import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.ui.viewmodel.SyncPhase
+import com.family.base.ui.viewmodel.SyncProgress
 import com.family.base.util.AppLifecycleObserver
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,6 +51,9 @@ class MainActivity : AppCompatActivity() {
 
     private var newFolderImageBytes: ByteArray? = null
     private var currentFolderForImage: FolderEntity? = null
+
+    // ===== Job скрытия плашки =====
+    private var hideProgressJob: Job? = null
 
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -195,6 +202,15 @@ class MainActivity : AppCompatActivity() {
         viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
         viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
 
+        // ===== НАБЛЮДЕНИЕ ЗА ПРОГРЕССОМ СИНХРОНИЗАЦИИ =====
+        viewModel.syncProgress.observe(this) { progress ->
+            if (progress != null) {
+                updateSyncProgressCard(progress)
+            } else {
+                hideSyncProgressCard()
+            }
+        }
+
         binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
         binding.btnAddItem.setOnClickListener {
             val intent = Intent(this, AddItemActivity::class.java)
@@ -233,8 +249,84 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopSyncAnimation()
+        hideProgressJob?.cancel()
     }
 
+    // ============================================================
+    // ПЛАШКА ПРОГРЕССА СИНХРОНИЗАЦИИ
+    // ============================================================
+    private fun updateSyncProgressCard(progress: SyncProgress) {
+        hideProgressJob?.cancel()
+
+        // ===== Иконка фазы =====
+        val icon = when (progress.phase) {
+            SyncPhase.SENDING -> "📤"
+            SyncPhase.DOWNLOADING -> "📥"
+            SyncPhase.UPLOADING_PHOTOS -> "📷"
+            SyncPhase.DOWNLOADING_PHOTOS -> "🖼️"
+            SyncPhase.DONE -> "✅"
+        }
+        binding.tvSyncPhaseIcon.text = icon
+
+        // ===== Текст фазы + имя объекта =====
+        binding.tvSyncPhaseText.text = progress.message
+
+        // ===== Счётчик N / M =====
+        if (progress.total > 0) {
+            binding.tvSyncCounter.text = "${progress.current} / ${progress.total}"
+            binding.tvSyncCounter.visibility = View.VISIBLE
+        } else {
+            binding.tvSyncCounter.visibility = View.GONE
+        }
+
+        // ===== Прогресс-бар =====
+        if (progress.total > 0) {
+            binding.syncProgressBar.max = progress.total
+            binding.syncProgressBar.setProgressCompat(progress.current, true)
+        } else {
+            // «Неопределённый» прогресс (для фаз авторизации/слияния)
+            binding.syncProgressBar.max = 100
+            binding.syncProgressBar.setProgressCompat(0, false)
+        }
+
+        // ===== Показать плашку (если скрыта) =====
+        if (binding.syncProgressCard.visibility != View.VISIBLE) {
+            binding.syncProgressCard.alpha = 0f
+            binding.syncProgressCard.translationY = 80f
+            binding.syncProgressCard.visibility = View.VISIBLE
+            binding.syncProgressCard.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(250)
+                .start()
+        }
+
+        // ===== Если DONE — скрыть через 2 сек =====
+        if (progress.phase == SyncPhase.DONE) {
+            hideProgressJob = lifecycleScope.launch {
+                delay(2000)
+                hideSyncProgressCard()
+            }
+        }
+    }
+
+    private fun hideSyncProgressCard() {
+        if (binding.syncProgressCard.visibility != View.VISIBLE) return
+        binding.syncProgressCard.animate()
+            .alpha(0f)
+            .translationY(80f)
+            .setDuration(250)
+            .withEndAction {
+                binding.syncProgressCard.visibility = View.GONE
+                binding.syncProgressCard.alpha = 1f
+                binding.syncProgressCard.translationY = 0f
+            }
+            .start()
+    }
+
+    // ============================================================
+    // НАВИГАЦИЯ
+    // ============================================================
     private fun updatePathTitle() {
         pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
     }
@@ -428,7 +520,6 @@ class MainActivity : AppCompatActivity() {
                 val (itemCount, folderCount) = stats
 
                 if (itemCount == 0 && folderCount == 0) {
-                    // Папка полностью пуста — простое подтверждение
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Удалить папку «${folder.name}»?")
                         .setPositiveButton("Да") { _, _ ->
@@ -438,7 +529,6 @@ class MainActivity : AppCompatActivity() {
                         .setNegativeButton("Нет", null)
                         .show()
                 } else {
-                    // Папка не пуста — предупреждение о переносе в корень
                     val message = buildString {
                         append("Папка «${folder.name}» не пуста:\n\n")
                         if (itemCount > 0) append("• Предметов: $itemCount\n")
