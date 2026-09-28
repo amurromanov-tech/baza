@@ -14,8 +14,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
@@ -51,13 +51,11 @@ class AddItemActivity : AppCompatActivity() {
 
     private var photoUri: Uri? = null
 
-    // ===== ТЕКУЩИЕ ПОДТИПЫ =====
     private var currentAutoType: String = "thing"
     private var currentManualType: String = "thing"
     private var selectedAutoSubtype: String? = null
     private var selectedManualSubtype: String? = null
 
-    // ===== ВЫБОР ИЗ ГАЛЕРЕИ =====
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -74,7 +72,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ФОТО С КАМЕРЫ =====
     private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
             val uri = photoUri ?: return@registerForActivityResult
@@ -94,7 +91,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ===== СКАНЕР ШТРИХ-КОДА =====
     private val barcodeScannerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -130,7 +126,7 @@ class AddItemActivity : AppCompatActivity() {
         try {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
-            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            viewModel = BaseApplication.mainViewModel
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             finish()
@@ -149,7 +145,6 @@ class AddItemActivity : AppCompatActivity() {
         updateSubtypesForAuto(currentAutoType)
         updateSubtypesForManual(currentManualType)
 
-        // ===== ЕСЛИ ПРИШЁЛ КОД — AUTO-РЕЖИМ + ПОИСК =====
         incomingBarcode?.let { code ->
             binding.modeSelection.visibility = View.GONE
             binding.autoModeLayout.visibility = View.VISIBLE
@@ -191,7 +186,6 @@ class AddItemActivity : AppCompatActivity() {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
 
-        // ===== ТИП AUTO → пересобрать подтипы =====
         binding.rgAutoType.setOnCheckedChangeListener { _, checkedId ->
             currentAutoType = when (checkedId) {
                 R.id.rbAutoFood -> "food"
@@ -203,7 +197,6 @@ class AddItemActivity : AppCompatActivity() {
             updateSubtypesForAuto(currentAutoType)
         }
 
-        // ===== ТИП MANUAL → пересобрать подтипы =====
         binding.rgType.setOnCheckedChangeListener { _, checkedId ->
             currentManualType = when (checkedId) {
                 R.id.rbFood -> "food"
@@ -216,9 +209,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПОДТИПЫ: ВЫПАДАЮЩИЕ СПИСКИ
-    // ============================================================
     private fun initSubtypeDropdowns() {
         setupDropdown(binding.autoCompleteSubtypeAuto, isAuto = true)
         setupDropdown(binding.autoCompleteSubtypeManual, isAuto = false)
@@ -265,9 +255,6 @@ class AddItemActivity : AppCompatActivity() {
         binding.autoCompleteSubtypeManual.hint = "Выберите подтип"
     }
 
-    // ============================================================
-    // ПОИСК ТОВАРА + АВТО-ВЫБОР ТИПА
-    // ============================================================
     private fun lookupProduct(barcode: String) {
         Toast.makeText(this, "Поиск товара...", Toast.LENGTH_SHORT).show()
         binding.etAutoName.isEnabled = false
@@ -434,9 +421,6 @@ class AddItemActivity : AppCompatActivity() {
         ).show()
     }
 
-    // ============================================================
-    // СОХРАНЕНИЕ
-    // ============================================================
     private fun saveItem() {
         val isAutoMode = binding.autoModeLayout.visibility == View.VISIBLE
 
@@ -471,10 +455,7 @@ class AddItemActivity : AppCompatActivity() {
             barcode
         }
 
-        // ===== ТИП =====
         val itemType = if (isAutoMode) currentAutoType else currentManualType
-
-        // ===== ПОДТИП (ОБЯЗАТЕЛЬНО) =====
         val itemSubtype = if (isAutoMode) selectedAutoSubtype else selectedManualSubtype
 
         if (itemSubtype.isNullOrEmpty()) {
@@ -489,7 +470,6 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
-        // Сбрасываем ошибку, если всё ок
         binding.tilAutoSubtype.error = null
         binding.tilManualSubtype.error = null
 
@@ -497,9 +477,6 @@ class AddItemActivity : AppCompatActivity() {
 
         val newItemId = UUID.randomUUID().toString()
 
-        // ===== ВАЖНО: imageUrl = null, если фото есть =====
-        // Репозиторий сам проставит "images/<itemId>.jpg" после успешной загрузки на Диск.
-        // Это гарантирует, что uploadUnsyncedImages и uploadItemImageIfExists подхватят файл.
         val item = ItemEntity(
             id = newItemId,
             name = name,
@@ -512,7 +489,7 @@ class AddItemActivity : AppCompatActivity() {
             addedBy = "user",
             itemType = itemType,
             itemSubtype = itemSubtype,
-            imageUrl = null  // ← ИСПРАВЛЕНО: было "${UUID.randomUUID()}.jpg"
+            imageUrl = null
         )
         item.computeExpiryFields()
 
