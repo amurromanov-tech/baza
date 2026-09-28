@@ -18,7 +18,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.LiveData
 
@@ -38,7 +37,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val currentPath = MutableLiveData<String>()
     val syncStatus = MutableLiveData<SyncStatus>(SyncStatus.SYNCED)
 
-    // ===== ДЛЯ ОТОБРАЖЕНИЯ РЕЗУЛЬТАТА СИНХРОНИЗАЦИИ =====
     val syncResultMessage = MutableLiveData<String?>()
 
     private var currentFolderId: String? = null
@@ -55,10 +53,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ===== MUTEX ДЛЯ ЗАЩИТЫ ОТ ПАРАЛЛЕЛЬНЫХ СИНКОВ =====
     private val syncMutex = Mutex()
 
+    // ===== APPLICATION-SCOPE: живёт всё время жизни приложения, НЕ отменяется при onCleared =====
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     // ===== Job для принудительной синхронизации (кнопка) =====
     private var forceSyncJob: Job? = null
 
-    // ===== Флаг: была ли синхронизация запущена кнопкой (для показа результата) =====
     private var forceSyncRequested = false
 
     init {
@@ -263,17 +263,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Полная синхронизация с Яндекс.Диском.
-     * Порядок:
-     *   1. Отправить локальные изменения из очереди (processPendingChanges).
-     *   2. Скачать изменения с Диска и слить (mergeData).
-     *   3. Загрузить локальные фото, которых нет на Диске.
-     *   4. Скачать фото с Диска, которых нет локально.
-     *
-     * Защищено Mutex — параллельные вызовы игнорируются.
+     * ВАЖНО: запускается в applicationScope, чтобы пережить onCleared() активити.
+     * Mutex защищает от параллельных синков.
      */
     fun syncWithDisk() {
-        viewModelScope.launch {
-            // Пытаемся захватить mutex без ожидания — если уже идёт синк, выходим
+        applicationScope.launch {
             if (!syncMutex.tryLock()) {
                 Logger.log(TAG, "syncWithDisk: already running, skipping")
                 return@launch
@@ -314,7 +308,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncImages()
                 syncFolderImages()
 
-                // ===== Итоговый статус =====
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     syncStatus.postValue(SyncStatus.PENDING)
@@ -327,7 +320,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val elapsed = System.currentTimeMillis() - startedAt
                 Logger.log(TAG, "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount")
 
-                // Если синк был запущен кнопкой — показываем отчёт
                 if (forceSyncRequested) {
                     val msg = buildString {
                         append("✅ Синхронизация завершена\n")
@@ -353,8 +345,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun notifySyncResult(message: String) {
         syncResultMessage.postValue(message)
-        // Сбрасываем сообщение, чтобы повторное одинаковое сработало
-        viewModelScope.launch {
+        applicationScope.launch {
             delay(2000)
             syncResultMessage.postValue(null)
         }
@@ -517,11 +508,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Внутренняя обработка очереди. Возвращает количество успешно отправленных записей.
-     * Удаляет из очереди каждую успешную запись отдельно.
-     * При ошибке на одной записи — продолжает со следующей.
-     */
     private suspend fun processPendingChangesInternal(): Int {
         val pending = syncQueueDao.getAllPending()
         if (pending.isEmpty()) return 0
@@ -538,7 +524,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 successCount++
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to process pending entry ${entry.id} (${entry.entityType}/${entry.action}): ${e.message}")
-                // Не удаляем из очереди — попробуем в следующий раз
             }
         }
         return successCount
@@ -564,7 +549,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             "update" -> db.folderDao().getFolderById(entry.entityId)?.let {
-                // Обновляем timestamp перед отправкой, чтобы победить в конфликте
                 val fresh = it.copy(updatedAt = System.currentTimeMillis())
                 db.folderDao().updateFolder(fresh)
                 repository.updateFolderOnDisk(fresh)
@@ -580,7 +564,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 uploadItemImageIfExists(it)
             }
             "update" -> db.itemDao().getItemById(entry.entityId)?.let {
-                // Обновляем timestamp перед отправкой, чтобы победить в конфликте
                 val fresh = it.copy(updatedDate = System.currentTimeMillis())
                 db.itemDao().updateItem(fresh)
                 repository.updateItemOnDisk(fresh)
@@ -931,9 +914,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Полное обновление предмета — используется из ItemDetailActivity.
-     */
     fun updateItemFull(item: ItemEntity) {
         viewModelScope.launch {
             try {
@@ -979,7 +959,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         forceSyncRequested = true
         syncResultMessage.postValue("⏳ Синхронизация…")
-        forceSyncJob = viewModelScope.launch { syncWithDisk() }
+        forceSyncJob = applicationScope.launch { syncWithDisk() }
     }
 
     // ============================================================
