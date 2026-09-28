@@ -17,9 +17,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import coil.load
+import com.family.base.BaseApplication
 import com.family.base.Config
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
@@ -62,11 +62,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private var isEditMode = false
     private var currentParentId: String? = null
 
-    // ===== АНИМАЦИИ =====
     private var quantityAnimator: ValueAnimator? = null
     private var priceAnimator: ValueAnimator? = null
 
-    // ===== ПОДТИП =====
     private var currentEditType: String = "thing"
     private var selectedEditSubtype: String? = null
 
@@ -136,7 +134,7 @@ class ItemDetailActivity : AppCompatActivity() {
         try {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
-            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            viewModel = BaseApplication.mainViewModel
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             return
