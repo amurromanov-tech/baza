@@ -187,10 +187,6 @@ interface ItemDao {
     """)
     suspend fun getItemsWithoutDescription(): List<ItemEntity>
 
-    /**
-     * Без типа: только NULL или пустая строка.
-     * «thing», «other», «food», «medicine» — все считаются указанными.
-     */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -269,9 +265,6 @@ interface ItemDao {
     """)
     suspend fun countItemsWithoutDescription(): Int
 
-    /**
-     * Без типа: только NULL или пустая строка.
-     */
     @Query("""
         SELECT COUNT(*) FROM items 
         WHERE isArchived = 0 
@@ -311,6 +304,40 @@ interface ItemDao {
           )
     """)
     suspend fun countDuplicateBarcodeItems(): Int
+
+    // ============================================================
+    // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ПРЕДМЕТЫ
+    // ============================================================
+
+    /**
+     * Перенос всех предметов (включая архивные) из папки в корень.
+     * Используется при удалении папки.
+     */
+    @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId")
+    suspend fun moveItemsToRoot(folderId: String)
+
+    /**
+     * Найти активные предметы, чей parentId ссылается на несуществующую папку.
+     */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND parentId IS NOT NULL 
+          AND parentId NOT IN (SELECT id FROM folders)
+    """)
+    suspend fun getOrphanItems(): List<ItemEntity>
+
+    /**
+     * Ремонт: перенести все «осиротевшие» активные предметы в корень.
+     */
+    @Query("""
+        UPDATE items 
+        SET parentId = NULL 
+        WHERE isArchived = 0 
+          AND parentId IS NOT NULL 
+          AND parentId NOT IN (SELECT id FROM folders)
+    """)
+    suspend fun fixOrphanItems()
 }
 
 // ============================================================
