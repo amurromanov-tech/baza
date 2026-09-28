@@ -21,6 +21,24 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.LiveData
 
+// ============================================================
+// МОДЕЛЬ ПРОГРЕССА СИНХРОНИЗАЦИИ
+// ============================================================
+enum class SyncPhase {
+    SENDING,             // 📤 Отправка изменений
+    DOWNLOADING,         // 📥 Получение данных с Диска
+    UPLOADING_PHOTOS,    // 📷 Загрузка фото
+    DOWNLOADING_PHOTOS,  // 🖼️ Скачивание фото
+    DONE                 // ✅ Готово
+}
+
+data class SyncProgress(
+    val phase: SyncPhase,
+    val current: Int,
+    val total: Int,
+    val message: String
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchQuery = MutableLiveData<String?>(null)
     val searchQueryLiveData: LiveData<String?> = _searchQuery
@@ -38,6 +56,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val syncStatus = MutableLiveData<SyncStatus>(SyncStatus.SYNCED)
 
     val syncResultMessage = MutableLiveData<String?>()
+
+    // ===== ПРОГРЕСС СИНХРОНИЗАЦИИ =====
+    val syncProgress = MutableLiveData<SyncProgress?>(null)
 
     private var currentFolderId: String? = null
     private val currentUser: String
@@ -87,7 +108,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
         }
 
-        // ===== РЕМОНТ: осиротевшие предметы =====
         try {
             val orphans = db.itemDao().getOrphanItems()
             if (orphans.isNotEmpty()) {
@@ -287,6 +307,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var downloadedCount = 0
 
             try {
+                // ===== ФАЗА 0: АВТОРИЗАЦИЯ =====
+                syncProgress.postValue(SyncProgress(SyncPhase.SENDING, 0, 1, "Проверка авторизации…"))
+
                 if (!ensureValidToken()) {
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     notifySyncResult("Не удалось авторизоваться")
@@ -301,24 +324,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
+                // ===== ФАЗА 1: ОТПРАВКА ЛОКАЛЬНЫХ ИЗМЕНЕНИЙ =====
                 uploadedCount = processPendingChangesInternal()
 
+                // ===== ФАЗА 2: СКАЧИВАНИЕ ДАННЫХ С ДИСКА =====
+                syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
+                syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
                 mergeData(diskFolders, diskItems)
                 downloadedCount = diskFolders.size + diskItems.size
 
+                // ===== ФАЗА 3: ЗАГРУЗКА ЛОКАЛЬНЫХ ФОТО =====
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
 
+                // ===== ФАЗА 4: СКАЧИВАНИЕ ФОТО =====
                 syncImages()
                 syncFolderImages()
 
+                // ===== ФАЗА 5: ГОТОВО =====
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     syncStatus.postValue(SyncStatus.PENDING)
                 } else {
                     syncStatus.postValue(SyncStatus.SYNCED)
                 }
+
+                syncProgress.postValue(
+                    SyncProgress(
+                        SyncPhase.DONE,
+                        uploadedCount + downloadedCount,
+                        uploadedCount + downloadedCount,
+                        "Готово: отправлено $uploadedCount, получено $downloadedCount"
+                    )
+                )
 
                 loadContents()
 
@@ -342,8 +381,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     notifySyncResult("❌ Ошибка синхронизации: ${e.message}")
                     forceSyncRequested = false
                 }
+                syncProgress.postValue(null)
             } finally {
                 syncMutex.unlock()
+                // Плашка скроется сама через 2 сек в MainActivity
             }
         }
     }
@@ -359,24 +400,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun uploadUnsyncedImages() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
+        val itemsToUpload = allItems.filter { item ->
+            val f = ImageUtils.getLocalImageFile(appContext, item.id)
+            f != null && f.exists() && item.imageUrl.isNullOrEmpty()
+        }
+
+        if (itemsToUpload.isEmpty()) {
+            Logger.log(TAG, "No images to upload")
+            return
+        }
+
         var uploadedCount = 0
+        val total = itemsToUpload.size
 
-        allItems.forEach { item ->
+        itemsToUpload.forEachIndexed { index, item ->
+            syncProgress.postValue(
+                SyncProgress(
+                    SyncPhase.UPLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Загрузка фото: ${item.name}"
+                )
+            )
+
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-            if (localFile == null || !localFile.exists()) return@forEach
+            if (localFile == null || !localFile.exists()) return@forEachIndexed
 
-            if (item.imageUrl.isNullOrEmpty()) {
-                try {
-                    val bytes = localFile.readBytes()
-                    val success = repository.uploadItemImage(item.id, bytes)
-                    if (success) {
-                        val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                        withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                        uploadedCount++
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
+            try {
+                val bytes = localFile.readBytes()
+                val success = repository.uploadItemImage(item.id, bytes)
+                if (success) {
+                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                    uploadedCount++
                 }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
         }
         Logger.log(TAG, "Uploaded $uploadedCount images")
@@ -385,27 +444,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun uploadUnsyncedFolderImages() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+        val foldersToUpload = allFolders.filter { folder ->
+            val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+            f != null && f.exists() && f.length() > 0L && folder.iconUrl.isNullOrEmpty()
+        }
+
+        if (foldersToUpload.isEmpty()) {
+            Logger.log(TAG, "No folder images to upload")
+            return
+        }
+
         var uploadedCount = 0
+        val total = foldersToUpload.size
 
-        allFolders.forEach { folder ->
+        foldersToUpload.forEachIndexed { index, folder ->
+            syncProgress.postValue(
+                SyncProgress(
+                    SyncPhase.UPLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Загрузка иконки: ${folder.name}"
+                )
+            )
+
             val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
-            if (localFile == null || !localFile.exists() || localFile.length() == 0L) return@forEach
+            if (localFile == null || !localFile.exists()) return@forEachIndexed
 
-            if (folder.iconUrl.isNullOrEmpty()) {
-                try {
-                    val bytes = localFile.readBytes()
-                    val success = repository.uploadFolderImage(folder.id, bytes)
-                    if (success) {
-                        val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                        withContext(Dispatchers.IO) {
-                            db.folderDao().updateFolder(updated)
-                            repository.updateFolderOnDisk(updated)
-                        }
-                        uploadedCount++
+            try {
+                val bytes = localFile.readBytes()
+                val success = repository.uploadFolderImage(folder.id, bytes)
+                if (success) {
+                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                    withContext(Dispatchers.IO) {
+                        db.folderDao().updateFolder(updated)
+                        repository.updateFolderOnDisk(updated)
                     }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
+                    uploadedCount++
                 }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
             }
         }
         Logger.log(TAG, "Uploaded $uploadedCount folder images")
@@ -414,14 +491,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun syncImages() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
-        val itemsWithImages = allItems.filter { !it.imageUrl.isNullOrEmpty() }
+        val itemsToDownload = allItems.filter { item ->
+            if (item.imageUrl.isNullOrEmpty()) return@filter false
+            val f = ImageUtils.getLocalImageFile(appContext, item.id)
+            f == null || !f.exists()
+        }
 
-        if (itemsWithImages.isEmpty()) return
+        if (itemsToDownload.isEmpty()) {
+            Logger.log(TAG, "No images to download")
+            return
+        }
 
         var downloadedCount = 0
-        itemsWithImages.forEach { item ->
-            val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-            if (localFile != null && localFile.exists()) return@forEach
+        val total = itemsToDownload.size
+
+        itemsToDownload.forEachIndexed { index, item ->
+            syncProgress.postValue(
+                SyncProgress(
+                    SyncPhase.DOWNLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Скачивание фото: ${item.name}"
+                )
+            )
 
             try {
                 val bitmap = repository.downloadItemImage(item.id)
@@ -441,13 +533,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun syncFolderImages() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+        val foldersToDownload = allFolders.filter { folder ->
+            val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+            f == null || !f.exists() || f.length() == 0L
+        }
 
-        if (allFolders.isEmpty()) return
+        if (foldersToDownload.isEmpty()) return
 
         var downloadedCount = 0
-        allFolders.forEach { folder ->
-            val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
-            if (localFile != null && localFile.exists() && localFile.length() > 0L) return@forEach
+        val total = foldersToDownload.size
+
+        foldersToDownload.forEachIndexed { index, folder ->
+            syncProgress.postValue(
+                SyncProgress(
+                    SyncPhase.DOWNLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Скачивание иконки: ${folder.name}"
+                )
+            )
 
             try {
                 val bitmap = repository.downloadFolderImage(folder.id)
@@ -519,8 +623,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!isInternetAvailable()) return 0
 
         var successCount = 0
-        for (entry in pending) {
+        val total = pending.size
+
+        for ((index, entry) in pending.withIndex()) {
             try {
+                // Получаем имя для отображения
+                val displayName = when (entry.entityType) {
+                    "folder" -> db.folderDao().getFolderById(entry.entityId)?.name ?: "папка"
+                    "item" -> db.itemDao().getItemById(entry.entityId)?.name ?: "предмет"
+                    else -> "объект"
+                }
+
+                syncProgress.postValue(
+                    SyncProgress(
+                        SyncPhase.SENDING,
+                        index + 1,
+                        total,
+                        "Отправка: $displayName"
+                    )
+                )
+
                 when (entry.entityType) {
                     "folder" -> applyFolderChange(entry)
                     "item" -> applyItemChange(entry)
@@ -845,15 +967,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
 
-                // ===== ПЕРЕД УДАЛЕНИЕМ: переносим всё в корень =====
-                // 1. Все предметы (включая архивные) — в корень
                 db.itemDao().moveItemsToRoot(folderId)
-                // 2. Все подпапки — в корень
                 db.folderDao().moveSubfoldersToRoot(folderId)
 
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
-                // ===== ТЕПЕРЬ УДАЛЯЕМ =====
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder?.parentId)
                 loadContents()
