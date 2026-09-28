@@ -53,7 +53,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ===== MUTEX ДЛЯ ЗАЩИТЫ ОТ ПАРАЛЛЕЛЬНЫХ СИНКОВ =====
     private val syncMutex = Mutex()
 
-    // ===== APPLICATION-SCOPE: живёт всё время жизни приложения, НЕ отменяется при onCleared =====
+    // ===== APPLICATION-SCOPE: живёт всё время жизни приложения =====
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // ===== Job для принудительной синхронизации (кнопка) =====
@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun getCurrentFolderId(): String? = currentFolderId
 
     // ============================================================
-    // ПРОВЕРКА ПЕРВОГО ЗАПУСКА
+    // ПРОВЕРКА ПЕРВОГО ЗАПУСКА + РЕМОНТ БАЗЫ
     // ============================================================
 
     private suspend fun checkFirstLaunch() {
@@ -85,6 +85,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
+        }
+
+        // ===== РЕМОНТ: осиротевшие предметы =====
+        try {
+            val orphans = db.itemDao().getOrphanItems()
+            if (orphans.isNotEmpty()) {
+                Logger.log(TAG, "Found ${orphans.size} orphan items, moving to root")
+                db.itemDao().fixOrphanItems()
+                Logger.log(TAG, "Orphan items fixed")
+            } else {
+                Logger.log(TAG, "No orphan items found")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
     }
 
@@ -261,11 +275,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // СИНХРОНИЗАЦИЯ
     // ============================================================
 
-    /**
-     * Полная синхронизация с Яндекс.Диском.
-     * ВАЖНО: запускается в applicationScope, чтобы пережить onCleared() активити.
-     * Mutex защищает от параллельных синков.
-     */
     fun syncWithDisk() {
         applicationScope.launch {
             if (!syncMutex.tryLock()) {
@@ -292,19 +301,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
-                // ===== ШАГ 1: отправляем локальные изменения =====
                 uploadedCount = processPendingChangesInternal()
 
-                // ===== ШАГ 2: скачиваем чужие изменения =====
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
                 mergeData(diskFolders, diskItems)
                 downloadedCount = diskFolders.size + diskItems.size
 
-                // ===== ШАГ 3: загружаем локальные фото, которых нет на Диске =====
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
 
-                // ===== ШАГ 4: скачиваем фото, которых нет локально =====
                 syncImages()
                 syncFolderImages()
 
@@ -839,6 +844,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
+
+                // ===== ПЕРЕД УДАЛЕНИЕМ: переносим всё в корень =====
+                // 1. Все предметы (включая архивные) — в корень
+                db.itemDao().moveItemsToRoot(folderId)
+                // 2. Все подпапки — в корень
+                db.folderDao().moveSubfoldersToRoot(folderId)
+
+                Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
+
+                // ===== ТЕПЕРЬ УДАЛЯЕМ =====
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder?.parentId)
                 loadContents()
