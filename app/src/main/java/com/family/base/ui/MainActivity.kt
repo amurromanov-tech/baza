@@ -419,17 +419,44 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // УДАЛЕНИЕ ПАПКИ
+    // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
         lifecycleScope.launch {
             viewModel.getFolderStats(folder.id) { stats ->
                 val (itemCount, folderCount) = stats
-                if (itemCount > 0 || folderCount > 0) {
-                    Toast.makeText(this@MainActivity, "Папка не пуста", Toast.LENGTH_SHORT).show()
-                } else {
+
+                if (itemCount == 0 && folderCount == 0) {
+                    // Папка полностью пуста — простое подтверждение
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Удалить папку «${folder.name}»?")
-                        .setPositiveButton("Да") { _, _ -> viewModel.deleteFolder(folder.id) }
+                        .setPositiveButton("Да") { _, _ ->
+                            viewModel.deleteFolder(folder.id)
+                            Toast.makeText(this@MainActivity, "Папка удалена", Toast.LENGTH_SHORT).show()
+                        }
                         .setNegativeButton("Нет", null)
+                        .show()
+                } else {
+                    // Папка не пуста — предупреждение о переносе в корень
+                    val message = buildString {
+                        append("Папка «${folder.name}» не пуста:\n\n")
+                        if (itemCount > 0) append("• Предметов: $itemCount\n")
+                        if (folderCount > 0) append("• Подпапок: $folderCount\n")
+                        append("\nВсё содержимое будет перемещено в корень, после чего папка удалится.")
+                    }
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("⚠️ Удалить папку?")
+                        .setMessage(message)
+                        .setPositiveButton("Переместить и удалить") { _, _ ->
+                            viewModel.deleteFolder(folder.id)
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Содержимое перемещено в корень, папка удалена",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        .setNegativeButton("Отмена", null)
                         .show()
                 }
             }
