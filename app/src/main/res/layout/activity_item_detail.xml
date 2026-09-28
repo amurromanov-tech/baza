@@ -216,13 +216,38 @@
                             android:inputType="text" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipQuantityView"
-                        style="@style/FieldChip.Quantity"
-                        android:layout_width="wrap_content"
+                    <!-- ===== КОЛИЧЕСТВО + ИНДИКАТОР СИНКА ===== -->
+                    <LinearLayout
+                        android:id="@+id/quantityRow"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        tools:text="📦 ×3" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="10dp">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipQuantityView"
+                            style="@style/FieldChip.Quantity"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            tools:text="📦 ×3" />
+
+                        <TextView
+                            android:id="@+id/tvSyncStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:textSize="18sp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:paddingTop="2dp"
+                            android:paddingBottom="2dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:contentDescription="Статус синхронизации"
+                            tools:text="☁️" />
+                    </LinearLayout>
 
                     <LinearLayout
                         android:id="@+id/quantityEditBlock"
@@ -543,7 +568,6 @@
                         android:visibility="gone"
                         tools:text="15.12.2026" />
 
-                    <!-- Прогресс-бар срока годности -->
                     <LinearLayout
                         android:id="@+id/expiryProgressBlock"
                         android:layout_width="match_parent"
