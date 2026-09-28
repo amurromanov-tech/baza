@@ -1,6 +1,7 @@
 package com.family.base.ui
 
 import android.Manifest
+import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.DatePickerDialog
 import android.content.Intent
@@ -10,11 +11,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.AlphaAnimation
-import android.view.animation.AnimationSet
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.ScaleAnimation
-import android.view.animation.TranslateAnimation
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +37,7 @@ import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -69,6 +67,10 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var quantityAnimator: ValueAnimator? = null
     private var priceAnimator: ValueAnimator? = null
+
+    // ===== ПУЛЬСАЦИЯ СТАТУСОВ =====
+    private var expiredPulse: ObjectAnimator? = null
+    private var soonPulse: ObjectAnimator? = null
 
     private var currentEditType: String = "thing"
     private var selectedEditSubtype: String? = null
@@ -219,22 +221,22 @@ class ItemDetailActivity : AppCompatActivity() {
     private fun animateContentAppearance() {
         val views = listOf(
             binding.chipGroupStatus,
-            binding.contentContainer.getChildAt(1),  // SectionTitle "Местонахождение"
-            binding.contentContainer.getChildAt(2),  // Card местонахождение
-            binding.contentContainer.getChildAt(3),  // SectionTitle "Основное"
-            binding.contentContainer.getChildAt(4),  // Card основное
-            binding.contentContainer.getChildAt(5),  // SectionTitle "Детали"
-            binding.contentContainer.getChildAt(6),  // Card детали
-            binding.contentContainer.getChildAt(7),  // SectionTitle "Даты"
-            binding.contentContainer.getChildAt(8),  // Card даты
-            binding.contentContainer.getChildAt(9),  // SectionTitle "Описание"
-            binding.contentContainer.getChildAt(10), // Card описание
-            binding.contentContainer.getChildAt(11), // Card займ
-            binding.contentContainer.getChildAt(12), // editButtonsLayout
-            binding.contentContainer.getChildAt(13), // btnAddPhoto
-            binding.contentContainer.getChildAt(14), // SectionTitle "Действия"
-            binding.contentContainer.getChildAt(15), // Ряд 1 действий
-            binding.contentContainer.getChildAt(16)  // Ряд 2 действий
+            binding.contentContainer.getChildAt(1),
+            binding.contentContainer.getChildAt(2),
+            binding.contentContainer.getChildAt(3),
+            binding.contentContainer.getChildAt(4),
+            binding.contentContainer.getChildAt(5),
+            binding.contentContainer.getChildAt(6),
+            binding.contentContainer.getChildAt(7),
+            binding.contentContainer.getChildAt(8),
+            binding.contentContainer.getChildAt(9),
+            binding.contentContainer.getChildAt(10),
+            binding.contentContainer.getChildAt(11),
+            binding.contentContainer.getChildAt(12),
+            binding.contentContainer.getChildAt(13),
+            binding.contentContainer.getChildAt(14),
+            binding.contentContainer.getChildAt(15),
+            binding.contentContainer.getChildAt(16)
         )
 
         views.forEachIndexed { index, view ->
@@ -249,6 +251,45 @@ class ItemDetailActivity : AppCompatActivity() {
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
         }
+    }
+
+    // ============================================================
+    // ПУЛЬСАЦИЯ СТАТУСОВ (просрочен / скоро)
+    // ============================================================
+    private fun startStatusPulse() {
+        stopStatusPulse()
+
+        // Просрочен — красный пульс (1.0 ↔ 0.55)
+        if (binding.chipExpired.visibility == View.VISIBLE) {
+            expiredPulse = ObjectAnimator.ofFloat(binding.chipExpired, "alpha", 1.0f, 0.55f).apply {
+                duration = 1200L
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = AccelerateDecelerateInterpolator()
+                start()
+            }
+        }
+
+        // Скоро истекает — жёлтый пульс (1.0 ↔ 0.55)
+        if (binding.chipSoon.visibility == View.VISIBLE) {
+            soonPulse = ObjectAnimator.ofFloat(binding.chipSoon, "alpha", 1.0f, 0.55f).apply {
+                duration = 1200L
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = AccelerateDecelerateInterpolator()
+                start()
+            }
+        }
+    }
+
+    private fun stopStatusPulse() {
+        expiredPulse?.cancel()
+        expiredPulse = null
+        binding.chipExpired.alpha = 1f
+
+        soonPulse?.cancel()
+        soonPulse = null
+        binding.chipSoon.alpha = 1f
     }
 
     // ============================================================
@@ -407,8 +448,14 @@ class ItemDetailActivity : AppCompatActivity() {
                         } else binding.tvLentNote.visibility = View.GONE
                     } else binding.cardLentInfo.visibility = View.GONE
 
-                    // Запускаем анимацию появления
+                    // Каскадное появление
                     animateContentAppearance()
+
+                    // Пульсация статусов — стартует после каскада
+                    lifecycleScope.launch {
+                        delay(500)
+                        startStatusPulse()
+                    }
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing details", e) }
         }
@@ -419,6 +466,7 @@ class ItemDetailActivity : AppCompatActivity() {
     // ============================================================
     private fun showEditMode(itemId: String) {
         isEditMode = true
+        stopStatusPulse()
         lifecycleScope.launch {
             try {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
@@ -449,6 +497,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
 
                     binding.cardLentInfo.visibility = View.GONE
+
+                    // Пульсация статусов в режиме редактирования (если чипы видны)
+                    startStatusPulse()
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing edit mode", e) }
         }
@@ -658,6 +709,7 @@ class ItemDetailActivity : AppCompatActivity() {
     // ============================================================
     private fun showHistory(itemId: String) {
         isEditMode = false
+        stopStatusPulse()
         lifecycleScope.launch {
             try {
                 val history = withContext(Dispatchers.IO) { db.historyDao().getHistoryForItem(itemId) }
@@ -1022,6 +1074,7 @@ class ItemDetailActivity : AppCompatActivity() {
         super.onDestroy()
         quantityAnimator?.cancel()
         priceAnimator?.cancel()
+        stopStatusPulse()
         Logger.log(TAG, "onDestroy called")
     }
 }
