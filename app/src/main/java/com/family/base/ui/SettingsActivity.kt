@@ -6,8 +6,8 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import com.family.base.BaseApplication
 import com.family.base.BuildConfig
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
@@ -43,7 +43,7 @@ class SettingsActivity : AppCompatActivity() {
 
         try {
             tokenStorage = TokenStorage(this)
-            viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+            viewModel = BaseApplication.mainViewModel
             Logger.log(TAG, "TokenStorage and ViewModel initialized")
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
@@ -57,9 +57,6 @@ class SettingsActivity : AppCompatActivity() {
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
     }
 
-    // ============================================================
-    // НАБЛЮДЕНИЕ ЗА РЕЗУЛЬТАТОМ СИНХРОНИЗАЦИИ
-    // ============================================================
     private fun observeSyncResult() {
         viewModel.syncResultMessage.observe(this) { message ->
             if (!message.isNullOrEmpty()) {
@@ -75,25 +72,19 @@ class SettingsActivity : AppCompatActivity() {
         binding.tvVersion.text = "Версия $versionName (код $versionCode)"
     }
 
-    // ============================================================
-    // СЛУШАТЕЛИ
-    // ============================================================
     private fun setupListeners() {
         Logger.log(TAG, "Setting up listeners")
 
-        // ===== СИНХРОНИЗАЦИЯ =====
         binding.btnSyncNow.setOnClickListener {
             Logger.log(TAG, "Sync now clicked")
             viewModel.forceSync()
         }
 
-        // ===== ПОДЕЛИТЬСЯ ССЫЛКОЙ =====
         binding.btnShareLink.setOnClickListener {
             Logger.log(TAG, "Share link clicked")
             shareFolderLink()
         }
 
-        // ===== РАЗДЕЛЫ =====
         binding.btnStatsAndAccounting.setOnClickListener {
             Logger.log(TAG, "Stats and accounting clicked")
             startActivity(Intent(this, StatsAndAccountingActivity::class.java))
@@ -114,13 +105,11 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, AppSettingsActivity::class.java))
         }
 
-        // ===== ОБНОВЛЕНИЯ =====
         binding.btnCheckUpdate.setOnClickListener {
             Logger.log(TAG, "Check for updates clicked")
             checkForUpdates()
         }
 
-        // ===== СВОРАЧИВАНИЕ ОПАСНОЙ ЗОНЫ =====
         binding.dangerZoneHeader.setOnClickListener {
             val isVisible = binding.dangerZoneContent.visibility == View.VISIBLE
             if (isVisible) {
@@ -134,28 +123,22 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        // ===== ОЧИСТКА КЭША =====
         binding.btnClearCache.setOnClickListener {
             Logger.log(TAG, "Clear cache clicked")
             showClearCacheDialog()
         }
 
-        // ===== ПОЛНАЯ ОЧИСТКА ДАННЫХ =====
         binding.btnClearAllData.setOnClickListener {
             Logger.log(TAG, "Clear all data clicked")
             showClearAllDataDialog()
         }
 
-        // ===== ВЫХОД =====
         binding.btnLogout.setOnClickListener {
             Logger.log(TAG, "Logout clicked")
             showLogoutDialog()
         }
     }
 
-    // ============================================================
-    // ПОДЕЛИТЬСЯ ССЫЛКОЙ
-    // ============================================================
     private fun shareFolderLink() {
         val link = tokenStorage.getSharedFolderLink()
         if (link != null) {
@@ -169,9 +152,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ОЧИСТКА КЭША
-    // ============================================================
     private fun showClearCacheDialog() {
         AlertDialog.Builder(this)
             .setTitle("Очистить кэш")
@@ -194,9 +174,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПОЛНАЯ ОЧИСТКА ДАННЫХ
-    // ============================================================
     private fun showClearAllDataDialog() {
         val randomWord = generateRandomWord()
         val editText = android.widget.EditText(this)
@@ -283,9 +260,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ВЫХОД
-    // ============================================================
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
             .setTitle("Выход")
@@ -324,9 +298,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПРОВЕРКА ОБНОВЛЕНИЙ
-    // ============================================================
     private fun checkForUpdates() {
         val currentVersionCode = BuildConfig.VERSION_CODE
         val currentVersionName = BuildConfig.VERSION_NAME
