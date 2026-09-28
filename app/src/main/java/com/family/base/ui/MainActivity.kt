@@ -14,9 +14,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
@@ -100,7 +100,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ПРИЁМ РЕЗУЛЬТАТА ОТ ItemDetailActivity =====
     private val itemDetailLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -113,7 +112,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ПРИЁМ РЕЗУЛЬТАТА ОТ CheckPreviewActivity (сохранённый чек) =====
     private val checkPreviewLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -152,7 +150,9 @@ class MainActivity : AppCompatActivity() {
         Logger.init(applicationContext)
 
         tokenStorage = TokenStorage(this)
-        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+
+        // ===== ГЛОБАЛЬНЫЙ ViewModel =====
+        viewModel = BaseApplication.mainViewModel
 
         try {
             val appLifecycleObserver = AppLifecycleObserver(viewModel)
@@ -211,7 +211,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        // ===== СКАНЕР ЧЕКА =====
         binding.btnScanCheck.setOnClickListener {
             Logger.log(TAG, "Scan check clicked")
             checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
@@ -455,9 +454,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПКИ (начинаем с родителя папки)
-    // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
         Logger.log(TAG, "Show move folder dialog: ${folder.name}, current parentId=${folder.parentId}")
 
@@ -490,9 +486,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА (начинаем с текущей папки предмета)
-    // ============================================================
     private fun showMoveItemDialog(item: ItemEntity) {
         Logger.log(TAG, "Show move item dialog: ${item.name}, current parentId=${item.parentId}")
 
