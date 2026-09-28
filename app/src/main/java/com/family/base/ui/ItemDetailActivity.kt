@@ -79,6 +79,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private val APPEAR_DURATION = 250L
     private val APPEAR_STAGGER = 50L
 
+    // ===== ТЕКУЩИЙ ITEM (для быстрых действий) =====
+    private var currentItem: ItemEntity? = null
+
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             try {
@@ -192,6 +195,17 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
+        // ===== ДОЛГОЕ НАЖАТИЕ НА КОЛИЧЕСТВО — БЫСТРОЕ РЕДАКТИРОВАНИЕ =====
+        binding.chipQuantityView.setOnLongClickListener {
+            showQuickQuantityDialog()
+            true
+        }
+
+        // ===== КЛИК ПО ИНДИКАТОРУ СИНХРОНИЗАЦИИ =====
+        binding.tvSyncStatus.setOnClickListener {
+            showSyncStatusToast()
+        }
+
         binding.btnGoToFolder.setOnClickListener {
             val parentId = currentParentId
             if (parentId != null) {
@@ -213,6 +227,88 @@ class ItemDetailActivity : AppCompatActivity() {
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
         }
+    }
+
+    // ============================================================
+    // ПУНКТ 14: БЫСТРОЕ РЕДАКТИРОВАНИЕ КОЛИЧЕСТВА
+    // ============================================================
+    private fun showQuickQuantityDialog() {
+        val id = itemId ?: return
+        val item = currentItem ?: return
+
+        // Поле ввода
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+
+        val etQty = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(item.quantity.toString())
+            hint = "Количество"
+            setSelectAllOnFocus(true)
+        }
+        container.addView(etQty)
+
+        AlertDialog.Builder(this)
+            .setTitle("📦 Быстрое изменение количества")
+            .setMessage("Текущее: ${item.quantity}")
+            .setView(container)
+            .setPositiveButton("Сохранить") { _, _ ->
+                val newQty = etQty.text.toString().toIntOrNull()
+                if (newQty == null || newQty < 0) {
+                    Toast.makeText(this, "Введите корректное число", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (newQty == item.quantity) {
+                    Toast.makeText(this, "Количество не изменилось", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                viewModel.updateItemQuantity(id, newQty)
+                // Обновляем UI мгновенно
+                currentItem = item.copy(quantity = newQty)
+                animateQuantity(newQty)
+                Toast.makeText(this, "Количество: $newQty", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // ПУНКТ 13: ИНДИКАТОР СИНХРОНИЗАЦИИ
+    // ============================================================
+    private fun updateSyncIndicator(item: ItemEntity) {
+        lifecycleScope.launch {
+            try {
+                val inQueue = withContext(Dispatchers.IO) {
+                    db.syncQueueDao().getAllPending().any { it.entityId == item.id }
+                }
+
+                val hasLocalFile = withContext(Dispatchers.IO) {
+                    val f = ImageUtils.getLocalImageFile(this@ItemDetailActivity, item.id)
+                    f != null && f.exists()
+                }
+
+                val (emoji, tooltip) = when {
+                    inQueue -> Pair("⏳", "В очереди на отправку")
+                    !item.imageUrl.isNullOrEmpty() -> Pair("☁️", "Синхронизировано с Яндекс.Диском")
+                    hasLocalFile -> Pair("⚠️", "Фото есть локально, но не загружено на Диск")
+                    else -> Pair("☁️", "Синхронизировано (нет фото)")
+                }
+
+                withContext(Dispatchers.Main) {
+                    binding.tvSyncStatus.text = emoji
+                    binding.tvSyncStatus.tag = tooltip
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error updating sync indicator: ${e.message}")
+            }
+        }
+    }
+
+    private fun showSyncStatusToast() {
+        val tooltip = binding.tvSyncStatus.tag as? String ?: "Статус неизвестен"
+        Toast.makeText(this, tooltip, Toast.LENGTH_SHORT).show()
     }
 
     // ============================================================
@@ -254,12 +350,11 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПУЛЬСАЦИЯ СТАТУСОВ (просрочен / скоро)
+    // ПУЛЬСАЦИЯ СТАТУСОВ
     // ============================================================
     private fun startStatusPulse() {
         stopStatusPulse()
 
-        // Просрочен — красный пульс (1.0 ↔ 0.55)
         if (binding.chipExpired.visibility == View.VISIBLE) {
             expiredPulse = ObjectAnimator.ofFloat(binding.chipExpired, "alpha", 1.0f, 0.55f).apply {
                 duration = 1200L
@@ -270,7 +365,6 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
-        // Скоро истекает — жёлтый пульс (1.0 ↔ 0.55)
         if (binding.chipSoon.visibility == View.VISIBLE) {
             soonPulse = ObjectAnimator.ofFloat(binding.chipSoon, "alpha", 1.0f, 0.55f).apply {
                 duration = 1200L
@@ -416,6 +510,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) { finish(); return@launch }
 
+                currentItem = item
                 currentParentId = item.parentId
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
@@ -425,6 +520,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     fillViewFields(item, path)
                     applyChips(item)
                     updateExpiryProgress(item)
+                    updateSyncIndicator(item)
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -448,10 +544,8 @@ class ItemDetailActivity : AppCompatActivity() {
                         } else binding.tvLentNote.visibility = View.GONE
                     } else binding.cardLentInfo.visibility = View.GONE
 
-                    // Каскадное появление
                     animateContentAppearance()
 
-                    // Пульсация статусов — стартует после каскада
                     lifecycleScope.launch {
                         delay(500)
                         startStatusPulse()
@@ -472,6 +566,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                 if (item == null) { finish(); return@launch }
 
+                currentItem = item
                 currentParentId = item.parentId
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
@@ -481,6 +576,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     fillEditFields(item, path)
                     applyChips(item)
                     updateExpiryProgress(item)
+                    updateSyncIndicator(item)
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -498,7 +594,6 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.cardLentInfo.visibility = View.GONE
 
-                    // Пульсация статусов в режиме редактирования (если чипы видны)
                     startStatusPulse()
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing edit mode", e) }
@@ -515,7 +610,7 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.chipNameView.visibility = viewVisibility
         binding.tilName.visibility = editVisibility
 
-        binding.chipQuantityView.visibility = viewVisibility
+        binding.quantityRow.visibility = viewVisibility
         binding.quantityEditBlock.visibility = editVisibility
 
         binding.typeEditBlock.visibility = editVisibility
@@ -541,7 +636,7 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.chipNameView.text = "📝 ${item.name}"
         binding.chipNameView.visibility = View.VISIBLE
 
-        binding.chipQuantityView.visibility = View.VISIBLE
+        binding.quantityRow.visibility = View.VISIBLE
         animateQuantity(item.quantity)
 
         val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
@@ -718,6 +813,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     showViewMode(false)
                     binding.tilName.visibility = View.GONE
+                    binding.quantityRow.visibility = View.GONE
                     binding.quantityEditBlock.visibility = View.GONE
                     binding.typeEditBlock.visibility = View.GONE
                     binding.subtypeEditBlock.visibility = View.GONE
