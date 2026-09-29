@@ -309,16 +309,9 @@ interface ItemDao {
     // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ПРЕДМЕТЫ
     // ============================================================
 
-    /**
-     * Перенос всех предметов (включая архивные) из папки в корень.
-     * Используется при удалении папки.
-     */
     @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId")
     suspend fun moveItemsToRoot(folderId: String)
 
-    /**
-     * Найти активные предметы, чей parentId ссылается на несуществующую папку.
-     */
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 
@@ -327,9 +320,6 @@ interface ItemDao {
     """)
     suspend fun getOrphanItems(): List<ItemEntity>
 
-    /**
-     * Ремонт: перенести все «осиротевшие» активные предметы в корень.
-     */
     @Query("""
         UPDATE items 
         SET parentId = NULL 
@@ -338,6 +328,24 @@ interface ItemDao {
           AND parentId NOT IN (SELECT id FROM folders)
     """)
     suspend fun fixOrphanItems()
+
+    // ============================================================
+    // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
+    // ============================================================
+
+    /**
+     * Все предметы с непустым imageUrl.
+     * В Kotlin проверим, совпадает ли imageUrl с "images/<id>.jpg".
+     */
+    @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != ''")
+    suspend fun getAllItemsWithImageUrl(): List<ItemEntity>
+
+    /**
+     * Сброс imageUrl у конкретного предмета в null.
+     * Используется для «застрявших» фейковых UUID.
+     */
+    @Query("UPDATE items SET imageUrl = NULL WHERE id = :itemId")
+    suspend fun clearImageUrl(itemId: String)
 }
 
 // ============================================================
