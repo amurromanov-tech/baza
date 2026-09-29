@@ -28,8 +28,10 @@ class ArchiveActivity : AppCompatActivity() {
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
+    // ===== ФИЛЬТРЫ: «🧴 Израсходовано» — сразу после «Все» =====
     private val filters = arrayOf(
         "Все",
+        "🧴 Израсходовано",
         "🍽 Съедено",
         "🔧 Сломано",
         "🗑 Выброшено",
@@ -40,6 +42,7 @@ class ArchiveActivity : AppCompatActivity() {
     )
     private val filterKeys = arrayOf(
         null,
+        "used_up",
         "eaten", "broken", "thrown", "gifted", "sold", "expired", "other"
     )
 
@@ -149,8 +152,10 @@ class ArchiveActivity : AppCompatActivity() {
             .show()
     }
 
+    // ===== ДОБАВЛЕН used_up =====
     private fun getReasonText(reason: String?): String {
         return when (reason) {
+            "used_up" -> "🧴 Израсходовано"
             "eaten" -> "🍽 Съедено"
             "broken" -> "🔧 Сломано"
             "thrown" -> "🗑 Выброшено"
