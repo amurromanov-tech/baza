@@ -9,6 +9,7 @@ import android.view.animation.LinearInterpolator
 import android.view.animation.RotateAnimation
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AlertDialog
@@ -218,7 +219,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
         binding.btnSearch.setOnClickListener { showSearchDialog() }
         binding.btnScanSearch.setOnClickListener {
-            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+            barcodeSearchLauncher.launch(Intent(this, BarcodeSearchActivity::class.java))
         }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -231,6 +232,21 @@ class MainActivity : AppCompatActivity() {
 
         viewModel.navigateToFolder(null)
         updateSearchIcon(viewModel.searchQueryLiveData.value)
+
+        // ===== ЗАЩИТА ОТ СЛУЧАЙНОГО ВЫХОДА =====
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Выйти из приложения?")
+                    .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
+                    .setPositiveButton("Выйти") { _, _ ->
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            }
+        })
     }
 
     override fun onResume() {
