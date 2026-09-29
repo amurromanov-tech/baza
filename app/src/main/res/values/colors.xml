@@ -12,6 +12,9 @@
     <color name="iconColor">#000000</color>
     <color name="colorWarning">#FFD54F</color>
 
+    <!-- ===== ФОН ЭКРАНОВ ===== -->
+    <color name="windowBackground">#F5E6D3</color>
+
     <!-- ===== ЦВЕТА ДЛЯ ИКОНОК ===== -->
     <color name="folder_icon_color">#C97B63</color>
     <color name="item_icon_color">#8D6E63</color>
@@ -33,7 +36,7 @@
     <color name="chipThingBg">#FFF3E0</color>
     <color name="chipThingText">#BF360C</color>
 
-    <!-- НОВОЕ: Подтип -->
+    <!-- Подтип -->
     <color name="chipSubtypeBg">#E3F2FD</color>
     <color name="chipSubtypeText">#0D47A1</color>
 
