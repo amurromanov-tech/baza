@@ -38,7 +38,6 @@ class ArchiveAdapter(
         holder.info.text = buildInfoText(item)
         holder.reason.text = getReasonText(item.archivedReason)
 
-        // ===== ИКОНКА: всегда показываем (дефолтную, если нет фото) =====
         holder.icon.visibility = View.VISIBLE
         holder.icon.load(null)
 
@@ -50,16 +49,13 @@ class ArchiveAdapter(
                 error(R.drawable.ic_item_default)
             }
         } else {
-            // Дефолтная иконка предмета
             holder.icon.load(R.drawable.ic_item_default)
         }
 
-        // Клик по элементу — показать детали
         holder.itemView.setOnClickListener {
             onItemClick(item)
         }
 
-        // Кнопка "Вернуть"
         holder.btnRestore.setOnClickListener {
             onRestoreClick(item)
         }
@@ -87,6 +83,7 @@ class ArchiveAdapter(
 
     private fun getReasonText(reason: String?): String {
         return when (reason) {
+            "used_up" -> "🧴 Израсходовано"
             "eaten" -> "🍽 Съедено"
             "broken" -> "🔧 Сломано"
             "thrown" -> "🗑 Выброшено"
