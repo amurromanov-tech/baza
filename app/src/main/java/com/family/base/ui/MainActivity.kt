@@ -219,7 +219,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
         binding.btnSearch.setOnClickListener { showSearchDialog() }
         binding.btnScanSearch.setOnClickListener {
-            barcodeSearchLauncher.launch(Intent(this, BarcodeSearchActivity::class.java))
+            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -265,9 +265,6 @@ class MainActivity : AppCompatActivity() {
         hideProgressJob?.cancel()
     }
 
-    // ============================================================
-    // ПЛАШКА ПРОГРЕССА СИНХРОНИЗАЦИИ
-    // ============================================================
     private fun updateSyncProgressCard(progress: SyncProgress) {
         hideProgressJob?.cancel()
 
@@ -330,9 +327,6 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
-    // ============================================================
-    // НАВИГАЦИЯ
-    // ============================================================
     private fun updatePathTitle() {
         pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
     }
@@ -480,7 +474,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== НОВЫЙ ПУНКТ «🧴 Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
             "🧴 Израсходовано",
