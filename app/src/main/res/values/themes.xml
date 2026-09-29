@@ -3,6 +3,11 @@
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
+
+        <!-- Фон экранов (тёплый беж в светлой, шоколад в тёмной) -->
+        <item name="android:windowBackground">@color/windowBackground</item>
+        <item name="android:colorBackground">@color/windowBackground</item>
+        <item name="colorSurface">@color/windowBackground</item>
     </style>
 
     <style name="BottomNavButton" parent="Widget.AppCompat.Button.Borderless">
