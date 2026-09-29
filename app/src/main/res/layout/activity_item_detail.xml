@@ -95,6 +95,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- ============ СТАТУС-ЧИПЫ ============ -->
             <LinearLayout
                 android:id="@+id/chipGroupStatus"
                 android:layout_width="match_parent"
@@ -110,6 +111,16 @@
                     android:layout_height="wrap_content"
                     android:text="📦 Предмет"
                     android:visibility="gone" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipSubtypeView"
+                    style="@style/FieldChip.Subtype"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:visibility="gone"
+                    tools:text="🥛 Молочка"
+                    tools:visibility="visible" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipExpired"
@@ -139,6 +150,7 @@
                     android:visibility="gone" />
             </LinearLayout>
 
+            <!-- ============ 📍 МЕСТОНАХОЖДЕНИЕ (не сворачиваем) ============ -->
             <TextView
                 style="@style/SectionTitle"
                 android:layout_width="wrap_content"
@@ -177,11 +189,39 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                style="@style/SectionTitle"
-                android:layout_width="wrap_content"
+            <!-- ============ 📦 ОСНОВНОЕ (сворачиваемая) ============ -->
+            <LinearLayout
+                android:id="@+id/sectionBasicHeader"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📦 Основное" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    style="@style/SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📦 Основное"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/arrowBasic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▼"
+                    android:textSize="14sp"
+                    android:textColor="@color/sectionTitle"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 style="@style/SectionCard"
@@ -194,17 +234,21 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipNameView"
-                        style="@style/FieldChip.Name"
-                        android:layout_width="wrap_content"
+                    <!-- ВСЕГДА ВИДИМО: Название (жирный TextView без чипа) -->
+                    <TextView
+                        android:id="@+id/tvNameView"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:textColor="?android:attr/textColorPrimary"
                         tools:text="📝 Чай Greenfield" />
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilName"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
                         android:hint="Название"
                         app:boxBackgroundMode="outline"
                         android:visibility="gone">
@@ -216,7 +260,7 @@
                             android:inputType="text" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- ===== КОЛИЧЕСТВО + ИНДИКАТОР СИНКА ===== -->
+                    <!-- ВСЕГДА ВИДИМО: Количество + индикатор синка -->
                     <LinearLayout
                         android:id="@+id/quantityRow"
                         android:layout_width="match_parent"
@@ -249,153 +293,179 @@
                             tools:text="☁️" />
                     </LinearLayout>
 
+                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Основное» -->
                     <LinearLayout
-                        android:id="@+id/quantityEditBlock"
+                        android:id="@+id/contentBasicExpandable"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginTop="8dp"
-                        android:visibility="gone">
+                        android:orientation="vertical">
 
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnMinus"
-                            android:layout_width="48dp"
-                            android:layout_height="48dp"
-                            android:text="−"
-                            android:textSize="20sp"
-                            android:padding="0dp"
-                            android:insetTop="0dp"
-                            android:insetBottom="0dp"
-                            app:cornerRadius="12dp"
-                            android:backgroundTint="#607D8B" />
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:layout_marginStart="8dp"
-                            android:layout_marginEnd="8dp"
-                            android:hint="Количество"
-                            app:boxBackgroundMode="outline">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etQuantity"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="number"
-                                android:gravity="center" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnPlus"
-                            android:layout_width="48dp"
-                            android:layout_height="48dp"
-                            android:text="+"
-                            android:textSize="20sp"
-                            android:padding="0dp"
-                            android:insetTop="0dp"
-                            android:insetBottom="0dp"
-                            app:cornerRadius="12dp"
-                            android:backgroundTint="#4CAF50" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/typeEditBlock"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:layout_marginTop="12dp"
-                        android:visibility="gone">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Тип *"
-                            android:textSize="14sp"
-                            android:layout_marginBottom="4dp" />
-
-                        <RadioGroup
-                            android:id="@+id/rgTypeEdit"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <RadioButton
-                                android:id="@+id/rbTypeFood"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Еда" />
-
-                            <RadioButton
-                                android:id="@+id/rbTypeMedicine"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Лекарство" />
-
-                            <RadioButton
-                                android:id="@+id/rbTypeThing"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Предмет" />
-
-                            <RadioButton
-                                android:id="@+id/rbTypeOther"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Другое" />
-                        </RadioGroup>
-                    </LinearLayout>
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipSubtypeView"
-                        style="@style/FieldChip.Subtype"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:visibility="gone"
-                        tools:text="🥛 Молочка"
-                        tools:visibility="visible" />
-
-                    <LinearLayout
-                        android:id="@+id/subtypeEditBlock"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:layout_marginTop="12dp"
-                        android:visibility="gone">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Подтип *"
-                            android:textSize="14sp"
-                            android:layout_marginBottom="4dp" />
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/tilSubtypeEdit"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        <LinearLayout
+                            android:id="@+id/quantityEditBlock"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Выберите подтип">
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="8dp"
+                            android:visibility="gone">
 
-                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                                android:id="@+id/autoCompleteSubtypeEdit"
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnMinus"
+                                android:layout_width="48dp"
+                                android:layout_height="48dp"
+                                android:text="−"
+                                android:textSize="20sp"
+                                android:padding="0dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                app:cornerRadius="12dp"
+                                android:backgroundTint="#607D8B" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginEnd="8dp"
+                                android:hint="Количество"
+                                app:boxBackgroundMode="outline">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etQuantity"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="number"
+                                    android:gravity="center" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnPlus"
+                                android:layout_width="48dp"
+                                android:layout_height="48dp"
+                                android:text="+"
+                                android:textSize="20sp"
+                                android:padding="0dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                app:cornerRadius="12dp"
+                                android:backgroundTint="#4CAF50" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/typeEditBlock"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginTop="12dp"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Тип *"
+                                android:textSize="14sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgTypeEdit"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <RadioButton
+                                    android:id="@+id/rbTypeFood"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Еда" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTypeMedicine"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Лекарство" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTypeThing"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Предмет" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTypeOther"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Другое" />
+                            </RadioGroup>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/subtypeEditBlock"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginTop="12dp"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Подтип *"
+                                android:textSize="14sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/tilSubtypeEdit"
+                                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:inputType="none"
-                                android:focusable="false"
-                                android:clickable="true" />
-                        </com.google.android.material.textfield.TextInputLayout>
+                                android:hint="Выберите подтип">
+
+                                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                    android:id="@+id/autoCompleteSubtypeEdit"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="none"
+                                    android:focusable="false"
+                                    android:clickable="true" />
+                            </com.google.android.material.textfield.TextInputLayout>
+                        </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                style="@style/SectionTitle"
-                android:layout_width="wrap_content"
+            <!-- ============ 🔖 ДЕТАЛИ (сворачиваемая) ============ -->
+            <LinearLayout
+                android:id="@+id/sectionDetailsHeader"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="🔖 Детали" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    style="@style/SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🔖 Детали"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/arrowDetails"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▶"
+                    android:textSize="14sp"
+                    android:textColor="@color/sectionTitle"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 style="@style/SectionCard"
@@ -408,81 +478,12 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipBarcodeView"
-                        style="@style/FieldChip.Barcode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        tools:text="🔢 4601234567890" />
-
-                    <LinearLayout
-                        android:id="@+id/barcodeEditBlock"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:visibility="gone">
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/tilBarcode"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:hint="Штрих-код"
-                            app:boxBackgroundMode="outline">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etBarcode"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="number" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnScanBarcode"
-                            android:layout_width="56dp"
-                            android:layout_height="56dp"
-                            android:layout_marginStart="8dp"
-                            android:text="📷"
-                            android:textSize="20sp"
-                            android:padding="0dp"
-                            android:insetTop="0dp"
-                            android:insetBottom="0dp"
-                            app:cornerRadius="12dp"
-                            android:backgroundTint="#2196F3" />
-                    </LinearLayout>
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipExpiryView"
-                        style="@style/FieldChip.Expiry"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        tools:text="⏰ до 15.12.2026" />
-
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilExpiry"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:hint="Срок годности (дд.мм.гггг)"
-                        app:boxBackgroundMode="outline"
-                        android:visibility="gone">
-
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etExpiry"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:focusable="false"
-                            android:clickable="true" />
-                    </com.google.android.material.textfield.TextInputLayout>
-
+                    <!-- ВСЕГДА ВИДИМО: Цена -->
                     <com.google.android.material.chip.Chip
                         android:id="@+id/tvPrice"
                         style="@style/PriceChip"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
                         android:visibility="gone"
                         android:textSize="20sp"
                         android:textStyle="bold"
@@ -492,30 +493,136 @@
                         tools:text="💰 100 ₽"
                         tools:visibility="visible" />
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilPrice"
+                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Детали» -->
+                    <LinearLayout
+                        android:id="@+id/contentDetailsExpandable"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:hint="Цена (₽)"
-                        app:boxBackgroundMode="outline"
-                        android:visibility="gone">
+                        android:orientation="vertical">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etPrice"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipBarcodeView"
+                            style="@style/FieldChip.Barcode"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            tools:text="🔢 4601234567890" />
+
+                        <LinearLayout
+                            android:id="@+id/barcodeEditBlock"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="numberDecimal" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:visibility="gone">
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/tilBarcode"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:hint="Штрих-код"
+                                app:boxBackgroundMode="outline">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etBarcode"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="number" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnScanBarcode"
+                                android:layout_width="56dp"
+                                android:layout_height="56dp"
+                                android:layout_marginStart="8dp"
+                                android:text="📷"
+                                android:textSize="20sp"
+                                android:padding="0dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                app:cornerRadius="12dp"
+                                android:backgroundTint="#2196F3" />
+                        </LinearLayout>
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipExpiryView"
+                            style="@style/FieldChip.Expiry"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            tools:text="⏰ до 15.12.2026" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilExpiry"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:hint="Срок годности (дд.мм.гггг)"
+                            app:boxBackgroundMode="outline"
+                            android:visibility="gone">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etExpiry"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:focusable="false"
+                                android:clickable="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilPrice"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:hint="Цена (₽)"
+                            app:boxBackgroundMode="outline"
+                            android:visibility="gone">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPrice"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                android:id="@+id/tvDatesTitle"
-                style="@style/SectionTitle"
-                android:layout_width="wrap_content"
+            <!-- ============ 📅 ДАТЫ (сворачиваемая) ============ -->
+            <LinearLayout
+                android:id="@+id/sectionDatesHeader"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📅 Даты" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    android:id="@+id/tvDatesTitle"
+                    style="@style/SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📅 Даты"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/arrowDates"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▶"
+                    android:textSize="14sp"
+                    android:textColor="@color/sectionTitle"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardDates"
@@ -529,45 +636,54 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView
-                        style="@style/DateLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Добавлено" />
-                    <TextView
-                        android:id="@+id/tvDateAdded"
-                        style="@style/DateValue"
+                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Даты» (Добавлено, Изменено, Срок годности) -->
+                    <LinearLayout
+                        android:id="@+id/contentDatesExpandable"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        tools:text="01.10.2026" />
+                        android:orientation="vertical">
 
-                    <TextView
-                        style="@style/DateLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Последнее изменение" />
-                    <TextView
-                        android:id="@+id/tvDateModified"
-                        style="@style/DateValue"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        tools:text="05.10.2026" />
+                        <TextView
+                            style="@style/DateLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Добавлено" />
+                        <TextView
+                            android:id="@+id/tvDateAdded"
+                            style="@style/DateValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            tools:text="01.10.2026" />
 
-                    <TextView
-                        android:id="@+id/tvDateExpiryLabel"
-                        style="@style/DateLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Срок годности"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/tvDateExpiry"
-                        style="@style/DateValue"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:visibility="gone"
-                        tools:text="15.12.2026" />
+                        <TextView
+                            style="@style/DateLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Последнее изменение" />
+                        <TextView
+                            android:id="@+id/tvDateModified"
+                            style="@style/DateValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            tools:text="05.10.2026" />
 
+                        <TextView
+                            android:id="@+id/tvDateExpiryLabel"
+                            style="@style/DateLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Срок годности"
+                            android:visibility="gone" />
+                        <TextView
+                            android:id="@+id/tvDateExpiry"
+                            style="@style/DateValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:visibility="gone"
+                            tools:text="15.12.2026" />
+                    </LinearLayout>
+
+                    <!-- ВСЕГДА ВИДИМО: прогресс-бар срока -->
                     <LinearLayout
                         android:id="@+id/expiryProgressBlock"
                         android:layout_width="match_parent"
@@ -601,12 +717,40 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                android:id="@+id/tvDescriptionTitle"
-                style="@style/SectionTitle"
-                android:layout_width="wrap_content"
+            <!-- ============ 📝 ОПИСАНИЕ (сворачиваемая) ============ -->
+            <LinearLayout
+                android:id="@+id/sectionDescriptionHeader"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📝 Описание" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    android:id="@+id/tvDescriptionTitle"
+                    style="@style/SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📝 Описание"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/arrowDescription"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▶"
+                    android:textSize="14sp"
+                    android:textColor="@color/sectionTitle"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardDescription"
@@ -615,6 +759,7 @@
                 android:layout_height="wrap_content">
 
                 <FrameLayout
+                    android:id="@+id/contentDescriptionExpandable"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:padding="16dp">
@@ -645,6 +790,7 @@
                 </FrameLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- ============ ЗАЙМ ============ -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardLentInfo"
                 style="@style/SectionCard"
@@ -708,6 +854,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- ============ КНОПКИ РЕДАКТИРОВАНИЯ ============ -->
             <LinearLayout
                 android:id="@+id/editButtonsLayout"
                 android:layout_width="match_parent"
@@ -747,6 +894,7 @@
                 android:text="📷 Добавить фото"
                 android:visibility="gone" />
 
+            <!-- ============ ⚙️ ДЕЙСТВИЯ (не сворачиваем) ============ -->
             <TextView
                 android:id="@+id/tvActionsTitle"
                 style="@style/SectionTitle"
