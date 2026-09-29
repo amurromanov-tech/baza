@@ -6,6 +6,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityArchiveBinding
@@ -25,13 +26,11 @@ class ArchiveActivity : AppCompatActivity() {
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
-    // ===== ПАПКИ АРХИВА (по типу предмета) =====
     private enum class ArchiveFolder { THINGS, MEDICINE, FOOD }
 
     private var currentFolder: ArchiveFolder = ArchiveFolder.THINGS
     private var currentReasonKey: String? = null
 
-    // ===== Все архивные предметы (загружаются один раз) =====
     private var allArchivedItems: List<ItemEntity> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,8 +60,6 @@ class ArchiveActivity : AppCompatActivity() {
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
     }
 
-    // ==================== ПАПКИ ====================
-
     private fun setupFolderChips() {
         binding.chipGroupFolder.setOnCheckedStateChangeListener { _, checkedIds ->
             when (checkedIds.firstOrNull()) {
@@ -70,7 +67,6 @@ class ArchiveActivity : AppCompatActivity() {
                 R.id.chipFolderFood -> currentFolder = ArchiveFolder.FOOD
                 else -> currentFolder = ArchiveFolder.THINGS
             }
-            // При смене папки — сбрасываем причину на «Все»
             binding.chipGroupReason.check(R.id.chipReasonAll)
             currentReasonKey = null
             applyFilters()
@@ -93,8 +89,6 @@ class ArchiveActivity : AppCompatActivity() {
             applyFilters()
         }
     }
-
-    // ==================== ЗАГРУЗКА ====================
 
     private fun loadAllArchive() {
         lifecycleScope.launch {
@@ -136,8 +130,6 @@ class ArchiveActivity : AppCompatActivity() {
             }
         }
     }
-
-    // ==================== ДЕТАЛИ / ВОССТАНОВЛЕНИЕ ====================
 
     private fun showItemDetails(item: ItemEntity) {
         val reasonText = getReasonText(item.archivedReason)
@@ -184,8 +176,6 @@ class ArchiveActivity : AppCompatActivity() {
             .setNegativeButton("Отмена", null)
             .show()
     }
-
-    // ==================== ХЕЛПЕРЫ ====================
 
     private fun getReasonText(reason: String?): String {
         return when (reason) {
