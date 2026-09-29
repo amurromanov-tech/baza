@@ -52,7 +52,6 @@ class MainActivity : AppCompatActivity() {
     private var newFolderImageBytes: ByteArray? = null
     private var currentFolderForImage: FolderEntity? = null
 
-    // ===== Job скрытия плашки =====
     private var hideProgressJob: Job? = null
 
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -158,7 +157,6 @@ class MainActivity : AppCompatActivity() {
 
         tokenStorage = TokenStorage(this)
 
-        // ===== ГЛОБАЛЬНЫЙ ViewModel =====
         viewModel = BaseApplication.mainViewModel
 
         try {
@@ -202,7 +200,6 @@ class MainActivity : AppCompatActivity() {
         viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
         viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
 
-        // ===== НАБЛЮДЕНИЕ ЗА ПРОГРЕССОМ СИНХРОНИЗАЦИИ =====
         viewModel.syncProgress.observe(this) { progress ->
             if (progress != null) {
                 updateSyncProgressCard(progress)
@@ -258,7 +255,6 @@ class MainActivity : AppCompatActivity() {
     private fun updateSyncProgressCard(progress: SyncProgress) {
         hideProgressJob?.cancel()
 
-        // ===== Иконка фазы =====
         val icon = when (progress.phase) {
             SyncPhase.SENDING -> "📤"
             SyncPhase.DOWNLOADING -> "📥"
@@ -268,10 +264,8 @@ class MainActivity : AppCompatActivity() {
         }
         binding.tvSyncPhaseIcon.text = icon
 
-        // ===== Текст фазы + имя объекта =====
         binding.tvSyncPhaseText.text = progress.message
 
-        // ===== Счётчик N / M =====
         if (progress.total > 0) {
             binding.tvSyncCounter.text = "${progress.current} / ${progress.total}"
             binding.tvSyncCounter.visibility = View.VISIBLE
@@ -279,17 +273,14 @@ class MainActivity : AppCompatActivity() {
             binding.tvSyncCounter.visibility = View.GONE
         }
 
-        // ===== Прогресс-бар =====
         if (progress.total > 0) {
             binding.syncProgressBar.max = progress.total
             binding.syncProgressBar.setProgressCompat(progress.current, true)
         } else {
-            // «Неопределённый» прогресс (для фаз авторизации/слияния)
             binding.syncProgressBar.max = 100
             binding.syncProgressBar.setProgressCompat(0, false)
         }
 
-        // ===== Показать плашку (если скрыта) =====
         if (binding.syncProgressCard.visibility != View.VISIBLE) {
             binding.syncProgressCard.alpha = 0f
             binding.syncProgressCard.translationY = 80f
@@ -301,7 +292,6 @@ class MainActivity : AppCompatActivity() {
                 .start()
         }
 
-        // ===== Если DONE — скрыть через 2 сек =====
         if (progress.phase == SyncPhase.DONE) {
             hideProgressJob = lifecycleScope.launch {
                 delay(2000)
@@ -474,9 +464,28 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ===== НОВЫЙ ПУНКТ «🧴 Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun showArchiveDialog(item: ItemEntity) {
-        val reasons = arrayOf("🍽 Съедено", "🔧 Сломано", "🗑 Выброшено", "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое")
-        val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
         AlertDialog.Builder(this)
             .setTitle("В архив: ${item.name}")
             .setItems(reasons) { _, which -> showArchiveNoteDialog(item, reasonKeys[which]) }
@@ -511,9 +520,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // УДАЛЕНИЕ ПАПКИ
-    // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
         lifecycleScope.launch {
             viewModel.getFolderStats(folder.id) { stats ->
