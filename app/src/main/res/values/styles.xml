@@ -26,22 +26,22 @@
         <item name="android:textColor">@android:color/white</item>
     </style>
     <style name="ActionButton.Edit" parent="ActionButton">
-        <item name="backgroundTint">#2196F3</item>
+        <item name="backgroundTint">#8D6E63</item>
     </style>
     <style name="ActionButton.Lend" parent="ActionButton">
-        <item name="backgroundTint">#FF9800</item>
+        <item name="backgroundTint">#C97B63</item>
     </style>
     <style name="ActionButton.Move" parent="ActionButton">
-        <item name="backgroundTint">#9C27B0</item>
+        <item name="backgroundTint">#A1887F</item>
     </style>
     <style name="ActionButton.Copy" parent="ActionButton">
-        <item name="backgroundTint">#00BCD4</item>
+        <item name="backgroundTint">#BCAAA4</item>
     </style>
     <style name="ActionButton.Archive" parent="ActionButton">
-        <item name="backgroundTint">#607D8B</item>
+        <item name="backgroundTint">#B0A090</item>
     </style>
     <style name="ActionButton.Delete" parent="ActionButton">
-        <item name="backgroundTint">#F44336</item>
+        <item name="backgroundTint">#E57373</item>
     </style>
 
     <!-- ============================================================ -->
@@ -146,7 +146,7 @@
         <item name="chipBackgroundColor">@color/chipExpiryBg</item>
     </style>
 
-    <!-- НОВОЕ: Подтип -->
+    <!-- Подтип -->
     <style name="FieldChip.Subtype" parent="FieldChip">
         <item name="android:textColor">@color/chipSubtypeText</item>
         <item name="chipBackgroundColor">@color/chipSubtypeBg</item>
@@ -199,22 +199,22 @@
         <item name="android:textColor">@android:color/white</item>
     </style>
     <style name="RoundActionButton.Edit" parent="RoundActionButton">
-        <item name="backgroundTint">#2196F3</item>
+        <item name="backgroundTint">#8D6E63</item>
     </style>
     <style name="RoundActionButton.Lend" parent="RoundActionButton">
-        <item name="backgroundTint">#FF9800</item>
+        <item name="backgroundTint">#C97B63</item>
     </style>
     <style name="RoundActionButton.Move" parent="RoundActionButton">
-        <item name="backgroundTint">#9C27B0</item>
+        <item name="backgroundTint">#A1887F</item>
     </style>
     <style name="RoundActionButton.Copy" parent="RoundActionButton">
-        <item name="backgroundTint">#00BCD4</item>
+        <item name="backgroundTint">#BCAAA4</item>
     </style>
     <style name="RoundActionButton.Archive" parent="RoundActionButton">
-        <item name="backgroundTint">#607D8B</item>
+        <item name="backgroundTint">#B0A090</item>
     </style>
     <style name="RoundActionButton.Delete" parent="RoundActionButton">
-        <item name="backgroundTint">#F44336</item>
+        <item name="backgroundTint">#E57373</item>
     </style>
 
     <style name="RoundActionLabel" parent="">
