@@ -1,9 +1,17 @@
 <resources>
+    <!-- ============================================================ -->
+    <!-- НОЧНАЯ ТЕМА: переопределяем только то, что отличается от    -->
+    <!-- светлой. Остальное наследуется из values/themes.xml.        -->
+    <!-- ============================================================ -->
     <style name="Theme.BAZA" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#FF5722</item>
-        <item name="colorPrimaryDark">#E64A19</item>
-        <item name="colorAccent">#FF9800</item>
-        <item name="colorControlNormal">#FFFFFF</item>
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+
+        <!-- Фон экранов: тёмный шоколад -->
+        <item name="android:windowBackground">@color/windowBackground</item>
+        <item name="android:colorBackground">@color/windowBackground</item>
+        <item name="colorSurface">@color/windowBackground</item>
     </style>
 
     <style name="BottomNavButton" parent="Widget.AppCompat.Button.Borderless">
@@ -12,7 +20,5 @@
         <item name="android:layout_weight">1</item>
         <item name="android:padding">12dp</item>
         <item name="android:scaleType">fitCenter</item>
-        <item name="android:tint">#FFFFFF</item>
-        <item name="android:background">@drawable/btn_dark_circle</item>
     </style>
 </resources>
