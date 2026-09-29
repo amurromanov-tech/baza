@@ -26,6 +26,7 @@
         android:name=".BaseApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.BAZA"
@@ -97,16 +98,14 @@
         <activity android:name=".ui.AuditActivity" />
 
         <!-- ============================================================ -->
-        <!-- OCR ЧЕКОВ (новое) -->
+        <!-- OCR ЧЕКОВ -->
         <!-- ============================================================ -->
 
-        <!-- Сканер чека (камера + ML Kit OCR) -->
         <activity
             android:name=".ui.CheckScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
-        <!-- Экран проверки распознанных товаров -->
         <activity
             android:name=".ui.CheckPreviewActivity"
             android:exported="false"
