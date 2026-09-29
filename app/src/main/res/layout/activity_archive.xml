@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         android:gravity="center_vertical">
 
         <Button
@@ -30,20 +30,155 @@
             android:gravity="center" />
     </LinearLayout>
 
-    <!-- ===== ФИЛЬТР ===== -->
+    <!-- ===== ПАПКИ АРХИВА (тип предмета) ===== -->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Фильтр по причине:"
-        android:textSize="14sp"
+        android:text="Папка:"
+        android:textSize="13sp"
         android:textStyle="bold"
         android:layout_marginBottom="4dp" />
 
-    <Spinner
-        android:id="@+id/spinnerFilter"
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp" />
+        android:scrollbars="none"
+        android:layout_marginBottom="10dp">
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipGroupFolder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            app:chipSpacingHorizontal="6dp"
+            app:chipSpacingVertical="0dp">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipFolderThings"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📦 Вещи"
+                android:checkable="true"
+                android:checked="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipFolderMedicine"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="💊 Лекарства"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipFolderFood"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🍎 Продукты"
+                android:checkable="true" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+
+    <!-- ===== ПРИЧИНА АРХИВАЦИИ (внутри папки) ===== -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Причина:"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:layout_marginBottom="12dp">
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipGroupReason"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            app:chipSpacingHorizontal="6dp"
+            app:chipSpacingVertical="0dp">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonAll"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Все"
+                android:checkable="true"
+                android:checked="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonUsedUp"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🧴 Израсходовано"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonEaten"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🍽 Съедено"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonBroken"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔧 Сломано"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonThrown"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🗑 Выброшено"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonGifted"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🎁 Подарено"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonSold"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="💰 Продано"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonExpired"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⏰ Истёк срок"
+                android:checkable="true" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipReasonOther"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📦 Другое"
+                android:checkable="true" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
 
     <!-- ===== СПИСОК АРХИВА ===== -->
     <androidx.recyclerview.widget.RecyclerView
@@ -55,13 +190,13 @@
         android:paddingBottom="8dp" />
 
     <!-- ===== ИТОГО ===== -->
-    <androidx.cardview.widget.CardView
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         app:cardCornerRadius="8dp"
         app:cardElevation="2dp"
-        app:cardBackgroundColor="#E0E0E0">
+        app:cardBackgroundColor="@color/cardSurface">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -76,7 +211,7 @@
                 android:text="Итого в архиве: 0 ₽"
                 android:textSize="18sp"
                 android:textStyle="bold"
-                android:textColor="#424242"
+                android:textColor="?android:attr/textColorPrimary"
                 android:gravity="center" />
 
             <TextView
@@ -85,10 +220,10 @@
                 android:layout_height="wrap_content"
                 android:text="Предметов: 0"
                 android:textSize="14sp"
-                android:textColor="#757575"
+                android:textColor="?android:attr/textColorSecondary"
                 android:gravity="center"
                 android:layout_marginTop="4dp" />
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+    </com.google.android.material.card.MaterialCardView>
 
 </LinearLayout>
