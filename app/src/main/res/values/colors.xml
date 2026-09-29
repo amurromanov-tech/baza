@@ -1,26 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ===== БАЗОВЫЕ ЦВЕТА ПРИЛОЖЕНИЯ ===== -->
-    <color name="colorPrimary">#FF5722</color>
-    <color name="colorPrimaryDark">#E64A19</color>
-    <color name="colorAccent">#FF9800</color>
+    <!-- ===== БАЗОВЫЕ ЦВЕТА ПРИЛОЖЕНИЯ (тёплая гамма: беж + корица) ===== -->
+    <color name="colorPrimary">#8D6E63</color>
+    <color name="colorPrimaryDark">#6D4C41</color>
+    <color name="colorAccent">#C97B63</color>
 
-    <color name="colorNormal">#4CAF50</color>
-    <color name="colorSoonExpired">#FFC107</color>
-    <color name="colorExpired">#F44336</color>
-    <color name="colorFolderBar">#9E9E9E</color>
+    <color name="colorNormal">#81C784</color>
+    <color name="colorSoonExpired">#FFD54F</color>
+    <color name="colorExpired">#E57373</color>
+    <color name="colorFolderBar">#BCAAA4</color>
     <color name="iconColor">#000000</color>
-    <color name="colorWarning">#FFC107</color>
+    <color name="colorWarning">#FFD54F</color>
 
     <!-- ===== ЦВЕТА ДЛЯ ИКОНОК ===== -->
-    <color name="folder_icon_color">#FF9800</color>
-    <color name="item_icon_color">#2196F3</color>
+    <color name="folder_icon_color">#C97B63</color>
+    <color name="item_icon_color">#8D6E63</color>
 
     <!-- ===== ЦВЕТА СТАТУСОВ ===== -->
-    <color name="status_normal">#4CAF50</color>
-    <color name="status_warning">#FFC107</color>
-    <color name="status_expired">#F44336</color>
-    <color name="status_lent">#FF9800</color>
+    <color name="status_normal">#81C784</color>
+    <color name="status_warning">#FFD54F</color>
+    <color name="status_expired">#E57373</color>
+    <color name="status_lent">#C97B63</color>
 
     <!-- ===== ЧИПЫ (пастельные: фон + тёмный текст) ===== -->
     <!-- Тип -->
@@ -46,19 +46,19 @@
     <color name="chipLentText">#0D47A1</color>
 
     <!-- ===== СЕКЦИИ И ЗАГОЛОВКИ ===== -->
-    <color name="sectionTitle">#FF5722</color>
-    <color name="cardSurface">#FFFFFF</color>
+    <color name="sectionTitle">#8D6E63</color>
+    <color name="cardSurface">#FDF6E9</color>
     <color name="cardSurfaceDark">#1E1E1E</color>
 
     <!-- ===== ПУТЬ И ДАТЫ ===== -->
-    <color name="pathTextColor">#546E7A</color>
-    <color name="pathChipBg">#ECEFF1</color>
-    <color name="dateLabel">#78909C</color>
-    <color name="dateValue">#263238</color>
+    <color name="pathTextColor">#6D4C41</color>
+    <color name="pathChipBg">#F5E6D3</color>
+    <color name="dateLabel">#8D6E63</color>
+    <color name="dateValue">#3E2723</color>
 
     <!-- ===== ЦЕНА ===== -->
-    <color name="priceChipBg">#FFF3E0</color>
-    <color name="priceChipText">#E65100</color>
+    <color name="priceChipBg">#F5E6D3</color>
+    <color name="priceChipText">#6D4C41</color>
 
     <!-- ===== ЧИПЫ-ПОЛЯ (для просмотра) ===== -->
     <!-- Название -->
@@ -78,8 +78,8 @@
     <color name="chipExpiryText">#BF360C</color>
 
     <!-- Описание (карточка) -->
-    <color name="descriptionBg">#F5F5F5</color>
-    <color name="descriptionText">#37474F</color>
+    <color name="descriptionBg">#FDF6E9</color>
+    <color name="descriptionText">#4E342E</color>
     <color name="descriptionBgDark">#1E1E1E</color>
     <color name="descriptionTextDark">#CFD8DC</color>
 </resources>
