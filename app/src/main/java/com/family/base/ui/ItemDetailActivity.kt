@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -78,6 +79,13 @@ class ItemDetailActivity : AppCompatActivity() {
     private val APPEAR_STAGGER = 50L
 
     private var currentItem: ItemEntity? = null
+
+    // ===== СВОРАЧИВАНИЕ СЕКЦИЙ =====
+    private val PREFS_NAME = "baza_item_detail_collapse"
+    private val KEY_BASIC = "section_basic"
+    private val KEY_DETAILS = "section_details"
+    private val KEY_DATES = "section_dates"
+    private val KEY_DESCRIPTION = "section_description"
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -163,6 +171,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
         setupListeners()
         setupSubtypeEditDropdown()
+        setupCollapsibleSections()
+        applyCollapsibleState()
 
         when {
             showHistory -> { isEditMode = false; showHistory(itemId!!) }
@@ -222,6 +232,69 @@ class ItemDetailActivity : AppCompatActivity() {
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
         }
+    }
+
+    // ============================================================
+    // СВОРАЧИВАНИЕ СЕКЦИЙ
+    // ============================================================
+    private fun setupCollapsibleSections() {
+        binding.sectionBasicHeader.setOnClickListener {
+            toggleSection(binding.contentBasicExpandable, binding.arrowBasic, KEY_BASIC)
+        }
+        binding.sectionDetailsHeader.setOnClickListener {
+            toggleSection(binding.contentDetailsExpandable, binding.arrowDetails, KEY_DETAILS)
+        }
+        binding.sectionDatesHeader.setOnClickListener {
+            toggleSection(binding.contentDatesExpandable, binding.arrowDates, KEY_DATES)
+        }
+        binding.sectionDescriptionHeader.setOnClickListener {
+            toggleSection(binding.contentDescriptionExpandable, binding.arrowDescription, KEY_DESCRIPTION)
+        }
+    }
+
+    private fun toggleSection(content: View, arrow: android.widget.TextView, prefKey: String) {
+        val isExpanded = content.visibility == View.VISIBLE
+        if (isExpanded) {
+            content.visibility = View.GONE
+            arrow.text = "▶"
+            saveCollapsibleState(prefKey, false)
+        } else {
+            content.visibility = View.VISIBLE
+            arrow.text = "▼"
+            saveCollapsibleState(prefKey, true)
+        }
+    }
+
+    private fun applyCollapsibleState() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // Дефолт: «Основное» — развёрнуто, остальные — свёрнуты
+        val basicExpanded = prefs.getBoolean(KEY_BASIC, true)
+        val detailsExpanded = prefs.getBoolean(KEY_DETAILS, false)
+        val datesExpanded = prefs.getBoolean(KEY_DATES, false)
+        val descriptionExpanded = prefs.getBoolean(KEY_DESCRIPTION, false)
+
+        applyState(binding.contentBasicExpandable, binding.arrowBasic, basicExpanded)
+        applyState(binding.contentDetailsExpandable, binding.arrowDetails, detailsExpanded)
+        applyState(binding.contentDatesExpandable, binding.arrowDates, datesExpanded)
+        applyState(binding.contentDescriptionExpandable, binding.arrowDescription, descriptionExpanded)
+    }
+
+    private fun applyState(content: View, arrow: android.widget.TextView, expanded: Boolean) {
+        if (expanded) {
+            content.visibility = View.VISIBLE
+            arrow.text = "▼"
+        } else {
+            content.visibility = View.GONE
+            arrow.text = "▶"
+        }
+    }
+
+    private fun saveCollapsibleState(key: String, expanded: Boolean) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(key, expanded)
+            .apply()
     }
 
     // ============================================================
@@ -386,7 +459,7 @@ class ItemDetailActivity : AppCompatActivity() {
         quantityAnimator?.cancel()
         binding.chipQuantityView.post {
             if (target <= 0) {
-                binding.chipQuantityView.text = "📦 ×0"
+                binding.chipQuantityView.text = "📦 Количество: ×0"
                 return@post
             }
             quantityAnimator = ValueAnimator.ofInt(0, target).apply {
@@ -394,7 +467,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 interpolator = DecelerateInterpolator()
                 addUpdateListener { anim ->
                     val value = anim.animatedValue as Int
-                    binding.chipQuantityView.text = "📦 ×$value"
+                    binding.chipQuantityView.text = "📦 Количество: ×$value"
                 }
                 start()
             }
@@ -563,6 +636,9 @@ class ItemDetailActivity : AppCompatActivity() {
                 currentParentId = item.parentId
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
+                // В режиме редактирования — раскрываем все секции для удобства
+                expandAllSections()
+
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
                     showViewMode(false)
@@ -593,6 +669,13 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun expandAllSections() {
+        applyState(binding.contentBasicExpandable, binding.arrowBasic, true)
+        applyState(binding.contentDetailsExpandable, binding.arrowDetails, true)
+        applyState(binding.contentDatesExpandable, binding.arrowDates, true)
+        applyState(binding.contentDescriptionExpandable, binding.arrowDescription, true)
+    }
+
     // ============================================================
     // ПЕРЕКЛЮЧЕНИЕ VIEW / EDIT
     // ============================================================
@@ -600,7 +683,7 @@ class ItemDetailActivity : AppCompatActivity() {
         val viewVisibility = if (isView) View.VISIBLE else View.GONE
         val editVisibility = if (isView) View.GONE else View.VISIBLE
 
-        binding.chipNameView.visibility = viewVisibility
+        binding.tvNameView.visibility = viewVisibility
         binding.tilName.visibility = editVisibility
 
         binding.quantityRow.visibility = viewVisibility
@@ -608,7 +691,6 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.typeEditBlock.visibility = editVisibility
         binding.subtypeEditBlock.visibility = editVisibility
-        binding.chipSubtypeView.visibility = viewVisibility
 
         binding.chipBarcodeView.visibility = viewVisibility
         binding.barcodeEditBlock.visibility = editVisibility
@@ -626,12 +708,15 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun fillViewFields(item: ItemEntity, path: String) {
-        binding.chipNameView.text = "📝 ${item.name}"
-        binding.chipNameView.visibility = View.VISIBLE
+        // Название — жирный TextView без чипа
+        binding.tvNameView.text = "📝 ${item.name}"
+        binding.tvNameView.visibility = View.VISIBLE
 
+        // Количество — «📦 Количество: ×N»
         binding.quantityRow.visibility = View.VISIBLE
-        animateQuantity(item.quantity)
+        binding.chipQuantityView.text = "📦 Количество: ×${item.quantity}"
 
+        // Подтип — уже в chipGroupStatus
         val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
         if (subtypeDisplay != null) {
             binding.chipSubtypeView.text = subtypeDisplay
@@ -1047,7 +1132,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== НОВЫЙ ПУНКТ «🧴 Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun showArchiveDialog() {
         val id = itemId ?: return
         val reasons = arrayOf(
