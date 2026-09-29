@@ -68,18 +68,15 @@ class ItemDetailActivity : AppCompatActivity() {
     private var quantityAnimator: ValueAnimator? = null
     private var priceAnimator: ValueAnimator? = null
 
-    // ===== ПУЛЬСАЦИЯ СТАТУСОВ =====
     private var expiredPulse: ObjectAnimator? = null
     private var soonPulse: ObjectAnimator? = null
 
     private var currentEditType: String = "thing"
     private var selectedEditSubtype: String? = null
 
-    // ===== АНИМАЦИЯ ПОЯВЛЕНИЯ =====
     private val APPEAR_DURATION = 250L
     private val APPEAR_STAGGER = 50L
 
-    // ===== ТЕКУЩИЙ ITEM (для быстрых действий) =====
     private var currentItem: ItemEntity? = null
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -195,13 +192,11 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
-        // ===== ДОЛГОЕ НАЖАТИЕ НА КОЛИЧЕСТВО — БЫСТРОЕ РЕДАКТИРОВАНИЕ =====
         binding.chipQuantityView.setOnLongClickListener {
             showQuickQuantityDialog()
             true
         }
 
-        // ===== КЛИК ПО ИНДИКАТОРУ СИНХРОНИЗАЦИИ =====
         binding.tvSyncStatus.setOnClickListener {
             showSyncStatusToast()
         }
@@ -230,13 +225,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПУНКТ 14: БЫСТРОЕ РЕДАКТИРОВАНИЕ КОЛИЧЕСТВА
+    // БЫСТРОЕ РЕДАКТИРОВАНИЕ КОЛИЧЕСТВА
     // ============================================================
     private fun showQuickQuantityDialog() {
         val id = itemId ?: return
         val item = currentItem ?: return
 
-        // Поле ввода
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(48, 16, 48, 16)
@@ -265,7 +259,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 viewModel.updateItemQuantity(id, newQty)
-                // Обновляем UI мгновенно
                 currentItem = item.copy(quantity = newQty)
                 animateQuantity(newQty)
                 Toast.makeText(this, "Количество: $newQty", Toast.LENGTH_SHORT).show()
@@ -275,7 +268,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПУНКТ 13: ИНДИКАТОР СИНХРОНИЗАЦИИ
+    // ИНДИКАТОР СИНХРОНИЗАЦИИ
     // ============================================================
     private fun updateSyncIndicator(item: ItemEntity) {
         lifecycleScope.launch {
@@ -456,12 +449,12 @@ class ItemDetailActivity : AppCompatActivity() {
         val (color, label) = when {
             daysLeft < 0 -> {
                 val overdue = -daysLeft
-                Pair(Color.parseColor("#F44336"), "⏰ Просрочен на $overdue дн. (100%)")
+                Pair(Color.parseColor("#E57373"), "⏰ Просрочен на $overdue дн. (100%)")
             }
-            daysLeft == 0 -> Pair(Color.parseColor("#F44336"), "⏰ Истекает сегодня!")
-            daysLeft in 1..3 -> Pair(Color.parseColor("#FF9800"), "⚠️ Осталось $daysLeft дн. ($progressPercent%)")
-            daysLeft in 4..14 -> Pair(Color.parseColor("#FFC107"), "⏳ Осталось $daysLeft дн. ($progressPercent%)")
-            else -> Pair(Color.parseColor("#4CAF50"), "✅ Осталось $daysLeft дн. ($progressPercent%)")
+            daysLeft == 0 -> Pair(Color.parseColor("#E57373"), "⏰ Истекает сегодня!")
+            daysLeft in 1..3 -> Pair(Color.parseColor("#C97B63"), "⚠️ Осталось $daysLeft дн. ($progressPercent%)")
+            daysLeft in 4..14 -> Pair(Color.parseColor("#FFD54F"), "⏳ Осталось $daysLeft дн. ($progressPercent%)")
+            else -> Pair(Color.parseColor("#81C784"), "✅ Осталось $daysLeft дн. ($progressPercent%)")
         }
 
         binding.expiryProgress.setIndicatorColor(color)
@@ -1054,10 +1047,29 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
+    // ===== НОВЫЙ ПУНКТ «🧴 Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun showArchiveDialog() {
         val id = itemId ?: return
-        val reasons = arrayOf("🍽 Съедено", "🔧 Сломано", "🗑 Выброшено", "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое")
-        val reasonKeys = arrayOf("eaten", "broken", "thrown", "gifted", "sold", "expired", "other")
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
 
         AlertDialog.Builder(this)
             .setTitle("📦 В архив: ${binding.tvTitle.text}")
