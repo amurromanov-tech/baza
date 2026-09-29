@@ -101,7 +101,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
         }
 
-        // ===== РЕМОНТ 1: осиротевшие предметы =====
         try {
             val orphans = db.itemDao().getOrphanItems()
             if (orphans.isNotEmpty()) {
@@ -115,14 +114,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
 
-        // ===== РЕМОНТ 2: неправильные imageUrl у старых предметов =====
         try {
             fixOldImageUrls()
         } catch (e: Exception) {
             Logger.log(TAG, "Error fixing old imageUrls: ${e.message}")
         }
 
-        // ===== РЕМОНТ 3: неправильные iconUrl у старых папок =====
         try {
             fixOldFolderIconUrls()
         } catch (e: Exception) {
@@ -130,12 +127,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Ремонт «застрявших» imageUrl у предметов, созданных до миграции.
-     *
-     * Если imageUrl не совпадает с "images/<id>.jpg", но локальный файл есть —
-     * сбрасываем imageUrl в null, чтобы uploadUnsyncedImages его подхватил.
-     */
     private suspend fun fixOldImageUrls() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = db.itemDao().getAllItemsWithImageUrl()
@@ -145,28 +136,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val expected = "images/${item.id}.jpg"
             val current = item.imageUrl ?: continue
 
-            // Если imageUrl правильный — пропускаем
             if (current == expected) continue
 
-            // Проверяем: есть ли локальный файл
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile != null && localFile.exists()) {
-                // Есть локальный файл, imageUrl неправильный → сбрасываем
                 db.itemDao().clearImageUrl(item.id)
                 fixedCount++
                 Logger.log(TAG, "Cleared bad imageUrl for item '${item.name}' (was: $current)")
             } else {
-                // Локального файла нет — но imageUrl тоже неправильный.
-                // Скачать с Диска не сможем (там нет). Оставляем — просто будет плейсхолдер.
                 Logger.log(TAG, "Item '${item.name}' has bad imageUrl but no local file (was: $current)")
             }
         }
         Logger.log(TAG, "Fixed $fixedCount bad imageUrls")
     }
 
-    /**
-     * Ремонт «застрявших» iconUrl у папок (на случай, если была та же проблема).
-     */
     private suspend fun fixOldFolderIconUrls() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = db.folderDao().getAllFolders()
@@ -924,8 +907,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
     }
 
+    // ===== НОВЫЙ СТАТУС: used_up «Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun getArchiveReasonText(reason: String): String {
         return when (reason) {
+            "used_up" -> "🧴 Израсходовано"
             "eaten" -> "Съедено"
             "broken" -> "Сломано"
             "thrown" -> "Выброшено"
