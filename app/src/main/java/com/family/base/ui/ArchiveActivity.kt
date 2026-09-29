@@ -1,9 +1,6 @@
 package com.family.base.ui
 
 import android.os.Bundle
-import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -28,23 +25,14 @@ class ArchiveActivity : AppCompatActivity() {
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
-    // ===== ФИЛЬТРЫ: «🧴 Израсходовано» — сразу после «Все» =====
-    private val filters = arrayOf(
-        "Все",
-        "🧴 Израсходовано",
-        "🍽 Съедено",
-        "🔧 Сломано",
-        "🗑 Выброшено",
-        "🎁 Подарено",
-        "💰 Продано",
-        "⏰ Истёк срок",
-        "📦 Другое"
-    )
-    private val filterKeys = arrayOf(
-        null,
-        "used_up",
-        "eaten", "broken", "thrown", "gifted", "sold", "expired", "other"
-    )
+    // ===== ПАПКИ АРХИВА (по типу предмета) =====
+    private enum class ArchiveFolder { THINGS, MEDICINE, FOOD }
+
+    private var currentFolder: ArchiveFolder = ArchiveFolder.THINGS
+    private var currentReasonKey: String? = null
+
+    // ===== Все архивные предметы (загружаются один раз) =====
+    private var allArchivedItems: List<ItemEntity> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,46 +53,91 @@ class ArchiveActivity : AppCompatActivity() {
 
         binding.btnBack.setOnClickListener { finish() }
 
-        // Спиннер фильтра
-        val spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, filters)
-        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        binding.spinnerFilter.adapter = spinnerAdapter
+        setupFolderChips()
+        setupReasonChips()
 
-        binding.spinnerFilter.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                loadArchive(filterKeys[position])
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
+        loadAllArchive()
 
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
     }
 
-    private fun loadArchive(filterKey: String?) {
+    // ==================== ПАПКИ ====================
+
+    private fun setupFolderChips() {
+        binding.chipGroupFolder.setOnCheckedStateChangeListener { _, checkedIds ->
+            when (checkedIds.firstOrNull()) {
+                R.id.chipFolderMedicine -> currentFolder = ArchiveFolder.MEDICINE
+                R.id.chipFolderFood -> currentFolder = ArchiveFolder.FOOD
+                else -> currentFolder = ArchiveFolder.THINGS
+            }
+            // При смене папки — сбрасываем причину на «Все»
+            binding.chipGroupReason.check(R.id.chipReasonAll)
+            currentReasonKey = null
+            applyFilters()
+        }
+    }
+
+    private fun setupReasonChips() {
+        binding.chipGroupReason.setOnCheckedStateChangeListener { _, checkedIds ->
+            currentReasonKey = when (checkedIds.firstOrNull()) {
+                R.id.chipReasonUsedUp -> "used_up"
+                R.id.chipReasonEaten -> "eaten"
+                R.id.chipReasonBroken -> "broken"
+                R.id.chipReasonThrown -> "thrown"
+                R.id.chipReasonGifted -> "gifted"
+                R.id.chipReasonSold -> "sold"
+                R.id.chipReasonExpired -> "expired"
+                R.id.chipReasonOther -> "other"
+                else -> null
+            }
+            applyFilters()
+        }
+    }
+
+    // ==================== ЗАГРУЗКА ====================
+
+    private fun loadAllArchive() {
         lifecycleScope.launch {
             try {
-                val items = withContext(Dispatchers.IO) {
-                    if (filterKey == null) {
-                        db.itemDao().getArchivedItems()
-                    } else {
-                        db.itemDao().getArchivedItemsByReason(filterKey)
-                    }
+                allArchivedItems = withContext(Dispatchers.IO) {
+                    db.itemDao().getArchivedItems()
                 }
-
-                adapter.submitList(items)
-
-                val totalSum = items.sumOf { (it.price ?: 0.0) * it.quantity }
-                binding.tvArchiveTotal.text = "Итого в архиве: ${formatMoney(totalSum)}"
-                binding.tvArchiveCount.text = "Предметов: ${items.size}"
-
-                Logger.log(TAG, "Loaded ${items.size} archived items")
+                applyFilters()
+                Logger.log(TAG, "Loaded ${allArchivedItems.size} archived items total")
             } catch (e: Exception) {
                 Logger.log(TAG, "Error loading archive", e)
                 Toast.makeText(this@ArchiveActivity, "Ошибка загрузки архива", Toast.LENGTH_SHORT).show()
             }
         }
     }
+
+    private fun applyFilters() {
+        val byFolder = allArchivedItems.filter { matchesFolder(it, currentFolder) }
+        val result = if (currentReasonKey == null) {
+            byFolder
+        } else {
+            byFolder.filter { it.archivedReason == currentReasonKey }
+        }
+
+        adapter.submitList(result)
+
+        val totalSum = result.sumOf { (it.price ?: 0.0) * it.quantity }
+        binding.tvArchiveTotal.text = "Итого в архиве: ${formatMoney(totalSum)}"
+        binding.tvArchiveCount.text = "Предметов: ${result.size}"
+    }
+
+    private fun matchesFolder(item: ItemEntity, folder: ArchiveFolder): Boolean {
+        return when (folder) {
+            ArchiveFolder.FOOD -> item.itemType == "food"
+            ArchiveFolder.MEDICINE -> item.itemType == "medicine"
+            ArchiveFolder.THINGS -> {
+                val t = item.itemType
+                t == null || t.isEmpty() || t == "thing" || t == "other"
+            }
+        }
+    }
+
+    // ==================== ДЕТАЛИ / ВОССТАНОВЛЕНИЕ ====================
 
     private fun showItemDetails(item: ItemEntity) {
         val reasonText = getReasonText(item.archivedReason)
@@ -141,7 +174,7 @@ class ArchiveActivity : AppCompatActivity() {
                             db.itemDao().unarchiveItem(item.id, System.currentTimeMillis())
                         }
                         Toast.makeText(this@ArchiveActivity, "Предмет возвращён в базу", Toast.LENGTH_SHORT).show()
-                        loadArchive(null)
+                        loadAllArchive()
                     } catch (e: Exception) {
                         Logger.log(TAG, "Error restoring item", e)
                         Toast.makeText(this@ArchiveActivity, "Ошибка возврата", Toast.LENGTH_SHORT).show()
@@ -152,7 +185,8 @@ class ArchiveActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== ДОБАВЛЕН used_up =====
+    // ==================== ХЕЛПЕРЫ ====================
+
     private fun getReasonText(reason: String?): String {
         return when (reason) {
             "used_up" -> "🧴 Израсходовано"
