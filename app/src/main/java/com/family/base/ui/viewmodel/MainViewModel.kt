@@ -25,11 +25,11 @@ import androidx.lifecycle.LiveData
 // МОДЕЛЬ ПРОГРЕССА СИНХРОНИЗАЦИИ
 // ============================================================
 enum class SyncPhase {
-    SENDING,             // 📤 Отправка изменений
-    DOWNLOADING,         // 📥 Получение данных с Диска
-    UPLOADING_PHOTOS,    // 📷 Загрузка фото
-    DOWNLOADING_PHOTOS,  // 🖼️ Скачивание фото
-    DONE                 // ✅ Готово
+    SENDING,
+    DOWNLOADING,
+    UPLOADING_PHOTOS,
+    DOWNLOADING_PHOTOS,
+    DONE
 }
 
 data class SyncProgress(
@@ -56,8 +56,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val syncStatus = MutableLiveData<SyncStatus>(SyncStatus.SYNCED)
 
     val syncResultMessage = MutableLiveData<String?>()
-
-    // ===== ПРОГРЕСС СИНХРОНИЗАЦИИ =====
     val syncProgress = MutableLiveData<SyncProgress?>(null)
 
     private var currentFolderId: String? = null
@@ -71,15 +69,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var allItems: List<ItemEntity> = emptyList()
     private var searchQuery: String? = null
 
-    // ===== MUTEX ДЛЯ ЗАЩИТЫ ОТ ПАРАЛЛЕЛЬНЫХ СИНКОВ =====
     private val syncMutex = Mutex()
-
-    // ===== APPLICATION-SCOPE: живёт всё время жизни приложения =====
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // ===== Job для принудительной синхронизации (кнопка) =====
     private var forceSyncJob: Job? = null
-
     private var forceSyncRequested = false
 
     init {
@@ -108,6 +101,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
         }
 
+        // ===== РЕМОНТ 1: осиротевшие предметы =====
         try {
             val orphans = db.itemDao().getOrphanItems()
             if (orphans.isNotEmpty()) {
@@ -120,6 +114,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
+
+        // ===== РЕМОНТ 2: неправильные imageUrl у старых предметов =====
+        try {
+            fixOldImageUrls()
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error fixing old imageUrls: ${e.message}")
+        }
+
+        // ===== РЕМОНТ 3: неправильные iconUrl у старых папок =====
+        try {
+            fixOldFolderIconUrls()
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error fixing old folder iconUrls: ${e.message}")
+        }
+    }
+
+    /**
+     * Ремонт «застрявших» imageUrl у предметов, созданных до миграции.
+     *
+     * Если imageUrl не совпадает с "images/<id>.jpg", но локальный файл есть —
+     * сбрасываем imageUrl в null, чтобы uploadUnsyncedImages его подхватил.
+     */
+    private suspend fun fixOldImageUrls() {
+        val appContext = getApplication<Application>().applicationContext
+        val allItems = db.itemDao().getAllItemsWithImageUrl()
+
+        var fixedCount = 0
+        for (item in allItems) {
+            val expected = "images/${item.id}.jpg"
+            val current = item.imageUrl ?: continue
+
+            // Если imageUrl правильный — пропускаем
+            if (current == expected) continue
+
+            // Проверяем: есть ли локальный файл
+            val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+            if (localFile != null && localFile.exists()) {
+                // Есть локальный файл, imageUrl неправильный → сбрасываем
+                db.itemDao().clearImageUrl(item.id)
+                fixedCount++
+                Logger.log(TAG, "Cleared bad imageUrl for item '${item.name}' (was: $current)")
+            } else {
+                // Локального файла нет — но imageUrl тоже неправильный.
+                // Скачать с Диска не сможем (там нет). Оставляем — просто будет плейсхолдер.
+                Logger.log(TAG, "Item '${item.name}' has bad imageUrl but no local file (was: $current)")
+            }
+        }
+        Logger.log(TAG, "Fixed $fixedCount bad imageUrls")
+    }
+
+    /**
+     * Ремонт «застрявших» iconUrl у папок (на случай, если была та же проблема).
+     */
+    private suspend fun fixOldFolderIconUrls() {
+        val appContext = getApplication<Application>().applicationContext
+        val allFolders = db.folderDao().getAllFolders()
+
+        var fixedCount = 0
+        for (folder in allFolders) {
+            val expected = "folder_${folder.id}.jpg"
+            val current = folder.iconUrl ?: continue
+
+            if (current == expected) continue
+
+            val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+            if (localFile != null && localFile.exists()) {
+                val updated = folder.copy(iconUrl = null)
+                db.folderDao().updateFolder(updated)
+                fixedCount++
+                Logger.log(TAG, "Cleared bad iconUrl for folder '${folder.name}' (was: $current)")
+            }
+        }
+        Logger.log(TAG, "Fixed $fixedCount bad folder iconUrls")
     }
 
     // ============================================================
@@ -307,7 +374,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var downloadedCount = 0
 
             try {
-                // ===== ФАЗА 0: АВТОРИЗАЦИЯ =====
                 syncProgress.postValue(SyncProgress(SyncPhase.SENDING, 0, 1, "Проверка авторизации…"))
 
                 if (!ensureValidToken()) {
@@ -324,25 +390,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
-                // ===== ФАЗА 1: ОТПРАВКА ЛОКАЛЬНЫХ ИЗМЕНЕНИЙ =====
                 uploadedCount = processPendingChangesInternal()
 
-                // ===== ФАЗА 2: СКАЧИВАНИЕ ДАННЫХ С ДИСКА =====
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
                 val (diskFolders, diskItems) = repository.downloadDataFromDisk()
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
                 mergeData(diskFolders, diskItems)
                 downloadedCount = diskFolders.size + diskItems.size
 
-                // ===== ФАЗА 3: ЗАГРУЗКА ЛОКАЛЬНЫХ ФОТО =====
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
 
-                // ===== ФАЗА 4: СКАЧИВАНИЕ ФОТО =====
                 syncImages()
                 syncFolderImages()
 
-                // ===== ФАЗА 5: ГОТОВО =====
                 val pendingCount = syncQueueDao.getPendingCount()
                 if (pendingCount > 0) {
                     syncStatus.postValue(SyncStatus.PENDING)
@@ -384,7 +445,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncProgress.postValue(null)
             } finally {
                 syncMutex.unlock()
-                // Плашка скроется сама через 2 сек в MainActivity
             }
         }
     }
@@ -627,7 +687,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         for ((index, entry) in pending.withIndex()) {
             try {
-                // Получаем имя для отображения
                 val displayName = when (entry.entityType) {
                     "folder" -> db.folderDao().getFolderById(entry.entityId)?.name ?: "папка"
                     "item" -> db.itemDao().getItemById(entry.entityId)?.name ?: "предмет"
