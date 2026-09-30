@@ -585,7 +585,6 @@ class MainActivity : AppCompatActivity() {
     // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
     // ============================================================
     private fun showMoveItemDialog(item: ItemEntity) {
-        // Если одна штука — сразу папки
         if (item.quantity <= 1) {
             openMoveFolderPicker(item, 1)
             return
@@ -708,12 +707,13 @@ class MainActivity : AppCompatActivity() {
         val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
 
         val changeBy = { delta: Int ->
-            if (withCheckAll && checkAll.isChecked) return@let
-            val cur = result.getValue()
-            val next = (cur + delta).coerceIn(1, maxQty)
-            if (next != cur) {
-                editText.setText(next.toString())
-                editText.setSelection(editText.text.length)
+            if (!(withCheckAll && checkAll.isChecked)) {
+                val cur = result.getValue()
+                val next = (cur + delta).coerceIn(1, maxQty)
+                if (next != cur) {
+                    editText.setText(next.toString())
+                    editText.setSelection(editText.text.length)
+                }
             }
         }
 
