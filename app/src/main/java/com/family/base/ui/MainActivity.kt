@@ -532,15 +532,16 @@ class MainActivity : AppCompatActivity() {
             .setView(stepper.container)
             .setPositiveButton("Далее") { _, _ ->
                 val count = stepper.getValue()
-                when {
-                    count <= 0 -> Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    count > item.quantity -> Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    count == item.quantity -> showWriteOffReasonDialog(item, count)
-                    else -> {
-                        viewModel.writeOffItem(item.id, count, null, null)
-                        Toast.makeText(this, "Списано $count шт.", Toast.LENGTH_SHORT).show()
-                    }
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
                 }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                // ВСЕГДА спрашиваем причину
+                showWriteOffReasonDialog(item, count)
             }
             .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
             .setOnDismissListener { stopRepeat() }
@@ -548,6 +549,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showWriteOffReasonDialog(item: ItemEntity, count: Int) {
+        val noun = getWriteOffNoun(item)
+        val totalQty = item.quantity
+
+        val title = if (count == totalQty) {
+            "Списываешь последнюю $noun.\nПредмет уйдёт в архив."
+        } else {
+            "Списать $count шт. — в архив.\nВыберите причину:"
+        }
+
         val reasons = arrayOf(
             "🧴 Израсходовано",
             "🍽 Съедено",
@@ -569,13 +579,15 @@ class MainActivity : AppCompatActivity() {
             "other"
         )
 
-        val noun = getWriteOffNoun(item)
-
         AlertDialog.Builder(this)
-            .setTitle("Списываешь последнюю $noun.\nПредмет уйдёт в архив.")
+            .setTitle(title)
             .setItems(reasons) { _, which ->
                 viewModel.writeOffItem(item.id, count, reasonKeys[which], null)
-                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                if (count == totalQty) {
+                    Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Списано $count шт. в архив", Toast.LENGTH_SHORT).show()
+                }
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -634,7 +646,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS (+ чекбокс «Всё» опционально)
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS (+ чекбокс «Всё»)
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
