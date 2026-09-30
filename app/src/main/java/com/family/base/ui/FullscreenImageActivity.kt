@@ -31,6 +31,9 @@ class FullscreenImageActivity : AppCompatActivity() {
 
         // Порог, при котором масштаб считаем «не увеличен»
         private const val ZOOM_THRESHOLD = 1.05f
+
+        // Минимальный сдвиг, после которого считаем это свайпом (а не тапом)
+        private const val SWIPE_START_DP = 24f
     }
 
     private lateinit var rootContainer: FrameLayout
@@ -40,11 +43,11 @@ class FullscreenImageActivity : AppCompatActivity() {
     private lateinit var tvTitle: TextView
     private lateinit var btnClose: ImageView
 
-    private var isZoomed = false
     private var isDragging = false
     private var dragStartY = 0f
     private var currentTranslationY = 0f
     private var dismissThreshold = 0f
+    private var swipeStartThreshold = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,7 +68,9 @@ class FullscreenImageActivity : AppCompatActivity() {
         tvTitle.text = title ?: ""
         btnClose.setOnClickListener { finish() }
 
+        val density = resources.displayMetrics.density
         dismissThreshold = resources.displayMetrics.heightPixels * DISMISS_THRESHOLD_RATIO
+        swipeStartThreshold = SWIPE_START_DP * density
 
         if (imagePath.isNullOrEmpty()) {
             Logger.log(TAG, "No image path provided")
@@ -90,74 +95,67 @@ class FullscreenImageActivity : AppCompatActivity() {
             return
         }
 
-        // Отслеживаем масштаб (увеличено ли фото)
-        photoView.setOnScaleChangeListener { _, _, _ ->
-            isZoomed = photoView.scale > ZOOM_THRESHOLD
-            Logger.log(TAG, "Scale changed: ${photoView.scale}, isZoomed=$isZoomed")
-        }
-
-        setupSwipeToDismiss()
         hideSystemBars()
 
         Logger.log(TAG, "=== FullscreenImageActivity onCreate FINISHED ===")
     }
 
     // ============================================================
-    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ (с анимацией)
+    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ — через dispatchTouchEvent
+    // (работает поверх PhotoView, который перехватывает события)
     // ============================================================
-    private fun setupSwipeToDismiss() {
-        photoView.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    if (isZoomed || photoView.scale > ZOOM_THRESHOLD) {
-                        isDragging = false
-                        return@setOnTouchListener false
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // Если фото увеличено — не мешаем PhotoView (pinch/pan)
+        if (photoView.scale > ZOOM_THRESHOLD) {
+            if (isDragging) {
+                // Сброс, если вдруг начали drag и потом приблизили
+                animateBackToOrigin()
+                isDragging = false
+            }
+            return super.dispatchTouchEvent(ev)
+        }
+
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                dragStartY = ev.rawY
+                currentTranslationY = 0f
+                isDragging = false
+                return super.dispatchTouchEvent(ev)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val deltaY = ev.rawY - dragStartY
+
+                if (!isDragging && deltaY > swipeStartThreshold) {
+                    // Превращаем в свайп — перехватываем событие
+                    isDragging = true
+                }
+
+                if (isDragging) {
+                    val effectiveDelta = deltaY.coerceAtLeast(0f)
+                    currentTranslationY = effectiveDelta
+                    applySwipeTransform(effectiveDelta)
+                    return true  // съедаем событие, PhotoView не видит
+                }
+
+                return super.dispatchTouchEvent(ev)
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (isDragging) {
+                    if (currentTranslationY > dismissThreshold) {
+                        animateDismissAndFinish()
+                    } else {
+                        animateBackToOrigin()
                     }
-                    dragStartY = event.rawY
-                    currentTranslationY = 0f
                     isDragging = false
-                    false
+                    return true
                 }
-
-                MotionEvent.ACTION_MOVE -> {
-                    if (isZoomed || photoView.scale > ZOOM_THRESHOLD) {
-                        isDragging = false
-                        return@setOnTouchListener false
-                    }
-
-                    val deltaY = event.rawY - dragStartY
-
-                    if (deltaY > 0) {
-                        isDragging = true
-                        currentTranslationY = deltaY
-                        applySwipeTransform(deltaY)
-                        true
-                    } else {
-                        if (isDragging) {
-                            animateBackToOrigin()
-                            isDragging = false
-                        }
-                        false
-                    }
-                }
-
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (isDragging) {
-                        if (currentTranslationY > dismissThreshold) {
-                            animateDismissAndFinish()
-                        } else {
-                            animateBackToOrigin()
-                        }
-                        isDragging = false
-                        true
-                    } else {
-                        false
-                    }
-                }
-
-                else -> false
+                return super.dispatchTouchEvent(ev)
             }
         }
+
+        return super.dispatchTouchEvent(ev)
     }
 
     /**
@@ -167,7 +165,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         photoContainer.translationY = deltaY
 
         val progress = (deltaY / dismissThreshold).coerceIn(0f, 1f)
-
         rootContainer.alpha = 1f - progress * 0.7f
         tvHint.alpha = 1f - progress
         tvTitle.alpha = 1f - progress
