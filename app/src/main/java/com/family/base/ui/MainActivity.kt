@@ -11,6 +11,8 @@ import android.view.View
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
 import android.view.animation.RotateAnimation
+import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -358,7 +360,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSearchDialog() {
-        val editText = android.widget.EditText(this)
+        val editText = EditText(this)
         editText.hint = "Поиск по названию или штрих-коду..."
         viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) editText.setText(it) }
 
@@ -409,7 +411,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCreateFolderDialog() {
-        val editText = android.widget.EditText(this)
+        val editText = EditText(this)
         editText.hint = "Название папки"
         AlertDialog.Builder(this)
             .setTitle("Новая папка")
@@ -501,7 +503,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===== ЗАГОЛОВОК ПО ТИПУ =====
     private fun getWriteOffNoun(item: ItemEntity): String {
         return when (item.itemType) {
             "food" -> "продукт"
@@ -517,8 +518,14 @@ class MainActivity : AppCompatActivity() {
         return "Списать $noun: $shortName"
     }
 
+    private fun getMoveTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Переместить $noun: $shortName"
+    }
+
     private fun showWriteOffCountDialog(item: ItemEntity) {
-        val stepper = buildStepperLayout(item.quantity)
+        val stepper = buildStepperLayout(item.quantity, withCheckAll = false)
 
         AlertDialog.Builder(this)
             .setTitle(getWriteOffTitle(item))
@@ -575,11 +582,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS
+    // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
+    // ============================================================
+    private fun showMoveItemDialog(item: ItemEntity) {
+        // Если одна штука — сразу папки
+        if (item.quantity <= 1) {
+            openMoveFolderPicker(item, 1)
+            return
+        }
+
+        val stepper = buildStepperLayout(item.quantity, withCheckAll = true)
+
+        AlertDialog.Builder(this)
+            .setTitle(getMoveTitle(item))
+            .setView(stepper.container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = stepper.getValue()
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                openMoveFolderPicker(item, count)
+            }
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
+            .show()
+    }
+
+    private fun openMoveFolderPicker(item: ItemEntity, count: Int) {
+        Logger.log(TAG, "Show move item dialog: ${item.name}, current parentId=${item.parentId}, count=$count")
+
+        MoveDialogHelper.show(
+            context = this,
+            scope = lifecycleScope,
+            db = db,
+            title = "Переместить «${item.name}»",
+            startFromId = item.parentId,
+            excludedIds = emptySet(),
+            onConfirm = { newParentId ->
+                if (newParentId == item.parentId) {
+                    Toast.makeText(this, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
+                } else {
+                    viewModel.splitAndMoveItem(item.id, count, newParentId)
+                    Toast.makeText(this, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    // ============================================================
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS (+ чекбокс «Всё» опционально)
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
         val editText: EditText,
+        val checkAll: CheckBox,
         val minusBtn: View,
         val plusBtn: View,
         val maxQty: Int
@@ -588,14 +649,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun buildStepperLayout(maxQty: Int): StepperResult {
+    private fun buildStepperLayout(maxQty: Int, withCheckAll: Boolean): StepperResult {
         val container = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER
+            orientation = LinearLayout.VERTICAL
             setPadding(48, 24, 48, 8)
         }
 
-        val minusBtn = android.widget.Button(this).apply {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val minusBtn = Button(this).apply {
             text = "−"
             textSize = 22f
             minWidth = 0
@@ -617,7 +682,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val plusBtn = android.widget.Button(this).apply {
+        val plusBtn = Button(this).apply {
             text = "+"
             textSize = 22f
             minWidth = 0
@@ -627,13 +692,23 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 0)
         }
 
-        container.addView(minusBtn)
-        container.addView(editText)
-        container.addView(plusBtn)
+        row.addView(minusBtn)
+        row.addView(editText)
+        row.addView(plusBtn)
+        container.addView(row)
 
-        val result = StepperResult(container, editText, minusBtn, plusBtn, maxQty)
+        val checkAll = CheckBox(this).apply {
+            text = "Переместить всё ($maxQty шт.)"
+            textSize = 15f
+            visibility = if (withCheckAll) View.VISIBLE else View.GONE
+            setPadding(0, 16, 0, 0)
+        }
+        if (withCheckAll) container.addView(checkAll)
+
+        val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
 
         val changeBy = { delta: Int ->
+            if (withCheckAll && checkAll.isChecked) return@let
             val cur = result.getValue()
             val next = (cur + delta).coerceIn(1, maxQty)
             if (next != cur) {
@@ -642,13 +717,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Обычный клик
         minusBtn.setOnClickListener { changeBy(-1) }
         plusBtn.setOnClickListener { changeBy(+1) }
 
-        // Long-press с автоповтором
         setupRepeatButton(minusBtn) { changeBy(-1) }
         setupRepeatButton(plusBtn) { changeBy(+1) }
+
+        if (withCheckAll) {
+            checkAll.setOnCheckedChangeListener { _, checked ->
+                if (checked) {
+                    editText.setText(maxQty.toString())
+                    editText.isEnabled = false
+                    minusBtn.isEnabled = false
+                    plusBtn.isEnabled = false
+                } else {
+                    editText.setText("1")
+                    editText.isEnabled = true
+                    minusBtn.isEnabled = true
+                    plusBtn.isEnabled = true
+                }
+            }
+        }
 
         return result
     }
@@ -658,7 +747,6 @@ class MainActivity : AppCompatActivity() {
         view.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Ждём 400мс → старт автоповтора
                     repeatRunnable = object : Runnable {
                         override fun run() {
                             action()
@@ -717,7 +805,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
-        val editText = android.widget.EditText(this)
+        val editText = EditText(this)
         editText.hint = "Комментарий (необязательно)"
         AlertDialog.Builder(this)
             .setTitle("Комментарий")
@@ -732,7 +820,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
-        val editText = android.widget.EditText(this).apply { setText(folder.name) }
+        val editText = EditText(this).apply { setText(folder.name) }
         AlertDialog.Builder(this)
             .setTitle("Переименовать папку")
             .setView(editText)
@@ -830,27 +918,6 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    private fun showMoveItemDialog(item: ItemEntity) {
-        Logger.log(TAG, "Show move item dialog: ${item.name}, current parentId=${item.parentId}")
-
-        MoveDialogHelper.show(
-            context = this,
-            scope = lifecycleScope,
-            db = db,
-            title = "Переместить «${item.name}»",
-            startFromId = item.parentId,
-            excludedIds = emptySet(),
-            onConfirm = { newParentId ->
-                if (newParentId == item.parentId) {
-                    Toast.makeText(this, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
-                } else {
-                    viewModel.moveItem(item.id, newParentId)
-                    Toast.makeText(this, "Перемещено", Toast.LENGTH_SHORT).show()
-                }
-            }
-        )
     }
 
     private suspend fun collectDescendantIds(folderId: String): Set<String> {
