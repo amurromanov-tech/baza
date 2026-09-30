@@ -19,6 +19,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
@@ -338,6 +339,12 @@ class ItemDetailActivity : AppCompatActivity() {
         return "Списать $noun: $shortName"
     }
 
+    private fun getMoveTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Переместить $noun: $shortName"
+    }
+
     // ============================================================
     // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?» СО СТЕППЕРОМ
     // ============================================================
@@ -361,11 +368,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     count <= 0 -> Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
                     count > item.quantity -> Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
                     count == item.quantity -> {
-                        // Списываем всё → спрашиваем причину
                         showWriteOffReasonDialog(id, count)
                     }
                     else -> {
-                        // Частичное списание — без причины
                         viewModel.writeOffItem(id, count, null, null)
                         currentItem = item.copy(quantity = item.quantity - count)
                         animateQuantity(item.quantity - count)
@@ -417,11 +422,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS + ЧЕКБОКС «ВСЁ»
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
         val editText: EditText,
+        val checkAll: CheckBox,
         val minusBtn: View,
         val plusBtn: View,
         val maxQty: Int
@@ -431,10 +437,24 @@ class ItemDetailActivity : AppCompatActivity() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun buildStepperLayout(maxQty: Int): StepperResult {
+        return buildStepperLayoutInternal(maxQty, withCheckAll = false)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildStepperLayoutWithAll(maxQty: Int): StepperResult {
+        return buildStepperLayoutInternal(maxQty, withCheckAll = true)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildStepperLayoutInternal(maxQty: Int, withCheckAll: Boolean): StepperResult {
         val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 8)
+        }
+
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
-            setPadding(48, 24, 48, 8)
         }
 
         val minusBtn = Button(this).apply {
@@ -469,13 +489,23 @@ class ItemDetailActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 0)
         }
 
-        container.addView(minusBtn)
-        container.addView(editText)
-        container.addView(plusBtn)
+        row.addView(minusBtn)
+        row.addView(editText)
+        row.addView(plusBtn)
+        container.addView(row)
 
-        val result = StepperResult(container, editText, minusBtn, plusBtn, maxQty)
+        val checkAll = CheckBox(this).apply {
+            text = "Переместить всё ($maxQty шт.)"
+            textSize = 15f
+            visibility = if (withCheckAll) View.VISIBLE else View.GONE
+            setPadding(0, 16, 0, 0)
+        }
+        if (withCheckAll) container.addView(checkAll)
+
+        val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
 
         val changeBy = { delta: Int ->
+            if (withCheckAll && checkAll.isChecked) return@let
             val cur = result.getValue()
             val next = (cur + delta).coerceIn(1, maxQty)
             if (next != cur) {
@@ -491,6 +521,23 @@ class ItemDetailActivity : AppCompatActivity() {
         // Long-press с автоповтором
         setupRepeatButton(minusBtn) { changeBy(-1) }
         setupRepeatButton(plusBtn) { changeBy(+1) }
+
+        // Чекбокс «Всё»
+        if (withCheckAll) {
+            checkAll.setOnCheckedChangeListener { _, checked ->
+                if (checked) {
+                    editText.setText(maxQty.toString())
+                    editText.isEnabled = false
+                    minusBtn.isEnabled = false
+                    plusBtn.isEnabled = false
+                } else {
+                    editText.setText("1")
+                    editText.isEnabled = true
+                    minusBtn.isEnabled = true
+                    plusBtn.isEnabled = true
+                }
+            }
+        }
 
         return result
     }
@@ -864,8 +911,7 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhoto.load(localFile) { crossfade(true) }
                     } else {
                         binding.ivPhoto.visibility = View.GONE
-                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
-                        binding.photoOverlay.visibility = View.VISIBLE
+                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE                        binding.photoOverlay.visibility = View.VISIBLE
                     }
 
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
@@ -1349,8 +1395,47 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
+    // ============================================================
     private fun showMoveDialog() {
         val id = itemId ?: return
+        val item = currentItem
+
+        if (item == null) {
+            Toast.makeText(this, "Предмет не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Если одна штука — сразу папки
+        if (item.quantity <= 1) {
+            openMoveFolderPicker(id, 1)
+            return
+        }
+
+        val stepper = buildStepperLayoutWithAll(item.quantity)
+
+        AlertDialog.Builder(this)
+            .setTitle(getMoveTitle(item))
+            .setView(stepper.container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = stepper.getValue()
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                openMoveFolderPicker(id, count)
+            }
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
+            .show()
+    }
+
+    private fun openMoveFolderPicker(id: String, count: Int) {
         lifecycleScope.launch {
             try {
                 val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
@@ -1367,14 +1452,14 @@ class ItemDetailActivity : AppCompatActivity() {
                     startFromId = item.parentId,
                     excludedIds = emptySet(),
                     onConfirm = { newParentId ->
-                        Logger.log(TAG, "Move item to: $newParentId")
+                        Logger.log(TAG, "Move item to: $newParentId, count=$count")
                         if (newParentId == item.parentId) {
                             Toast.makeText(this@ItemDetailActivity, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.moveItem(id, newParentId)
-                            Toast.makeText(this@ItemDetailActivity, "Перемещено", Toast.LENGTH_SHORT).show()
-                            finish()
+                            return@MoveDialogHelper
                         }
+                        viewModel.splitAndMoveItem(id, count, newParentId)
+                        Toast.makeText(this@ItemDetailActivity, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
+                        finish()
                     }
                 )
             } catch (e: Exception) {
