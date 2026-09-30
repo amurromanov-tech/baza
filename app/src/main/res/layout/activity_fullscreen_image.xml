@@ -1,17 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootContainer"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
 
     <!-- ============================================================ -->
-    <!-- ФОТО НА ВЕСЬ ЭКРАН (pinch-to-zoom, pan) -->
+    <!-- КОНТЕЙНЕР ФОТО (для анимации translationY при свайпе) -->
     <!-- ============================================================ -->
-    <com.github.chrisbanes.photoview.PhotoView
-        android:id="@+id/photoView"
+    <FrameLayout
+        android:id="@+id/photoContainer"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:contentDescription="Фото предмета" />
+        android:layout_height="match_parent">
+
+        <com.github.chrisbanes.photoview.PhotoView
+            android:id="@+id/photoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="Фото предмета" />
+    </FrameLayout>
 
     <!-- ============================================================ -->
     <!-- КНОПКА ЗАКРЫТИЯ (правый верхний угол) -->
