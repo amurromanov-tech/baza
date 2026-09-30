@@ -42,6 +42,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -68,6 +70,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var quantityAnimator: ValueAnimator? = null
     private var priceAnimator: ValueAnimator? = null
+    private var totalPriceAnimator: ValueAnimator? = null
 
     private var expiredPulse: ObjectAnimator? = null
     private var soonPulse: ObjectAnimator? = null
@@ -86,6 +89,13 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DETAILS = "section_details"
     private val KEY_DATES = "section_dates"
     private val KEY_DESCRIPTION = "section_description"
+
+    // ===== ФОРМАТ ЧИСЕЛ =====
+    private val moneyFormat: DecimalFormat by lazy {
+        val symbols = DecimalFormatSymbols(Locale.getDefault())
+        symbols.groupingSeparator = ' '
+        DecimalFormat("#,##0.##", symbols)
+    }
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -202,6 +212,9 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
+        // ===== КНОПКА СПИСАТЬ =====
+        binding.btnWriteOff.setOnClickListener { showWriteOffDialog() }
+
         binding.chipQuantityView.setOnLongClickListener {
             showQuickQuantityDialog()
             true
@@ -268,7 +281,6 @@ class ItemDetailActivity : AppCompatActivity() {
     private fun applyCollapsibleState() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Дефолт: «Основное» — развёрнуто, остальные — свёрнуты
         val basicExpanded = prefs.getBoolean(KEY_BASIC, true)
         val detailsExpanded = prefs.getBoolean(KEY_DETAILS, false)
         val datesExpanded = prefs.getBoolean(KEY_DATES, false)
@@ -295,6 +307,103 @@ class ItemDetailActivity : AppCompatActivity() {
             .edit()
             .putBoolean(key, expanded)
             .apply()
+    }
+
+    // ============================================================
+    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?»
+    // ============================================================
+    private fun showWriteOffDialog() {
+        val id = itemId ?: return
+        val item = currentItem ?: return
+
+        if (item.quantity <= 0) {
+            Toast.makeText(this, "Нет предметов для списания", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+
+        val etCount = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("1")
+            hint = "Сколько списать"
+            setSelectAllOnFocus(true)
+        }
+        container.addView(etCount)
+
+        val info = android.widget.TextView(this).apply {
+            text = "Всего: ${item.quantity} шт."
+            textSize = 13f
+            setPadding(0, 16, 0, 0)
+            setTextColor(ContextCompat.getColor(this@ItemDetailActivity, R.color.dateLabel))
+        }
+        container.addView(info)
+
+        AlertDialog.Builder(this)
+            .setTitle("🧴 Списать предмет")
+            .setView(container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = etCount.text.toString().toIntOrNull() ?: 0
+                when {
+                    count <= 0 -> {
+                        Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    }
+                    count > item.quantity -> {
+                        Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    }
+                    count == item.quantity -> {
+                        // Списываем всё → спрашиваем причину
+                        showWriteOffReasonDialog(id, count)
+                    }
+                    else -> {
+                        // Частичное списание — без причины
+                        viewModel.writeOffItem(id, count, null, null)
+                        currentItem = item.copy(quantity = item.quantity - count)
+                        animateQuantity(item.quantity - count)
+                        updatePriceRow(item.price, item.quantity - count)
+                        Toast.makeText(this, "Списано $count шт.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ===== ДИАЛОГ ПРИЧИНЫ (при полном списании) =====
+    private fun showWriteOffReasonDialog(id: String, count: Int) {
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("Списываешь последнюю штуку.\nПредмет уйдёт в архив.")
+            .setItems(reasons) { _, which ->
+                viewModel.writeOffItem(id, count, reasonKeys[which], null)
+                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     // ============================================================
@@ -334,6 +443,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 viewModel.updateItemQuantity(id, newQty)
                 currentItem = item.copy(quantity = newQty)
                 animateQuantity(newQty)
+                updatePriceRow(item.price, newQty)
                 Toast.makeText(this, "Количество: $newQty", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Отмена", null)
@@ -485,14 +595,56 @@ class ItemDetailActivity : AppCompatActivity() {
                 addUpdateListener { anim ->
                     val value = anim.animatedValue as Float
                     val formatted = if (isWhole) {
-                        value.toLong().toString()
+                        moneyFormat.format(value.toLong())
                     } else {
-                        String.format(Locale.getDefault(), "%.2f", value)
+                        moneyFormat.format(value.toDouble())
                     }
-                    binding.tvPrice.text = "💰 $formatted ₽"
+                    binding.tvPrice.text = "💰 $formatted ₽ / шт."
                 }
                 start()
             }
+        }
+    }
+
+    private fun animateTotalPrice(target: Double) {
+        totalPriceAnimator?.cancel()
+        binding.tvTotalPrice.post {
+            if (target <= 0.0) {
+                binding.tvTotalPrice.visibility = View.GONE
+                return@post
+            }
+            binding.tvTotalPrice.visibility = View.VISIBLE
+            totalPriceAnimator = ValueAnimator.ofFloat(0f, target.toFloat()).apply {
+                duration = 600L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    val value = anim.animatedValue as Float
+                    binding.tvTotalPrice.text = "Всего: ${moneyFormat.format(value.toDouble())} ₽"
+                }
+                start()
+            }
+        }
+    }
+
+    /**
+     * Обновляет блок цены и итоговой суммы.
+     * Если [quantity] <= 1, то чип «Всего» скрывается (нет смысла дублировать).
+     */
+    private fun updatePriceRow(unitPrice: Double?, quantity: Int) {
+        if (unitPrice == null || unitPrice == 0.0) {
+            binding.tvPrice.visibility = View.GONE
+            binding.tvTotalPrice.visibility = View.GONE
+            return
+        }
+
+        binding.tvPrice.visibility = View.VISIBLE
+        animatePrice(unitPrice)
+
+        if (quantity > 1) {
+            animateTotalPrice(unitPrice * quantity)
+        } else {
+            totalPriceAnimator?.cancel()
+            binding.tvTotalPrice.visibility = View.GONE
         }
     }
 
@@ -636,7 +788,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 currentParentId = item.parentId
                 val path = withContext(Dispatchers.IO) { buildItemPath(item.parentId) }
 
-                // В режиме редактирования — раскрываем все секции для удобства
                 expandAllSections()
 
                 withContext(Dispatchers.Main) {
@@ -698,7 +849,7 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.chipExpiryView.visibility = viewVisibility
         binding.tilExpiry.visibility = editVisibility
 
-        binding.tvPrice.visibility = viewVisibility
+        binding.priceRow.visibility = viewVisibility
         binding.tilPrice.visibility = editVisibility
 
         binding.tvDescriptionView.visibility = viewVisibility
@@ -739,11 +890,12 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipExpiryView.visibility = View.GONE
         }
 
+        // ===== ЦЕНА: чип цены за шт. + чип «Всего» =====
         if (item.price != null && item.price != 0.0) {
-            binding.tvPrice.visibility = View.VISIBLE
-            animatePrice(item.price!!)
+            updatePriceRow(item.price, item.quantity)
         } else {
             binding.tvPrice.visibility = View.GONE
+            binding.tvTotalPrice.visibility = View.GONE
         }
 
         if (!item.description.isNullOrEmpty()) {
@@ -898,6 +1050,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.barcodeEditBlock.visibility = View.GONE
                     binding.tilExpiry.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
+                    binding.priceRow.visibility = View.GONE
                     binding.btnSave.visibility = View.GONE
                     binding.editButtonsLayout.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
@@ -1266,6 +1419,7 @@ class ItemDetailActivity : AppCompatActivity() {
         super.onDestroy()
         quantityAnimator?.cancel()
         priceAnimator?.cancel()
+        totalPriceAnimator?.cancel()
         stopStatusPulse()
         Logger.log(TAG, "onDestroy called")
     }
