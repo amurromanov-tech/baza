@@ -260,7 +260,7 @@
                             android:inputType="text" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- ВСЕГДА ВИДИМО: Количество + индикатор синка -->
+                    <!-- ВСЕГДА ВИДИМО: Количество + индикатор синка + кнопка Списать -->
                     <LinearLayout
                         android:id="@+id/quantityRow"
                         android:layout_width="match_parent"
@@ -291,6 +291,21 @@
                             android:background="?attr/selectableItemBackgroundBorderless"
                             android:contentDescription="Статус синхронизации"
                             tools:text="☁️" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWriteOff"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="Списать"
+                            android:textSize="13sp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minHeight="0dp"
+                            android:paddingTop="6dp"
+                            android:paddingBottom="6dp"
+                            app:cornerRadius="18dp" />
                     </LinearLayout>
 
                     <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Основное» -->
@@ -478,20 +493,44 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <!-- ВСЕГДА ВИДИМО: Цена -->
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/tvPrice"
-                        style="@style/PriceChip"
-                        android:layout_width="wrap_content"
+                    <!-- ВСЕГДА ВИДИМО: Цена за шт. + Всего -->
+                    <LinearLayout
+                        android:id="@+id/priceRow"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:visibility="gone"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
-                        app:chipMinHeight="48dp"
-                        app:chipStartPadding="18dp"
-                        app:chipEndPadding="18dp"
-                        tools:text="💰 100 ₽"
-                        tools:visibility="visible" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="4dp">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/tvPrice"
+                            style="@style/PriceChip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:visibility="gone"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            app:chipMinHeight="44dp"
+                            app:chipStartPadding="16dp"
+                            app:chipEndPadding="16dp"
+                            tools:text="💰 100 ₽ / шт."
+                            tools:visibility="visible" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/tvTotalPrice"
+                            style="@style/TotalPriceChip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:visibility="gone"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            app:chipMinHeight="44dp"
+                            app:chipStartPadding="16dp"
+                            app:chipEndPadding="16dp"
+                            tools:text="Всего: 1 000 ₽"
+                            tools:visibility="visible" />
+                    </LinearLayout>
 
                     <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Детали» -->
                     <LinearLayout
@@ -575,7 +614,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
-                            android:hint="Цена (₽)"
+                            android:hint="Цена за единицу (₽)"
                             app:boxBackgroundMode="outline"
                             android:visibility="gone">
 
