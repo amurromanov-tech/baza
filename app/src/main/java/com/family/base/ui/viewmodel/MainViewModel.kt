@@ -907,7 +907,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
     }
 
-    // ===== НОВЫЙ СТАТУС: used_up «Израсходовано» — САМЫМ ПЕРВЫМ =====
+    // ============================================================
+    // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off)
+    // ============================================================
+    /**
+     * Списывает [count] штук предмета.
+     *
+     * - Если count < quantity → quantity -= count, запись в историю («списано N шт.»), предмет остаётся в базе.
+     * - Если count == quantity → весь предмет уходит в архив с причиной [reason], запись в историю («в архив»).
+     * - Если count > quantity → ничего не делаем (вызывающий код должен это предотвратить).
+     *
+     * @param reason — ключ причины для архивации (используется только при полном списании).
+     * @param note — комментарий (опционально).
+     */
+    fun writeOffItem(itemId: String, count: Int, reason: String?, note: String?) {
+        Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    Logger.log(TAG, "writeOffItem: item not found: $itemId")
+                    return@launch
+                }
+
+                if (count <= 0) {
+                    Logger.log(TAG, "writeOffItem: count <= 0, ignoring")
+                    return@launch
+                }
+
+                if (count > item.quantity) {
+                    Logger.log(TAG, "writeOffItem: count ($count) > quantity (${item.quantity}), ignoring")
+                    return@launch
+                }
+
+                val now = System.currentTimeMillis()
+
+                if (count == item.quantity) {
+                    // ===== Списываем всё → в архив =====
+                    val reasonKey = reason ?: "used_up"
+                    db.itemDao().archiveItem(itemId, reasonKey, now, note)
+                    enqueue("item", itemId, "update", item.parentId)
+
+                    val history = HistoryEntry(
+                        itemId = itemId,
+                        action = "write_off",
+                        oldValue = "${item.quantity} шт.",
+                        newValue = "Списано всё → в архиве (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
+                        changedBy = currentUser
+                    )
+                    db.historyDao().insertEntry(history)
+
+                    Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
+
+                } else {
+                    // ===== Частичное списание =====
+                    val newQty = item.quantity - count
+                    val updated = item.copy(
+                        quantity = newQty,
+                        updatedDate = now,
+                        updatedBy = currentUser
+                    )
+                    updated.computeExpiryFields()
+                    db.itemDao().updateItem(updated)
+                    enqueue("item", itemId, "update", item.parentId)
+
+                    val history = HistoryEntry(
+                        itemId = itemId,
+                        action = "write_off",
+                        oldValue = "${item.quantity} шт.",
+                        newValue = "${newQty} шт. (списано $count${if (!note.isNullOrEmpty()) ", $note" else ""})",
+                        changedBy = currentUser
+                    )
+                    db.historyDao().insertEntry(history)
+
+                    Logger.log(TAG, "writeOffItem: partial write-off, quantity $newQty")
+                }
+
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error writing off item: ${e.message}", e)
+            }
+        }
+    }
+
+    // ===== СТАТУС: used_up «Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun getArchiveReasonText(reason: String): String {
         return when (reason) {
             "used_up" -> "🧴 Израсходовано"
