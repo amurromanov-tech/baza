@@ -911,7 +911,8 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhoto.load(localFile) { crossfade(true) }
                     } else {
                         binding.ivPhoto.visibility = View.GONE
-                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE                        binding.photoOverlay.visibility = View.VISIBLE
+                        binding.ivPhotoPlaceholder.visibility = View.VISIBLE
+                        binding.photoOverlay.visibility = View.VISIBLE
                     }
 
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
