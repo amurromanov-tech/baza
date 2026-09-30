@@ -45,6 +45,10 @@
     <color name="priceChipBg">#3E2723</color>
     <color name="priceChipText">#FFAB91</color>
 
+    <!-- ===== ИТОГОВАЯ СУММА ===== -->
+    <color name="totalPriceChipBg">#4E342E</color>
+    <color name="totalPriceChipText">#FFCCBC</color>
+
     <!-- ===== ЧИПЫ-ПОЛЯ ===== -->
     <!-- Название -->
     <color name="chipNameBg">#3E1F2B</color>
