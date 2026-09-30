@@ -224,7 +224,6 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
 
-        // ===== КНОПКА СПИСАТЬ =====
         binding.btnWriteOff.setOnClickListener { showWriteOffDialog() }
 
         binding.chipQuantityView.setOnLongClickListener {
@@ -422,7 +421,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS + ЧЕКБОКС «ВСЁ»
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
@@ -505,24 +504,22 @@ class ItemDetailActivity : AppCompatActivity() {
         val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
 
         val changeBy = { delta: Int ->
-            if (withCheckAll && checkAll.isChecked) return@let
-            val cur = result.getValue()
-            val next = (cur + delta).coerceIn(1, maxQty)
-            if (next != cur) {
-                editText.setText(next.toString())
-                editText.setSelection(editText.text.length)
+            if (!(withCheckAll && checkAll.isChecked)) {
+                val cur = result.getValue()
+                val next = (cur + delta).coerceIn(1, maxQty)
+                if (next != cur) {
+                    editText.setText(next.toString())
+                    editText.setSelection(editText.text.length)
+                }
             }
         }
 
-        // Обычный клик
         minusBtn.setOnClickListener { changeBy(-1) }
         plusBtn.setOnClickListener { changeBy(+1) }
 
-        // Long-press с автоповтором
         setupRepeatButton(minusBtn) { changeBy(-1) }
         setupRepeatButton(plusBtn) { changeBy(+1) }
 
-        // Чекбокс «Всё»
         if (withCheckAll) {
             checkAll.setOnCheckedChangeListener { _, checked ->
                 if (checked) {
@@ -1408,7 +1405,6 @@ class ItemDetailActivity : AppCompatActivity() {
             return
         }
 
-        // Если одна штука — сразу папки
         if (item.quantity <= 1) {
             openMoveFolderPicker(id, 1)
             return
@@ -1456,11 +1452,11 @@ class ItemDetailActivity : AppCompatActivity() {
                         Logger.log(TAG, "Move item to: $newParentId, count=$count")
                         if (newParentId == item.parentId) {
                             Toast.makeText(this@ItemDetailActivity, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
-                            return@MoveDialogHelper
+                        } else {
+                            viewModel.splitAndMoveItem(id, count, newParentId)
+                            Toast.makeText(this@ItemDetailActivity, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
+                            finish()
                         }
-                        viewModel.splitAndMoveItem(id, count, newParentId)
-                        Toast.makeText(this@ItemDetailActivity, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
-                        finish()
                     }
                 )
             } catch (e: Exception) {
