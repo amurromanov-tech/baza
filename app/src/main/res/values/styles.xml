@@ -152,10 +152,16 @@
         <item name="chipBackgroundColor">@color/chipSubtypeBg</item>
     </style>
 
-    <!-- Цена -->
+    <!-- Цена за единицу -->
     <style name="PriceChip" parent="FieldChip">
         <item name="android:textColor">@color/priceChipText</item>
         <item name="chipBackgroundColor">@color/priceChipBg</item>
+    </style>
+
+    <!-- Итоговая сумма за всё количество -->
+    <style name="TotalPriceChip" parent="FieldChip">
+        <item name="android:textColor">@color/totalPriceChipText</item>
+        <item name="chipBackgroundColor">@color/totalPriceChipBg</item>
     </style>
 
     <!-- Путь -->
