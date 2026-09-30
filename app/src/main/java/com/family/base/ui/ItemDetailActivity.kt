@@ -3,6 +3,7 @@ package com.family.base.ui
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.DatePickerDialog
 import android.content.Context
 import android.content.Intent
@@ -10,10 +11,16 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -82,6 +89,10 @@ class ItemDetailActivity : AppCompatActivity() {
     private val APPEAR_STAGGER = 50L
 
     private var currentItem: ItemEntity? = null
+
+    // ===== ДЛЯ LONG-PRESS СТЕППЕРА =====
+    private val repeatHandler = Handler(Looper.getMainLooper())
+    private var repeatRunnable: Runnable? = null
 
     // ===== СВОРАЧИВАНИЕ СЕКЦИЙ =====
     private val PREFS_NAME = "baza_item_detail_collapse"
@@ -310,7 +321,25 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?»
+    // СПИСАНИЕ: ЗАГОЛОВОК ПО ТИПУ
+    // ============================================================
+    private fun getWriteOffNoun(item: ItemEntity): String {
+        return when (item.itemType) {
+            "food" -> "продукт"
+            "medicine" -> "лекарство"
+            "thing" -> "вещь"
+            else -> "предмет"
+        }
+    }
+
+    private fun getWriteOffTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Списать $noun: $shortName"
+    }
+
+    // ============================================================
+    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?» СО СТЕППЕРОМ
     // ============================================================
     private fun showWriteOffDialog() {
         val id = itemId ?: return
@@ -321,39 +350,16 @@ class ItemDetailActivity : AppCompatActivity() {
             return
         }
 
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(48, 16, 48, 16)
-        }
-
-        val etCount = android.widget.EditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setText("1")
-            hint = "Сколько списать"
-            setSelectAllOnFocus(true)
-        }
-        container.addView(etCount)
-
-        val info = android.widget.TextView(this).apply {
-            text = "Всего: ${item.quantity} шт."
-            textSize = 13f
-            setPadding(0, 16, 0, 0)
-            setTextColor(ContextCompat.getColor(this@ItemDetailActivity, R.color.dateLabel))
-        }
-        container.addView(info)
+        val stepper = buildStepperLayout(item.quantity)
 
         AlertDialog.Builder(this)
-            .setTitle("🧴 Списать предмет")
-            .setView(container)
+            .setTitle(getWriteOffTitle(item))
+            .setView(stepper.container)
             .setPositiveButton("Далее") { _, _ ->
-                val count = etCount.text.toString().toIntOrNull() ?: 0
+                val count = stepper.getValue()
                 when {
-                    count <= 0 -> {
-                        Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    }
-                    count > item.quantity -> {
-                        Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    }
+                    count <= 0 -> Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    count > item.quantity -> Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
                     count == item.quantity -> {
                         // Списываем всё → спрашиваем причину
                         showWriteOffReasonDialog(id, count)
@@ -368,12 +374,16 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
                 }
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
             .show()
     }
 
     // ===== ДИАЛОГ ПРИЧИНЫ (при полном списании) =====
     private fun showWriteOffReasonDialog(id: String, count: Int) {
+        val item = currentItem
+        val noun = if (item != null) getWriteOffNoun(item) else "предмет"
+
         val reasons = arrayOf(
             "🧴 Израсходовано",
             "🍽 Съедено",
@@ -396,7 +406,7 @@ class ItemDetailActivity : AppCompatActivity() {
         )
 
         AlertDialog.Builder(this)
-            .setTitle("Списываешь последнюю штуку.\nПредмет уйдёт в архив.")
+            .setTitle("Списываешь последнюю $noun.\nПредмет уйдёт в архив.")
             .setItems(reasons) { _, which ->
                 viewModel.writeOffItem(id, count, reasonKeys[which], null)
                 Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
@@ -407,18 +417,128 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS
+    // ============================================================
+    private class StepperResult(
+        val container: LinearLayout,
+        val editText: EditText,
+        val minusBtn: View,
+        val plusBtn: View,
+        val maxQty: Int
+    ) {
+        fun getValue(): Int = editText.text.toString().toIntOrNull() ?: 1
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildStepperLayout(maxQty: Int): StepperResult {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(48, 24, 48, 8)
+        }
+
+        val minusBtn = Button(this).apply {
+            text = "−"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        val editText = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("1")
+            gravity = android.view.Gravity.CENTER
+            textSize = 20f
+            setSelectAllOnFocus(true)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = 16
+                marginEnd = 16
+            }
+        }
+
+        val plusBtn = Button(this).apply {
+            text = "+"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        container.addView(minusBtn)
+        container.addView(editText)
+        container.addView(plusBtn)
+
+        val result = StepperResult(container, editText, minusBtn, plusBtn, maxQty)
+
+        val changeBy = { delta: Int ->
+            val cur = result.getValue()
+            val next = (cur + delta).coerceIn(1, maxQty)
+            if (next != cur) {
+                editText.setText(next.toString())
+                editText.setSelection(editText.text.length)
+            }
+        }
+
+        // Обычный клик
+        minusBtn.setOnClickListener { changeBy(-1) }
+        plusBtn.setOnClickListener { changeBy(+1) }
+
+        // Long-press с автоповтором
+        setupRepeatButton(minusBtn) { changeBy(-1) }
+        setupRepeatButton(plusBtn) { changeBy(+1) }
+
+        return result
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupRepeatButton(view: View, action: () -> Unit) {
+        view.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    repeatRunnable = object : Runnable {
+                        override fun run() {
+                            action()
+                            repeatHandler.postDelayed(this, 100)
+                        }
+                    }
+                    repeatHandler.postDelayed(repeatRunnable!!, 400)
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    stopRepeat()
+                    v.isPressed = false
+                    v.performClick()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun stopRepeat() {
+        repeatRunnable?.let { repeatHandler.removeCallbacks(it) }
+        repeatRunnable = null
+    }
+
+    // ============================================================
     // БЫСТРОЕ РЕДАКТИРОВАНИЕ КОЛИЧЕСТВА
     // ============================================================
     private fun showQuickQuantityDialog() {
         val id = itemId ?: return
         val item = currentItem ?: return
 
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(48, 16, 48, 16)
         }
 
-        val etQty = android.widget.EditText(this).apply {
+        val etQty = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setText(item.quantity.toString())
             hint = "Количество"
@@ -626,10 +746,6 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Обновляет блок цены и итоговой суммы.
-     * Если [quantity] <= 1, то чип «Всего» скрывается (нет смысла дублировать).
-     */
     private fun updatePriceRow(unitPrice: Double?, quantity: Int) {
         if (unitPrice == null || unitPrice == 0.0) {
             binding.tvPrice.visibility = View.GONE
@@ -859,15 +975,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun fillViewFields(item: ItemEntity, path: String) {
-        // Название — жирный TextView без чипа
         binding.tvNameView.text = "📝 ${item.name}"
         binding.tvNameView.visibility = View.VISIBLE
 
-        // Количество — «📦 Количество: ×N»
         binding.quantityRow.visibility = View.VISIBLE
         binding.chipQuantityView.text = "📦 Количество: ×${item.quantity}"
 
-        // Подтип — уже в chipGroupStatus
         val subtypeDisplay = SubtypeCatalog.getDisplayName(item.itemType, item.itemSubtype)
         if (subtypeDisplay != null) {
             binding.chipSubtypeView.text = subtypeDisplay
@@ -890,7 +1003,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.chipExpiryView.visibility = View.GONE
         }
 
-        // ===== ЦЕНА: чип цены за шт. + чип «Всего» =====
         if (item.price != null && item.price != 0.0) {
             updatePriceRow(item.price, item.quantity)
         } else {
@@ -1199,12 +1311,12 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun showLendDialog() {
         val id = itemId ?: return
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(48, 16, 48, 16)
         }
-        val etPerson = android.widget.EditText(this).apply { hint = "Кому выдать (имя)" }
-        val etNote = android.widget.EditText(this).apply { hint = "Заметка (необязательно)" }
+        val etPerson = EditText(this).apply { hint = "Кому выдать (имя)" }
+        val etNote = EditText(this).apply { hint = "Заметка (необязательно)" }
         container.addView(etPerson); container.addView(etNote)
 
         AlertDialog.Builder(this)
@@ -1421,6 +1533,7 @@ class ItemDetailActivity : AppCompatActivity() {
         priceAnimator?.cancel()
         totalPriceAnimator?.cancel()
         stopStatusPulse()
+        stopRepeat()
         Logger.log(TAG, "onDestroy called")
     }
 }
