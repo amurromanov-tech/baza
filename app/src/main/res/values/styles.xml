@@ -162,6 +162,10 @@
     <style name="TotalPriceChip" parent="FieldChip">
         <item name="android:textColor">@color/totalPriceChipText</item>
         <item name="chipBackgroundColor">@color/totalPriceChipBg</item>
+        <item name="android:textSize">15sp</item>
+        <item name="chipMinHeight">36dp</item>
+        <item name="chipStartPadding">12dp</item>
+        <item name="chipEndPadding">12dp</item>
     </style>
 
     <!-- Путь -->
