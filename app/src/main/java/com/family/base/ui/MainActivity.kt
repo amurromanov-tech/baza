@@ -265,6 +265,9 @@ class MainActivity : AppCompatActivity() {
         hideProgressJob?.cancel()
     }
 
+    // ============================================================
+    // ПЛАШКА ПРОГРЕССА СИНХРОНИЗАЦИИ
+    // ============================================================
     private fun updateSyncProgressCard(progress: SyncProgress) {
         hideProgressJob?.cancel()
 
@@ -327,6 +330,9 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    // ============================================================
+    // НАВИГАЦИЯ
+    // ============================================================
     private fun updatePathTitle() {
         pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
     }
@@ -459,13 +465,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showItemContextMenu(item: ItemEntity) {
-        val items = arrayOf("Редактировать", "В архив", "Удалить", "История", "Переместить")
+        val items = arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с предметом")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> editItem(item)
-                    1 -> showArchiveDialog(item)
+                    1 -> showWriteOffOrArchiveDialog(item)
                     2 -> confirmDeleteItem(item)
                     3 -> showItemHistory(item)
                     4 -> showMoveItemDialog(item)
@@ -474,6 +480,106 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // СПИСАНИЕ / АРХИВ ИЗ КОНТЕКСТНОГО МЕНЮ
+    // ============================================================
+
+    /**
+     * Единая точка входа из контекстного меню:
+     * - Если quantity == 1 → сразу диалог причины → в архив.
+     * - Если quantity > 1 → диалог «Сколько списать?» → потом причина (если всё).
+     */
+    private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
+        if (item.quantity <= 1) {
+            // Последняя (или единственная) штука — сразу причина
+            showWriteOffReasonDialog(item, item.quantity.coerceAtLeast(1))
+        } else {
+            showWriteOffCountDialog(item)
+        }
+    }
+
+    private fun showWriteOffCountDialog(item: ItemEntity) {
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+
+        val etCount = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("1")
+            hint = "Сколько списать"
+            setSelectAllOnFocus(true)
+        }
+        container.addView(etCount)
+
+        val info = android.widget.TextView(this).apply {
+            text = "Всего: ${item.quantity} шт."
+            textSize = 13f
+            setPadding(0, 16, 0, 0)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.dateLabel))
+        }
+        container.addView(info)
+
+        AlertDialog.Builder(this)
+            .setTitle("🧴 Списать: ${item.name}")
+            .setView(container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = etCount.text.toString().toIntOrNull() ?: 0
+                when {
+                    count <= 0 -> {
+                        Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    }
+                    count > item.quantity -> {
+                        Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    }
+                    count == item.quantity -> {
+                        showWriteOffReasonDialog(item, count)
+                    }
+                    else -> {
+                        viewModel.writeOffItem(item.id, count, null, null)
+                        Toast.makeText(this, "Списано $count шт.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showWriteOffReasonDialog(item: ItemEntity, count: Int) {
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("Списываешь последнюю штуку.\nПредмет уйдёт в архив.")
+            .setItems(reasons) { _, which ->
+                viewModel.writeOffItem(item.id, count, reasonKeys[which], null)
+                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // АРХИВ (старый диалог — оставлен для совместимости с confirmDeleteItem)
+    // ============================================================
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
             "🧴 Израсходовано",
