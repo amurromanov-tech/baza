@@ -876,25 +876,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ВОЗВРАТ ИЗ АРХИВА (с учётом originalId)
+    // ============================================================
+    /**
+     * Возвращает предмет из архива.
+     *
+     * Логика:
+     * - Если originalId == null → обычный возврат (isArchived = 0).
+     * - Если originalId != null (это «часть» от частичного списания):
+     *     - Ищем оригинал по originalId.
+     *     - Если оригинал найден и активен → quantity += count, архивную запись удаляем.
+     *     - Если оригинал не найден → создаём новую активную запись в исходной папке.
+     */
     fun unarchiveItem(itemId: String) {
         viewModelScope.launch {
             try {
                 val item = db.itemDao().getItemById(itemId)
-                db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                enqueue("item", itemId, "update", item?.parentId)
+                if (item == null) {
+                    Logger.log(TAG, "unarchiveItem: item not found $itemId")
+                    return@launch
+                }
 
-                val history = HistoryEntry(
-                    itemId = itemId,
-                    action = "unarchive",
-                    oldValue = "В архиве",
-                    newValue = "Вернули в базу",
-                    changedBy = currentUser
-                )
-                db.historyDao().insertEntry(history)
+                val originalId = item.originalId
+
+                if (originalId == null) {
+                    // ===== Обычный возврат =====
+                    db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
+                    enqueue("item", itemId, "update", item.parentId)
+
+                    val history = HistoryEntry(
+                        itemId = itemId,
+                        action = "unarchive",
+                        oldValue = "В архиве",
+                        newValue = "Вернули в базу",
+                        changedBy = currentUser
+                    )
+                    db.historyDao().insertEntry(history)
+
+                    Logger.log(TAG, "unarchiveItem: обычный возврат $itemId")
+                } else {
+                    // ===== Возврат «части» от частичного списания =====
+                    val original = db.itemDao().getItemById(originalId)
+
+                    if (original != null && !original.isArchived) {
+                        // Оригинал есть → возвращаем количество
+                        val newQty = original.quantity + item.quantity
+                        val updatedOriginal = original.copy(
+                            quantity = newQty,
+                            updatedDate = System.currentTimeMillis(),
+                            updatedBy = currentUser
+                        )
+                        updatedOriginal.computeExpiryFields()
+                        db.itemDao().updateItem(updatedOriginal)
+                        enqueue("item", originalId, "update", original.parentId)
+
+                        // Архивную запись удаляем
+                        db.itemDao().deleteItemById(itemId)
+                        enqueue("item", itemId, "delete", item.parentId)
+
+                        // Фото архивной записи уже не нужно — удаляем локально
+                        val appContext = getApplication<Application>().applicationContext
+                        ImageUtils.deleteLocalImage(appContext, itemId)
+
+                        val history = HistoryEntry(
+                            itemId = originalId,
+                            action = "unarchive_part",
+                            oldValue = "${original.quantity} шт.",
+                            newValue = "$newQty шт. (возвращено ${item.quantity})",
+                            changedBy = currentUser
+                        )
+                        db.historyDao().insertEntry(history)
+
+                        Logger.log(TAG, "unarchiveItem: часть возвращена в оригинал $originalId, qty=$newQty")
+                    } else {
+                        // Оригинала нет → создаём новую активную запись
+                        val restored = item.copy(
+                            isArchived = false,
+                            archivedReason = null,
+                            archivedDate = null,
+                            archivedNote = null,
+                            originalId = null,
+                            updatedDate = System.currentTimeMillis(),
+                            updatedBy = currentUser
+                        )
+                        restored.computeExpiryFields()
+                        db.itemDao().updateItem(restored)
+                        enqueue("item", itemId, "update", restored.parentId)
+
+                        val history = HistoryEntry(
+                            itemId = itemId,
+                            action = "unarchive",
+                            oldValue = "В архиве",
+                            newValue = "Вернули в базу (оригинал не найден)",
+                            changedBy = currentUser
+                        )
+                        db.historyDao().insertEntry(history)
+
+                        Logger.log(TAG, "unarchiveItem: оригинал не найден, часть становится активной $itemId")
+                    }
+                }
 
                 loadContents()
             } catch (e: Exception) {
-                Logger.log(TAG, "Error unarchiving item: ${e.message}")
+                Logger.log(TAG, "Error unarchiving item: ${e.message}", e)
             }
         }
     }
@@ -908,14 +993,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off)
+    // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off → архив)
     // ============================================================
     /**
      * Списывает [count] штук предмета.
      *
-     * - Если count < quantity → quantity -= count, запись в историю, предмет остаётся в базе.
-     * - Если count == quantity → весь предмет уходит в архив с причиной [reason].
-     * - Если count > quantity → ничего не делаем.
+     * ВАЖНО (новая логика):
+     * - ЛЮБОЕ списание идёт в архив отдельной записью с originalId.
+     * - Если count < quantity:
+     *     - Создаётся новая запись (isArchived = true, quantity = count, originalId = itemId).
+     *     - У оригинала quantity -= count.
+     *     - Если quantity оригинала стало 0 → оригинал удаляется.
+     * - Если count == quantity:
+     *     - Оригинал архивируется (как раньше), originalId = null.
+     *
+     * @param reason ключ причины (используется всегда).
+     * @param note комментарий (опционально).
      */
     fun writeOffItem(itemId: String, count: Int, reason: String?, note: String?) {
         Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
@@ -938,10 +1031,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val now = System.currentTimeMillis()
+                val appContext = getApplication<Application>().applicationContext
+                val reasonKey = reason ?: "used_up"
 
                 if (count == item.quantity) {
-                    // ===== Списываем всё → в архив =====
-                    val reasonKey = reason ?: "used_up"
+                    // ===== Списываем ВСЁ → оригинал в архив =====
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
                     enqueue("item", itemId, "update", item.parentId)
 
@@ -957,27 +1051,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
 
                 } else {
-                    // ===== Частичное списание =====
-                    val newQty = item.quantity - count
-                    val updated = item.copy(
-                        quantity = newQty,
+                    // ===== ЧАСТИЧНОЕ СПИСАНИЕ → создаём архивную запись =====
+                    val newId = java.util.UUID.randomUUID().toString()
+
+                    // 1. Создаём архивную «часть»
+                    val archivedPart = item.copy(
+                        id = newId,
+                        quantity = count,
+                        isArchived = true,
+                        archivedReason = reasonKey,
+                        archivedDate = now,
+                        archivedNote = note,
+                        originalId = itemId,
+                        imageUrl = null,        // фото загрузится отдельно
+                        addedDate = now,
                         updatedDate = now,
                         updatedBy = currentUser
                     )
-                    updated.computeExpiryFields()
-                    db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId)
+                    archivedPart.computeExpiryFields()
 
-                    val history = HistoryEntry(
-                        itemId = itemId,
-                        action = "write_off",
-                        oldValue = "${item.quantity} шт.",
-                        newValue = "${newQty} шт. (списано $count${if (!note.isNullOrEmpty()) ", $note" else ""})",
-                        changedBy = currentUser
-                    )
-                    db.historyDao().insertEntry(history)
+                    withContext(Dispatchers.IO) {
+                        db.itemDao().insertItem(archivedPart)
+                    }
+                    enqueue("item", newId, "create", item.parentId)
 
-                    Logger.log(TAG, "writeOffItem: partial write-off, quantity $newQty")
+                    // 2. Копируем фото (если есть)
+                    try {
+                        val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+                        if (localFile != null && localFile.exists()) {
+                            val bytes = localFile.readBytes()
+                            ImageUtils.saveImageLocally(appContext, newId, bytes)
+                            Logger.log(TAG, "writeOffItem: photo copied to $newId")
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "writeOffItem: failed to copy photo: ${e.message}")
+                    }
+
+                    // 3. Уменьшаем оригинал
+                    val newQty = item.quantity - count
+                    if (newQty == 0) {
+                        // Оригинал стал пустым — удаляем
+                        withContext(Dispatchers.IO) {
+                            db.itemDao().deleteItemById(itemId)
+                        }
+                        enqueue("item", itemId, "delete", item.parentId)
+                        ImageUtils.deleteLocalImage(appContext, itemId)
+
+                        val history = HistoryEntry(
+                            itemId = newId,
+                            action = "write_off",
+                            oldValue = "Отделено от «${item.name}»",
+                            newValue = "Списано $count шт. (оригинал удалён, ${getArchiveReasonText(reasonKey)})",
+                            changedBy = currentUser
+                        )
+                        db.historyDao().insertEntry(history)
+
+                        Logger.log(TAG, "writeOffItem: partial → original deleted (qty was $count)")
+                    } else {
+                        // Оригинал ещё жив
+                        val updatedOriginal = item.copy(
+                            quantity = newQty,
+                            updatedDate = now,
+                            updatedBy = currentUser
+                        )
+                        updatedOriginal.computeExpiryFields()
+                        withContext(Dispatchers.IO) {
+                            db.itemDao().updateItem(updatedOriginal)
+                        }
+                        enqueue("item", itemId, "update", item.parentId)
+
+                        val historyNew = HistoryEntry(
+                            itemId = newId,
+                            action = "write_off",
+                            oldValue = "Отделено от «${item.name}»",
+                            newValue = "Списано $count шт. (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
+                            changedBy = currentUser
+                        )
+                        db.historyDao().insertEntry(historyNew)
+
+                        val historyOld = HistoryEntry(
+                            itemId = itemId,
+                            action = "write_off_part",
+                            oldValue = "${item.quantity} шт.",
+                            newValue = "$newQty шт. (списано $count)",
+                            changedBy = currentUser
+                        )
+                        db.historyDao().insertEntry(historyOld)
+
+                        Logger.log(TAG, "writeOffItem: partial → new archive entry $newId ($count шт.), original=$newQty шт.")
+                    }
                 }
 
                 loadContents()
@@ -990,13 +1152,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ПЕРЕМЕЩЕНИЕ ЧАСТИ КОЛИЧЕСТВА (split + move)
     // ============================================================
-    /**
-     * Отделяет [count] штук от предмета и перемещает их в папку [newParentId].
-     *
-     * - Если count >= quantity → обычный moveItem (весь предмет переезжает).
-     * - Если count < quantity → создаётся копия с quantity=count, у оригинала quantity -= count.
-     *   Фото копируется под новый id.
-     */
     fun splitAndMoveItem(itemId: String, count: Int, newParentId: String?) {
         Logger.log(TAG, "splitAndMoveItem: itemId=$itemId, count=$count, newParentId=$newParentId")
         viewModelScope.launch {
@@ -1013,7 +1168,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (count >= item.quantity) {
-                    // Перемещаем весь предмет целиком
                     Logger.log(TAG, "splitAndMoveItem: count >= quantity → full move")
                     moveItem(itemId, newParentId)
                     return@launch
@@ -1023,7 +1177,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val now = System.currentTimeMillis()
                 val newId = java.util.UUID.randomUUID().toString()
 
-                // ===== 1. Создаём копию =====
                 val copy = item.copy(
                     id = newId,
                     quantity = count,
@@ -1039,19 +1192,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 enqueue("item", newId, "create", newParentId)
 
-                // ===== 2. Копируем фото (если есть) =====
                 try {
                     val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
                     if (localFile != null && localFile.exists()) {
                         val bytes = localFile.readBytes()
                         ImageUtils.saveImageLocally(appContext, newId, bytes)
-                        Logger.log(TAG, "splitAndMoveItem: photo copied for $newId")
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "splitAndMoveItem: failed to copy photo: ${e.message}")
                 }
 
-                // ===== 3. Уменьшаем исходный =====
                 val newQty = item.quantity - count
                 val updated = item.copy(
                     quantity = newQty,
@@ -1064,11 +1214,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 enqueue("item", itemId, "update", item.parentId)
 
-                // ===== 4. История =====
                 val folderName = getFolderNameById(newParentId)
 
                 withContext(Dispatchers.IO) {
-                    // Копия
                     db.historyDao().insertEntry(
                         HistoryEntry(
                             itemId = newId,
@@ -1078,7 +1226,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             changedBy = currentUser
                         )
                     )
-                    // Исходный
                     db.historyDao().insertEntry(
                         HistoryEntry(
                             itemId = itemId,
@@ -1108,7 +1255,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ===== СТАТУС: used_up «Израсходовано» — САМЫМ ПЕРВЫМ =====
     private fun getArchiveReasonText(reason: String): String {
         return when (reason) {
             "used_up" -> "🧴 Израсходовано"
