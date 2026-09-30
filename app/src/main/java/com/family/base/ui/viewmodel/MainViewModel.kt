@@ -913,12 +913,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Списывает [count] штук предмета.
      *
-     * - Если count < quantity → quantity -= count, запись в историю («списано N шт.»), предмет остаётся в базе.
-     * - Если count == quantity → весь предмет уходит в архив с причиной [reason], запись в историю («в архив»).
-     * - Если count > quantity → ничего не делаем (вызывающий код должен это предотвратить).
-     *
-     * @param reason — ключ причины для архивации (используется только при полном списании).
-     * @param note — комментарий (опционально).
+     * - Если count < quantity → quantity -= count, запись в историю, предмет остаётся в базе.
+     * - Если count == quantity → весь предмет уходит в архив с причиной [reason].
+     * - Если count > quantity → ничего не делаем.
      */
     fun writeOffItem(itemId: String, count: Int, reason: String?, note: String?) {
         Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
@@ -987,6 +984,127 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Logger.log(TAG, "Error writing off item: ${e.message}", e)
             }
+        }
+    }
+
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЕ ЧАСТИ КОЛИЧЕСТВА (split + move)
+    // ============================================================
+    /**
+     * Отделяет [count] штук от предмета и перемещает их в папку [newParentId].
+     *
+     * - Если count >= quantity → обычный moveItem (весь предмет переезжает).
+     * - Если count < quantity → создаётся копия с quantity=count, у оригинала quantity -= count.
+     *   Фото копируется под новый id.
+     */
+    fun splitAndMoveItem(itemId: String, count: Int, newParentId: String?) {
+        Logger.log(TAG, "splitAndMoveItem: itemId=$itemId, count=$count, newParentId=$newParentId")
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    Logger.log(TAG, "splitAndMoveItem: item not found: $itemId")
+                    return@launch
+                }
+
+                if (count <= 0) {
+                    Logger.log(TAG, "splitAndMoveItem: count <= 0, ignoring")
+                    return@launch
+                }
+
+                if (count >= item.quantity) {
+                    // Перемещаем весь предмет целиком
+                    Logger.log(TAG, "splitAndMoveItem: count >= quantity → full move")
+                    moveItem(itemId, newParentId)
+                    return@launch
+                }
+
+                val appContext = getApplication<Application>().applicationContext
+                val now = System.currentTimeMillis()
+                val newId = java.util.UUID.randomUUID().toString()
+
+                // ===== 1. Создаём копию =====
+                val copy = item.copy(
+                    id = newId,
+                    quantity = count,
+                    parentId = newParentId,
+                    addedDate = now,
+                    updatedDate = now,
+                    updatedBy = currentUser
+                )
+                copy.computeExpiryFields()
+
+                withContext(Dispatchers.IO) {
+                    db.itemDao().insertItem(copy)
+                }
+                enqueue("item", newId, "create", newParentId)
+
+                // ===== 2. Копируем фото (если есть) =====
+                try {
+                    val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
+                    if (localFile != null && localFile.exists()) {
+                        val bytes = localFile.readBytes()
+                        ImageUtils.saveImageLocally(appContext, newId, bytes)
+                        Logger.log(TAG, "splitAndMoveItem: photo copied for $newId")
+                    }
+                } catch (e: Exception) {
+                    Logger.log(TAG, "splitAndMoveItem: failed to copy photo: ${e.message}")
+                }
+
+                // ===== 3. Уменьшаем исходный =====
+                val newQty = item.quantity - count
+                val updated = item.copy(
+                    quantity = newQty,
+                    updatedDate = now,
+                    updatedBy = currentUser
+                )
+                updated.computeExpiryFields()
+                withContext(Dispatchers.IO) {
+                    db.itemDao().updateItem(updated)
+                }
+                enqueue("item", itemId, "update", item.parentId)
+
+                // ===== 4. История =====
+                val folderName = getFolderNameById(newParentId)
+
+                withContext(Dispatchers.IO) {
+                    // Копия
+                    db.historyDao().insertEntry(
+                        HistoryEntry(
+                            itemId = newId,
+                            action = "split_in",
+                            oldValue = "Отделено от «${item.name}»",
+                            newValue = "$count шт. → $folderName",
+                            changedBy = currentUser
+                        )
+                    )
+                    // Исходный
+                    db.historyDao().insertEntry(
+                        HistoryEntry(
+                            itemId = itemId,
+                            action = "split_out",
+                            oldValue = "${item.quantity} шт.",
+                            newValue = "$newQty шт. (отделено $count → $folderName)",
+                            changedBy = currentUser
+                        )
+                    )
+                }
+
+                Logger.log(TAG, "splitAndMoveItem: done. new=$newId ($count шт.), original=$newQty шт.")
+
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error in splitAndMoveItem: ${e.message}", e)
+            }
+        }
+    }
+
+    private suspend fun getFolderNameById(folderId: String?): String {
+        if (folderId == null) return "Корень"
+        return try {
+            db.folderDao().getFolderById(folderId)?.name ?: "Корень"
+        } catch (e: Exception) {
+            "Корень"
         }
     }
 
