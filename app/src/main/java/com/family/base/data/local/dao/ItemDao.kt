@@ -26,6 +26,10 @@ interface ItemDao {
     @Query("SELECT * FROM items WHERE id = :id")
     suspend fun getItemById(id: String): ItemEntity?
 
+    /** Прямое удаление по id (без загрузки сущности) */
+    @Query("DELETE FROM items WHERE id = :itemId")
+    suspend fun deleteItemById(itemId: String)
+
     // ============================================================
     // ЗАПРОСЫ БЕЗ АРХИВА (ДЛЯ ОСНОВНОГО СПИСКА)
     // ============================================================
@@ -92,6 +96,24 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE isArchived = 1 AND archivedReason = :reason ORDER BY archivedDate DESC")
     suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity>
+
+    // ============================================================
+    // ЧАСТИЧНОЕ СПИСАНИЕ (originalId)
+    // ============================================================
+
+    /**
+     * Все архивные записи, отделённые от указанного предмета
+     * (при частичном списании).
+     */
+    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 1")
+    suspend fun getItemsByOriginalId(originalId: String): List<ItemEntity>
+
+    /**
+     * Активные (неархивные) записи, отделённые от указанного предмета.
+     * На случай, если оригинал вернули, а «части» ещё живы.
+     */
+    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 0")
+    suspend fun getActiveItemsByOriginalId(originalId: String): List<ItemEntity>
 
     // ============================================================
     // ЗАЙМ (ВЫДАЧА)
@@ -333,17 +355,9 @@ interface ItemDao {
     // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
     // ============================================================
 
-    /**
-     * Все предметы с непустым imageUrl.
-     * В Kotlin проверим, совпадает ли imageUrl с "images/<id>.jpg".
-     */
     @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun getAllItemsWithImageUrl(): List<ItemEntity>
 
-    /**
-     * Сброс imageUrl у конкретного предмета в null.
-     * Используется для «застрявших» фейковых UUID.
-     */
     @Query("UPDATE items SET imageUrl = NULL WHERE id = :itemId")
     suspend fun clearImageUrl(itemId: String)
 }
