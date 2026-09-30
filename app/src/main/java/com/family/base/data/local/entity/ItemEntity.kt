@@ -24,7 +24,7 @@ data class ItemEntity(
     var daysUntilExpiry: Int = Int.MAX_VALUE,
     var isExpired: Boolean = false,
     val itemType: String? = null,
-    val itemSubtype: String? = null,   // ← НОВОЕ: подтип (milk, bread, antibiotics ...)
+    val itemSubtype: String? = null,   // подтип (milk, bread, antibiotics ...)
     val price: Double? = null,
 
     // ===== АРХИВ =====
@@ -32,6 +32,14 @@ data class ItemEntity(
     val archivedReason: String? = null,
     val archivedDate: Long? = null,
     val archivedNote: String? = null,
+
+    // ===== СПИСАНИЕ (частичное) =====
+    /**
+     * id предмета-родителя, от которого была отделена эта запись
+     * при частичном списании.
+     * NULL — если это обычный предмет (не отделённый).
+     */
+    val originalId: String? = null,
 
     // ===== ЗАЙМ (ВЫДАЧА) =====
     val isLent: Boolean = false,
