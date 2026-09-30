@@ -92,7 +92,6 @@ class MainActivity : AppCompatActivity() {
                             val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
                             withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                             viewModel.uploadFolderImage(folder.id, processedBytes)
-                            viewModel.syncWithDisk()
                             viewModel.loadContents()
                             Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
@@ -450,7 +449,6 @@ class MainActivity : AppCompatActivity() {
                     }
                     newFolderImageBytes = null
                 }
-                viewModel.syncWithDisk()
                 viewModel.loadContents()
                 Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
