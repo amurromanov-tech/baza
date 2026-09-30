@@ -1,5 +1,6 @@
 package com.family.base.ui
 
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.net.Uri
 import android.os.Build
@@ -17,7 +18,6 @@ import com.family.base.R
 import com.family.base.util.Logger
 import com.github.chrisbanes.photoview.PhotoView
 import java.io.File
-import kotlin.math.abs
 
 class FullscreenImageActivity : AppCompatActivity() {
 
@@ -109,7 +109,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         photoView.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Если фото увеличено — не перехватываем (даём PhotoView работать)
                     if (isZoomed || photoView.scale > ZOOM_THRESHOLD) {
                         isDragging = false
                         return@setOnTouchListener false
@@ -128,14 +127,12 @@ class FullscreenImageActivity : AppCompatActivity() {
 
                     val deltaY = event.rawY - dragStartY
 
-                    // Свайп только вниз
                     if (deltaY > 0) {
                         isDragging = true
                         currentTranslationY = deltaY
                         applySwipeTransform(deltaY)
                         true
                     } else {
-                        // Свайп вверх — игнорируем, возвращаем фото на место
                         if (isDragging) {
                             animateBackToOrigin()
                             isDragging = false
@@ -164,23 +161,15 @@ class FullscreenImageActivity : AppCompatActivity() {
     }
 
     /**
-     * Применяет трансформации во время свайпа:
-     * - фото следует за пальцем (translationY)
-     * - фон светлеет (alpha)
-     * - подсказка исчезает
+     * Применяет трансформации во время свайпа.
      */
     private fun applySwipeTransform(deltaY: Float) {
         photoContainer.translationY = deltaY
 
         val progress = (deltaY / dismissThreshold).coerceIn(0f, 1f)
 
-        // Фон: 1.0 → 0.3
         rootContainer.alpha = 1f - progress * 0.7f
-
-        // Подсказка исчезает
         tvHint.alpha = 1f - progress
-
-        // Заголовок тоже немного
         tvTitle.alpha = 1f - progress
     }
 
@@ -188,7 +177,7 @@ class FullscreenImageActivity : AppCompatActivity() {
      * Плавный возврат фото на исходное место.
      */
     private fun animateBackToOrigin() {
-        val animator = ValueAnimator.ofFloat(currentTranslationY, 0f).apply {
+        ValueAnimator.ofFloat(currentTranslationY, 0f).apply {
             duration = 250L
             interpolator = DecelerateInterpolator()
             addUpdateListener { anim ->
@@ -210,7 +199,7 @@ class FullscreenImageActivity : AppCompatActivity() {
      */
     private fun animateDismissAndFinish() {
         val screenHeight = resources.displayMetrics.heightPixels.toFloat()
-        val animator = ValueAnimator.ofFloat(currentTranslationY, screenHeight).apply {
+        ValueAnimator.ofFloat(currentTranslationY, screenHeight).apply {
             duration = 200L
             interpolator = DecelerateInterpolator()
             addUpdateListener { anim ->
@@ -222,10 +211,12 @@ class FullscreenImageActivity : AppCompatActivity() {
                 tvHint.alpha = 1f - progress
                 tvTitle.alpha = 1f - progress
             }
-            withEndAction {
-                finish()
-                overridePendingTransition(0, android.R.anim.fade_out)
-            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    finish()
+                    overridePendingTransition(0, android.R.anim.fade_out)
+                }
+            })
             start()
         }
     }
