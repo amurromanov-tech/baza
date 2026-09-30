@@ -1,12 +1,18 @@
 package com.family.base.ui
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import android.view.MotionEvent
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
 import android.view.animation.RotateAnimation
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -54,6 +60,10 @@ class MainActivity : AppCompatActivity() {
     private var currentFolderForImage: FolderEntity? = null
 
     private var hideProgressJob: Job? = null
+
+    // ===== ДЛЯ LONG-PRESS СТЕППЕРА =====
+    private val repeatHandler = Handler(Looper.getMainLooper())
+    private var repeatRunnable: Runnable? = null
 
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -263,6 +273,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         stopSyncAnimation()
         hideProgressJob?.cancel()
+        stopRepeat()
     }
 
     // ============================================================
@@ -484,64 +495,50 @@ class MainActivity : AppCompatActivity() {
     // СПИСАНИЕ / АРХИВ ИЗ КОНТЕКСТНОГО МЕНЮ
     // ============================================================
 
-    /**
-     * Единая точка входа из контекстного меню:
-     * - Если quantity == 1 → сразу диалог причины → в архив.
-     * - Если quantity > 1 → диалог «Сколько списать?» → потом причина (если всё).
-     */
     private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
         if (item.quantity <= 1) {
-            // Последняя (или единственная) штука — сразу причина
             showWriteOffReasonDialog(item, item.quantity.coerceAtLeast(1))
         } else {
             showWriteOffCountDialog(item)
         }
     }
 
+    // ===== ЗАГОЛОВОК ПО ТИПУ =====
+    private fun getWriteOffNoun(item: ItemEntity): String {
+        return when (item.itemType) {
+            "food" -> "продукт"
+            "medicine" -> "лекарство"
+            "thing" -> "вещь"
+            else -> "предмет"
+        }
+    }
+
+    private fun getWriteOffTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Списать $noun: $shortName"
+    }
+
     private fun showWriteOffCountDialog(item: ItemEntity) {
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(48, 16, 48, 16)
-        }
-
-        val etCount = android.widget.EditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setText("1")
-            hint = "Сколько списать"
-            setSelectAllOnFocus(true)
-        }
-        container.addView(etCount)
-
-        val info = android.widget.TextView(this).apply {
-            text = "Всего: ${item.quantity} шт."
-            textSize = 13f
-            setPadding(0, 16, 0, 0)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.dateLabel))
-        }
-        container.addView(info)
+        val stepper = buildStepperLayout(item.quantity)
 
         AlertDialog.Builder(this)
-            .setTitle("🧴 Списать: ${item.name}")
-            .setView(container)
+            .setTitle(getWriteOffTitle(item))
+            .setView(stepper.container)
             .setPositiveButton("Далее") { _, _ ->
-                val count = etCount.text.toString().toIntOrNull() ?: 0
+                val count = stepper.getValue()
                 when {
-                    count <= 0 -> {
-                        Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    }
-                    count > item.quantity -> {
-                        Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    }
-                    count == item.quantity -> {
-                        showWriteOffReasonDialog(item, count)
-                    }
+                    count <= 0 -> Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    count > item.quantity -> Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    count == item.quantity -> showWriteOffReasonDialog(item, count)
                     else -> {
                         viewModel.writeOffItem(item.id, count, null, null)
                         Toast.makeText(this, "Списано $count шт.", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
             .show()
     }
 
@@ -567,8 +564,10 @@ class MainActivity : AppCompatActivity() {
             "other"
         )
 
+        val noun = getWriteOffNoun(item)
+
         AlertDialog.Builder(this)
-            .setTitle("Списываешь последнюю штуку.\nПредмет уйдёт в архив.")
+            .setTitle("Списываешь последнюю $noun.\nПредмет уйдёт в архив.")
             .setItems(reasons) { _, which ->
                 viewModel.writeOffItem(item.id, count, reasonKeys[which], null)
                 Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
@@ -578,7 +577,118 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // АРХИВ (старый диалог — оставлен для совместимости с confirmDeleteItem)
+    // СТЕППЕР [−] [N] [+] С LONG-PRESS
+    // ============================================================
+    private class StepperResult(
+        val container: LinearLayout,
+        val editText: EditText,
+        val minusBtn: View,
+        val plusBtn: View,
+        val maxQty: Int
+    ) {
+        fun getValue(): Int = editText.text.toString().toIntOrNull() ?: 1
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildStepperLayout(maxQty: Int): StepperResult {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(48, 24, 48, 8)
+        }
+
+        val minusBtn = android.widget.Button(this).apply {
+            text = "−"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        val editText = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("1")
+            gravity = android.view.Gravity.CENTER
+            textSize = 20f
+            setSelectAllOnFocus(true)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = 16
+                marginEnd = 16
+            }
+        }
+
+        val plusBtn = android.widget.Button(this).apply {
+            text = "+"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        container.addView(minusBtn)
+        container.addView(editText)
+        container.addView(plusBtn)
+
+        val result = StepperResult(container, editText, minusBtn, plusBtn, maxQty)
+
+        val changeBy = { delta: Int ->
+            val cur = result.getValue()
+            val next = (cur + delta).coerceIn(1, maxQty)
+            if (next != cur) {
+                editText.setText(next.toString())
+                editText.setSelection(editText.text.length)
+            }
+        }
+
+        // Обычный клик
+        minusBtn.setOnClickListener { changeBy(-1) }
+        plusBtn.setOnClickListener { changeBy(+1) }
+
+        // Long-press с автоповтором
+        setupRepeatButton(minusBtn) { changeBy(-1) }
+        setupRepeatButton(plusBtn) { changeBy(+1) }
+
+        return result
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupRepeatButton(view: View, action: () -> Unit) {
+        view.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Ждём 400мс → старт автоповтора
+                    repeatRunnable = object : Runnable {
+                        override fun run() {
+                            action()
+                            repeatHandler.postDelayed(this, 100)
+                        }
+                    }
+                    repeatHandler.postDelayed(repeatRunnable!!, 400)
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    stopRepeat()
+                    v.isPressed = false
+                    v.performClick()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun stopRepeat() {
+        repeatRunnable?.let { repeatHandler.removeCallbacks(it) }
+        repeatRunnable = null
+    }
+
+    // ============================================================
+    // АРХИВ (старый диалог — оставлен для confirmDeleteItem)
     // ============================================================
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
