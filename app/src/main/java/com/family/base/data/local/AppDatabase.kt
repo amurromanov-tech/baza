@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 5,  // ← увеличили с 4 до 5 (подтипы)
+    version = 6,  // ← увеличили с 5 до 6 (originalId для частичного списания)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -66,8 +66,16 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Новое поле — подтип предмета
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 5 НА 6 (originalId — частичное списание)
+        // ============================================================
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
             }
         }
 
@@ -76,12 +84,10 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_2_4 = object : Migration(2, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Архив
                 db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
-                // Займ
                 db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
@@ -95,19 +101,28 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_2_5 = object : Migration(2, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Архив
                 db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
                 db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
-                // Займ
                 db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
                 db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
                 db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
-                // Подтип
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 4 НА 6 (ЕСЛИ ПРОПУСТИЛИ 5)
+        // ============================================================
+        private val MIGRATION_4_6 = object : Migration(4, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Подтип (из 4→5)
+                db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
+                // originalId (из 5→6)
+                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
             }
         }
 
@@ -122,8 +137,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
+                        MIGRATION_5_6,
                         MIGRATION_2_4,
-                        MIGRATION_2_5
+                        MIGRATION_2_5,
+                        MIGRATION_4_6
                     )
                     .fallbackToDestructiveMigration()
                     .build()
