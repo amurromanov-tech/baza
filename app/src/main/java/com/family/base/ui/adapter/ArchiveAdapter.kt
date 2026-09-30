@@ -34,7 +34,14 @@ class ArchiveAdapter(
         val item = items[position]
         val context = holder.itemView.context
 
-        holder.name.text = item.name
+        // Название: если это «часть» от списания → пометка
+        val nameText = if (!item.originalId.isNullOrEmpty()) {
+            "↩ ${item.name}"
+        } else {
+            item.name
+        }
+        holder.name.text = nameText
+
         holder.info.text = buildInfoText(item)
         holder.reason.text = getReasonText(item.archivedReason)
 
@@ -61,13 +68,20 @@ class ArchiveAdapter(
         }
     }
 
+    /**
+     * Информационная строка под названием:
+     * «×N | 300 ₽»
+     * Если количество = 1 → только цена (если есть).
+     */
     private fun buildInfoText(item: ItemEntity): String {
         val parts = mutableListOf<String>()
 
+        // Всегда показываем количество, если > 1
         if (item.quantity > 1) {
             parts.add("×${item.quantity}")
         }
 
+        // Цена за всё количество (если задана)
         if (item.price != null && item.price != 0.0) {
             val totalPrice = item.price * item.quantity
             val priceStr = if (totalPrice % 1.0 == 0.0) {
@@ -81,6 +95,9 @@ class ArchiveAdapter(
         return parts.joinToString(" | ")
     }
 
+    /**
+     * Текст причины архивации (правый чип).
+     */
     private fun getReasonText(reason: String?): String {
         return when (reason) {
             "used_up" -> "🧴 Израсходовано"
