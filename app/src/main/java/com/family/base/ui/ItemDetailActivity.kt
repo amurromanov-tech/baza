@@ -345,7 +345,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?» СО СТЕППЕРОМ
+    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?» → ПОТОМ ВСЕГДА «ПРИЧИНА»
     // ============================================================
     private fun showWriteOffDialog() {
         val id = itemId ?: return
@@ -363,30 +363,33 @@ class ItemDetailActivity : AppCompatActivity() {
             .setView(stepper.container)
             .setPositiveButton("Далее") { _, _ ->
                 val count = stepper.getValue()
-                when {
-                    count <= 0 -> Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    count > item.quantity -> Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    count == item.quantity -> {
-                        showWriteOffReasonDialog(id, count)
-                    }
-                    else -> {
-                        viewModel.writeOffItem(id, count, null, null)
-                        currentItem = item.copy(quantity = item.quantity - count)
-                        animateQuantity(item.quantity - count)
-                        updatePriceRow(item.price, item.quantity - count)
-                        Toast.makeText(this, "Списано $count шт.", Toast.LENGTH_SHORT).show()
-                    }
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
                 }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                // ВСЕГДА спрашиваем причину
+                showWriteOffReasonDialog(id, count)
             }
             .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
             .setOnDismissListener { stopRepeat() }
             .show()
     }
 
-    // ===== ДИАЛОГ ПРИЧИНЫ (при полном списании) =====
+    // ===== ДИАЛОГ ПРИЧИНЫ (вызывается ВСЕГДА) =====
     private fun showWriteOffReasonDialog(id: String, count: Int) {
         val item = currentItem
         val noun = if (item != null) getWriteOffNoun(item) else "предмет"
+        val totalQty = item?.quantity ?: count
+
+        val title = if (count == totalQty) {
+            "Списываешь последнюю $noun.\nПредмет уйдёт в архив."
+        } else {
+            "Списать $count шт. — в архив.\nВыберите причину:"
+        }
 
         val reasons = arrayOf(
             "🧴 Израсходовано",
@@ -410,11 +413,16 @@ class ItemDetailActivity : AppCompatActivity() {
         )
 
         AlertDialog.Builder(this)
-            .setTitle("Списываешь последнюю $noun.\nПредмет уйдёт в архив.")
+            .setTitle(title)
             .setItems(reasons) { _, which ->
                 viewModel.writeOffItem(id, count, reasonKeys[which], null)
-                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
-                finish()
+                if (count == totalQty) {
+                    Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                    finish()
+                } else {
+                    Toast.makeText(this, "Списано $count шт. в архив", Toast.LENGTH_SHORT).show()
+                    finish()
+                }
             }
             .setNegativeButton("Отмена", null)
             .show()
