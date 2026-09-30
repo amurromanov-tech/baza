@@ -523,11 +523,6 @@
                             android:layout_height="wrap_content"
                             android:layout_marginStart="8dp"
                             android:visibility="gone"
-                            android:textSize="18sp"
-                            android:textStyle="bold"
-                            app:chipMinHeight="44dp"
-                            app:chipStartPadding="16dp"
-                            app:chipEndPadding="16dp"
                             tools:text="Всего: 1 000 ₽"
                             tools:visibility="visible" />
                     </LinearLayout>
