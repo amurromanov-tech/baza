@@ -234,7 +234,6 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <!-- ВСЕГДА ВИДИМО: Название (жирный TextView без чипа) -->
                     <TextView
                         android:id="@+id/tvNameView"
                         android:layout_width="match_parent"
@@ -260,7 +259,6 @@
                             android:inputType="text" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- ВСЕГДА ВИДИМО: Количество + индикатор синка + кнопка Списать -->
                     <LinearLayout
                         android:id="@+id/quantityRow"
                         android:layout_width="match_parent"
@@ -308,7 +306,6 @@
                             app:cornerRadius="18dp" />
                     </LinearLayout>
 
-                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Основное» -->
                     <LinearLayout
                         android:id="@+id/contentBasicExpandable"
                         android:layout_width="match_parent"
@@ -493,7 +490,6 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <!-- ВСЕГДА ВИДИМО: Цена за шт. + Всего -->
                     <LinearLayout
                         android:id="@+id/priceRow"
                         android:layout_width="match_parent"
@@ -527,7 +523,6 @@
                             tools:visibility="visible" />
                     </LinearLayout>
 
-                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Детали» -->
                     <LinearLayout
                         android:id="@+id/contentDetailsExpandable"
                         android:layout_width="match_parent"
@@ -670,7 +665,6 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <!-- СВОРАЧИВАЕМАЯ ЧАСТЬ «Даты» (Добавлено, Изменено, Срок годности) -->
                     <LinearLayout
                         android:id="@+id/contentDatesExpandable"
                         android:layout_width="match_parent"
@@ -715,9 +709,22 @@
                             android:layout_height="wrap_content"
                             android:visibility="gone"
                             tools:text="15.12.2026" />
+
+                        <!-- ===== РЕВИЗИЯ ===== -->
+                        <TextView
+                            android:id="@+id/tvDateRevisionLabel"
+                            style="@style/DateLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Ревизия" />
+                        <TextView
+                            android:id="@+id/tvDateRevision"
+                            style="@style/DateValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            tools:text="01.10.2026 (5 дней назад)" />
                     </LinearLayout>
 
-                    <!-- ВСЕГДА ВИДИМО: прогресс-бар срока -->
                     <LinearLayout
                         android:id="@+id/expiryProgressBlock"
                         android:layout_width="match_parent"
@@ -1013,14 +1020,14 @@
                     android:gravity="center">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnActionCopy"
+                        android:id="@+id/btnActionRevision"
                         style="@style/RoundActionButton.Copy"
-                        android:text="📋" />
+                        android:text="🔍" />
                     <TextView
                         style="@style/RoundActionLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Копировать" />
+                        android:text="Ревизия" />
                 </LinearLayout>
 
                 <LinearLayout
