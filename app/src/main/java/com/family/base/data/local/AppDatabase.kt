@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 6,  // ← увеличили с 5 до 6 (originalId для частичного списания)
+    version = 7,  // ← увеличили с 6 до 7 (lastRevisionDate для ревизии)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -80,6 +80,15 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 6 НА 7 (lastRevisionDate — ревизия)
+        // ============================================================
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
         // МИГРАЦИЯ С ВЕРСИИ 2 НА 4 (ЕСЛИ ПРОПУСТИЛИ 3)
         // ============================================================
         private val MIGRATION_2_4 = object : Migration(2, 4) {
@@ -119,10 +128,18 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_4_6 = object : Migration(4, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Подтип (из 4→5)
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
-                // originalId (из 5→6)
                 db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 5 НА 7 (ЕСЛИ ПРОПУСТИЛИ 6)
+        // ============================================================
+        private val MIGRATION_5_7 = object : Migration(5, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
             }
         }
 
@@ -138,9 +155,11 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
+                        MIGRATION_6_7,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
-                        MIGRATION_4_6
+                        MIGRATION_4_6,
+                        MIGRATION_5_7
                     )
                     .fallbackToDestructiveMigration()
                     .build()
