@@ -67,7 +67,7 @@
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ + PIN ===== -->
+        <!-- ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ (НОВОЕ) ===== -->
         <activity
             android:name=".ui.SelectUserActivity"
             android:exported="false"
