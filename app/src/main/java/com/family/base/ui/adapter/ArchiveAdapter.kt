@@ -13,6 +13,7 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.util.ImageUtils
 
 class ArchiveAdapter(
+    private val isGuestMode: Boolean = false,
     private val onItemClick: (ItemEntity) -> Unit,
     private val onRestoreClick: (ItemEntity) -> Unit
 ) : RecyclerView.Adapter<ArchiveAdapter.ViewHolder>() {
@@ -63,25 +64,24 @@ class ArchiveAdapter(
             onItemClick(item)
         }
 
-        holder.btnRestore.setOnClickListener {
-            onRestoreClick(item)
+        // ===== КНОПКА «ВЕРНУТЬ» — СКРЫВАЕМ ДЛЯ ГОСТЯ =====
+        if (isGuestMode) {
+            holder.btnRestore.visibility = View.GONE
+        } else {
+            holder.btnRestore.visibility = View.VISIBLE
+            holder.btnRestore.setOnClickListener {
+                onRestoreClick(item)
+            }
         }
     }
 
-    /**
-     * Информационная строка под названием:
-     * «×N | 300 ₽»
-     * Если количество = 1 → только цена (если есть).
-     */
     private fun buildInfoText(item: ItemEntity): String {
         val parts = mutableListOf<String>()
 
-        // Всегда показываем количество, если > 1
         if (item.quantity > 1) {
             parts.add("×${item.quantity}")
         }
 
-        // Цена за всё количество (если задана)
         if (item.price != null && item.price != 0.0) {
             val totalPrice = item.price * item.quantity
             val priceStr = if (totalPrice % 1.0 == 0.0) {
@@ -95,9 +95,6 @@ class ArchiveAdapter(
         return parts.joinToString(" | ")
     }
 
-    /**
-     * Текст причины архивации (правый чип).
-     */
     private fun getReasonText(reason: String?): String {
         return when (reason) {
             "used_up" -> "🧴 Израсходовано"
