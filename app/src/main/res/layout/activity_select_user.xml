@@ -14,7 +14,6 @@
         android:padding="24dp"
         android:gravity="center_horizontal">
 
-        <!-- ===== ЗАГОЛОВОК ===== -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -34,7 +33,6 @@
             android:textSize="14sp"
             android:textColor="@color/dateLabel" />
 
-        <!-- ===== ЗАГРУЗКА ===== -->
         <TextView
             android:id="@+id/tvLoading"
             android:layout_width="wrap_content"
@@ -46,7 +44,6 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
-        <!-- ===== АЛЕКСЕЙ ===== -->
         <com.google.android.material.card.MaterialCardView
             style="@style/SectionCard"
             android:layout_width="match_parent"
@@ -103,7 +100,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- ===== РИМА ===== -->
         <com.google.android.material.card.MaterialCardView
             style="@style/SectionCard"
             android:layout_width="match_parent"
@@ -160,7 +156,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- ===== ДИМА ===== -->
         <com.google.android.material.card.MaterialCardView
             style="@style/SectionCard"
             android:layout_width="match_parent"
@@ -217,7 +212,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- ===== РАЗДЕЛИТЕЛЬ ===== -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
@@ -226,7 +220,6 @@
             android:background="@color/dateLabel"
             android:alpha="0.3" />
 
-        <!-- ===== ГОСТЬ ===== -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnGuest"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
