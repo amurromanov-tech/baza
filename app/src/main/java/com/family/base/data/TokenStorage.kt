@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
+import com.family.base.AppUser
 import com.family.base.Config
 
 class TokenStorage(context: Context) {
@@ -23,6 +24,12 @@ class TokenStorage(context: Context) {
         } catch (e: Exception) {
             context.getSharedPreferences("secure_prefs_fallback", Context.MODE_PRIVATE)
         }
+    }
+
+    companion object {
+        private const val TAG = "TokenStorage"
+        private const val KEY_CURRENT_USER = "current_user"
+        private const val KEY_GUEST_MODE = "guest_mode"
     }
 
     // ========== ТОКЕНЫ ==========
@@ -79,7 +86,7 @@ class TokenStorage(context: Context) {
         return prefs.getString("folder_name", "BAZA") ?: "BAZA"
     }
 
-    // ========== ОБЩАЯ ПАПКА (добавлено) ==========
+    // ========== ОБЩАЯ ПАПКА ==========
 
     fun saveSharedFolderLink(link: String) {
         prefs.edit().putString("shared_folder_link", link).apply()
@@ -97,7 +104,7 @@ class TokenStorage(context: Context) {
         return prefs.getString("shared_folder_name", null)
     }
 
-    // ========== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ ==========
+    // ========== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ (OAuth) ==========
 
     fun saveUserInfo(email: String, displayName: String) {
         prefs.edit().apply {
@@ -113,6 +120,58 @@ class TokenStorage(context: Context) {
 
     fun getUserDisplayName(): String? {
         return prefs.getString("user_display_name", null)
+    }
+
+    // ========== ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ПРИЛОЖЕНИЯ ==========
+    // Алексей / Рима / Дима / Гость
+
+    /**
+     * Установить текущего пользователя.
+     * Если name == "Гость" — автоматически включается guestMode.
+     */
+    fun setCurrentUser(name: String) {
+        val isGuest = AppUser.isGuest(name)
+        prefs.edit()
+            .putString(KEY_CURRENT_USER, name)
+            .putBoolean(KEY_GUEST_MODE, isGuest)
+            .apply()
+        android.util.Log.d(TAG, "Current user set: $name (guest=$isGuest)")
+    }
+
+    fun getCurrentUser(): String? {
+        return prefs.getString(KEY_CURRENT_USER, null)
+    }
+
+    fun clearCurrentUser() {
+        prefs.edit()
+            .remove(KEY_CURRENT_USER)
+            .remove(KEY_GUEST_MODE)
+            .apply()
+        android.util.Log.d(TAG, "Current user cleared")
+    }
+
+    // ========== ГОСТЕВОЙ РЕЖИМ ==========
+
+    fun setGuestMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GUEST_MODE, enabled).apply()
+        android.util.Log.d(TAG, "Guest mode: $enabled")
+    }
+
+    fun isGuestMode(): Boolean {
+        return prefs.getBoolean(KEY_GUEST_MODE, false)
+    }
+
+    fun clearGuestMode() {
+        prefs.edit().remove(KEY_GUEST_MODE).apply()
+    }
+
+    /**
+     * Текущий пользователь — гость?
+     * Учитывает и флаг, и имя пользователя.
+     */
+    fun isCurrentUserGuest(): Boolean {
+        if (isGuestMode()) return true
+        return AppUser.isGuest(getCurrentUser())
     }
 
     // ========== ОБНОВЛЕНИЕ ТОКЕНА ==========
