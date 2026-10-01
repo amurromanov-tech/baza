@@ -58,6 +58,11 @@
 
         <activity android:name=".ui.MainActivity" />
 
+        <!-- ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ (НОВОЕ) ===== -->
+        <activity
+            android:name=".ui.SelectUserActivity"
+            android:exported="false" />
+
         <activity
             android:name=".ui.BarcodeScannerActivity"
             android:exported="false"
