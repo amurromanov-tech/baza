@@ -91,7 +91,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var currentItem: ItemEntity? = null
 
-    // ===== ДЛЯ LONG-PRESS СТЕППЕРА =====
+    // ===== LONG-PRESS СТЕППЕРА =====
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
 
@@ -101,6 +101,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DETAILS = "section_details"
     private val KEY_DATES = "section_dates"
     private val KEY_DESCRIPTION = "section_description"
+
+    // ===== РЕВИЗИЯ =====
+    private val REVISION_EXPIRED_DAYS = 365L
 
     // ===== ФОРМАТ ЧИСЕЛ =====
     private val moneyFormat: DecimalFormat by lazy {
@@ -219,7 +222,7 @@ class ItemDetailActivity : AppCompatActivity() {
         }
         binding.btnActionLend.setOnClickListener { showLendDialog() }
         binding.btnActionMove.setOnClickListener { showMoveDialog() }
-        binding.btnActionCopy.setOnClickListener { showCopyDialog() }
+        binding.btnActionRevision.setOnClickListener { showRevisionDialog() }
         binding.btnActionArchive.setOnClickListener { showArchiveDialog() }
         binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
         binding.btnReturnItem.setOnClickListener { showReturnDialog() }
@@ -321,6 +324,69 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // РЕВИЗИЯ: ДИАЛОГ + ФОРМАТ ДАТЫ
+    // ============================================================
+    private fun showRevisionDialog() {
+        val id = itemId ?: return
+        val item = currentItem ?: return
+
+        AlertDialog.Builder(this)
+            .setTitle("Провести ревизию: ${item.name}?")
+            .setMessage("Отметить, что предмет проверен сегодня?")
+            .setPositiveButton("Да") { _, _ ->
+                viewModel.markRevision(id)
+                val now = System.currentTimeMillis()
+                currentItem = item.copy(lastRevisionDate = now)
+                updateRevisionRow(now)
+                Toast.makeText(this, "Ревизия отмечена: ${dateFormat.format(Date(now))}", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Нет", null)
+            .show()
+    }
+
+    /**
+     * Форматирует дату ревизии:
+     * - null → «не проводилась»
+     * - свежая (< 365 дней) → «01.10.2026 (5 дней назад)»
+     * - просрочена (>= 365 дней) → «01.10.2024 ⚠️ (400 дней назад)»
+     */
+    private fun formatRevisionDate(timestamp: Long?): String {
+        if (timestamp == null) return "не проводилась"
+
+        val now = System.currentTimeMillis()
+        val diff = now - timestamp
+        val daysAgo = TimeUnit.MILLISECONDS.toDays(diff).toInt()
+        val dateStr = dateFormat.format(Date(timestamp))
+
+        val daysText = when {
+            daysAgo == 0 -> "сегодня"
+            daysAgo == 1 -> "вчера"
+            daysAgo < 30 -> "$daysAgo дн. назад"
+            daysAgo < 365 -> "${daysAgo / 30} мес. назад"
+            else -> "$daysAgo дн. назад"
+        }
+
+        val prefix = if (daysAgo >= REVISION_EXPIRED_DAYS) "⚠️ " else ""
+        return "$prefix$dateStr ($daysText)"
+    }
+
+    private fun isRevisionExpired(timestamp: Long?): Boolean {
+        if (timestamp == null) return false
+        val daysAgo = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis() - timestamp)
+        return daysAgo >= REVISION_EXPIRED_DAYS
+    }
+
+    private fun updateRevisionRow(timestamp: Long?) {
+        binding.tvDateRevision.text = formatRevisionDate(timestamp)
+        val color = if (isRevisionExpired(timestamp)) {
+            Color.parseColor("#E57373")
+        } else {
+            ContextCompat.getColor(this, R.color.dateValue)
+        }
+        binding.tvDateRevision.setTextColor(color)
+    }
+
+    // ============================================================
     // СПИСАНИЕ: ЗАГОЛОВОК ПО ТИПУ
     // ============================================================
     private fun getWriteOffNoun(item: ItemEntity): String {
@@ -371,7 +437,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                // ВСЕГДА спрашиваем причину
                 showWriteOffReasonDialog(id, count)
             }
             .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
@@ -379,7 +444,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    // ===== ДИАЛОГ ПРИЧИНЫ (вызывается ВСЕГДА) =====
     private fun showWriteOffReasonDialog(id: String, count: Int) {
         val item = currentItem
         val noun = if (item != null) getWriteOffNoun(item) else "предмет"
@@ -1084,6 +1148,11 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.tvDateExpiryLabel.visibility = View.GONE
             binding.tvDateExpiry.visibility = View.GONE
         }
+
+        // ===== РЕВИЗИЯ =====
+        binding.tvDateRevisionLabel.visibility = View.VISIBLE
+        binding.tvDateRevision.visibility = View.VISIBLE
+        updateRevisionRow(item.lastRevisionDate)
     }
 
     private fun fillEditFields(item: ItemEntity, path: String) {
@@ -1137,6 +1206,11 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.tvDateExpiryLabel.visibility = View.GONE
             binding.tvDateExpiry.visibility = View.GONE
         }
+
+        // ===== РЕВИЗИЯ =====
+        binding.tvDateRevisionLabel.visibility = View.VISIBLE
+        binding.tvDateRevision.visibility = View.VISIBLE
+        updateRevisionRow(item.lastRevisionDate)
     }
 
     private suspend fun buildItemPath(parentId: String?): String {
@@ -1225,6 +1299,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tvDateExpiryLabel.visibility = View.GONE
                     binding.tvDateExpiry.visibility = View.GONE
                     binding.expiryProgressBlock.visibility = View.GONE
+                    // Ревизия в истории — скрываем
+                    binding.tvDateRevisionLabel.visibility = View.GONE
+                    binding.tvDateRevision.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) "История пуста"
                     else history.joinToString("\n\n") { entry ->
@@ -1471,20 +1548,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 Logger.log(TAG, "Error showing move dialog", e)
             }
         }
-    }
-
-    private fun showCopyDialog() {
-        val id = itemId ?: return
-        AlertDialog.Builder(this)
-            .setTitle("📋 Копировать предмет?")
-            .setMessage("Будет создана копия предмета в текущей папке.")
-            .setPositiveButton("Копировать") { _, _ ->
-                viewModel.copyItem(id)
-                Toast.makeText(this, "Предмет скопирован", Toast.LENGTH_SHORT).show()
-                finish()
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
     }
 
     private fun showArchiveDialog() {
