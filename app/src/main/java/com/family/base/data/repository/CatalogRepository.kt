@@ -24,6 +24,13 @@ class CatalogRepository(private val db: AppDatabase) {
     private val gson = Gson()
     private val TAG = "CatalogRepository"
     private val DEFAULT_FOLDER_NAME = "BAZA"
+
+    // 🚀 Обход троттлинга Яндекс.Диска (128 KiB/s для media_type=data).
+    // Расширение .bak НЕ подпадает под media_type=data, поэтому загрузка идёт
+    // на полной скорости интернета.
+    private val ITEMS_FILENAME = "items.json.bak"
+    private val FOLDERS_FILENAME = "folders.json.bak"
+
     private var folderPathCache: String? = null
 
     private fun getFolderPath(): String {
@@ -471,7 +478,8 @@ class CatalogRepository(private val db: AppDatabase) {
                 val allFolders = db.folderDao().getAllFolders()
                 Logger.log(TAG, "uploadAllFoldersToDisk: uploading ${allFolders.size} folders")
                 val json = gson.toJson(allFolders)
-                val success = uploadJsonWithToken("data/folders.json", json)
+                // 🚀 Используем .bak для обхода троттлинга
+                val success = uploadJsonWithToken("data/$FOLDERS_FILENAME", json)
                 if (success) {
                     updateLastModifiedWithToken()
                     Logger.log(TAG, "uploadAllFoldersToDisk: success")
@@ -497,7 +505,8 @@ class CatalogRepository(private val db: AppDatabase) {
                 val allItems = db.itemDao().getAllItemsRaw()
                 Logger.log(TAG, "uploadAllItemsToDisk: uploading ${allItems.size} items")
                 val json = gson.toJson(allItems)
-                val success = uploadJsonWithToken("data/items.json", json)
+                // 🚀 Используем .bak для обхода троттлинга
+                val success = uploadJsonWithToken("data/$ITEMS_FILENAME", json)
                 if (success) {
                     updateLastModifiedWithToken()
                     Logger.log(TAG, "uploadAllItemsToDisk: success")
@@ -782,10 +791,11 @@ class CatalogRepository(private val db: AppDatabase) {
 
                 Logger.log(TAG, "Downloading data from disk...")
 
-                val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, "$rootPath/data/folders.json")
+                // 🚀 Используем .bak имена
+                val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, "$rootPath/data/$FOLDERS_FILENAME")
                 Logger.log(TAG, "Downloaded ${foldersResult.data.size} folders (error=${foldersResult.error})")
 
-                val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/items.json")
+                val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/$ITEMS_FILENAME")
                 Logger.log(TAG, "Downloaded ${itemsResult.data.size} items (error=${itemsResult.error})")
 
                 DownloadResult(
@@ -843,6 +853,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 return JsonDownloadResult(emptyList(), false)
             }
 
+            // ✅ path.contains("folders") работает и для "folders.json.bak"
             val type = if (path.contains("folders")) {
                 object : TypeToken<List<FolderEntity>>() {}.type
             } else {
