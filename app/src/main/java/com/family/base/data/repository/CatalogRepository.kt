@@ -475,21 +475,64 @@ class CatalogRepository(private val db: AppDatabase) {
     // ОПЕРАЦИИ С ПАПКАМИ НА ДИСКЕ
     // ============================================================
 
+    /**
+     * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список папок целиком.
+     * Локальная БД = источник истины. Никаких «скачал-добавил».
+     */
+    suspend fun uploadAllFoldersToDisk(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val allFolders = db.folderDao().getAllFolders()
+                Logger.log(TAG, "uploadAllFoldersToDisk: uploading ${allFolders.size} folders")
+                val json = gson.toJson(allFolders)
+                val success = uploadJsonWithToken("data/folders.json", json)
+                if (success) {
+                    updateLastModifiedWithToken()
+                    Logger.log(TAG, "uploadAllFoldersToDisk: success")
+                } else {
+                    Logger.log(TAG, "uploadAllFoldersToDisk: failed")
+                }
+                return@withContext success
+            } catch (e: Exception) {
+                Logger.log(TAG, "uploadAllFoldersToDisk error: ${e.message}")
+                e.printStackTrace()
+                return@withContext false
+            }
+        }
+    }
+
+    /**
+     * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список предметов целиком.
+     * Локальная БД = источник истины. Никаких «скачал-добавил».
+     */
+    suspend fun uploadAllItemsToDisk(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val allItems = db.itemDao().getAllItemsRaw()
+                Logger.log(TAG, "uploadAllItemsToDisk: uploading ${allItems.size} items")
+                val json = gson.toJson(allItems)
+                val success = uploadJsonWithToken("data/items.json", json)
+                if (success) {
+                    updateLastModifiedWithToken()
+                    Logger.log(TAG, "uploadAllItemsToDisk: success")
+                } else {
+                    Logger.log(TAG, "uploadAllItemsToDisk: failed")
+                }
+                return@withContext success
+            } catch (e: Exception) {
+                Logger.log(TAG, "uploadAllItemsToDisk error: ${e.message}")
+                e.printStackTrace()
+                return@withContext false
+            }
+        }
+    }
+
     suspend fun createFolderOnDisk(folder: FolderEntity): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Creating folder on disk: id=${folder.id}, name=${folder.name}")
-                val (existingFolders, _) = downloadDataFromDisk()
-                val updatedList = existingFolders.toMutableList().apply { add(folder) }
-                val json = gson.toJson(updatedList)
-                val success = uploadJsonWithToken("data/folders.json", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "Folder uploaded to disk: ${folder.id}")
-                } else {
-                    Logger.log(TAG, "Failed to upload folder to disk: ${folder.id}")
-                }
-                return@withContext success
+                // 🛡️ Заливаем ВЕСЬ локальный список (после того, как папка уже вставлена в БД)
+                return@withContext uploadAllFoldersToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error createFolderOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -502,24 +545,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Updating folder on disk: id=${folder.id}")
-                val (existingFolders, _) = downloadDataFromDisk()
-                val idx = existingFolders.indexOfFirst { it.id == folder.id }
-                if (idx != -1) {
-                    val updatedList = existingFolders.toMutableList()
-                    updatedList[idx] = folder
-                    val json = gson.toJson(updatedList)
-                    val success = uploadJsonWithToken("data/folders.json", json)
-                    if (success) {
-                        updateLastModifiedWithToken()
-                        Logger.log(TAG, "Folder updated on disk: ${folder.id}")
-                    } else {
-                        Logger.log(TAG, "Failed to update folder on disk: ${folder.id}")
-                    }
-                    return@withContext success
-                } else {
-                    Logger.log(TAG, "Folder not found on disk: ${folder.id}")
-                    return@withContext false
-                }
+                return@withContext uploadAllFoldersToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error updateFolderOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -532,17 +558,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Deleting folder on disk: $folderId")
-                val (existingFolders, _) = downloadDataFromDisk()
-                val updatedList = existingFolders.filter { it.id != folderId }
-                val json = gson.toJson(updatedList)
-                val success = uploadJsonWithToken("data/folders.json", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "Folder deleted from disk: $folderId")
-                } else {
-                    Logger.log(TAG, "Failed to delete folder from disk: $folderId")
-                }
-                return@withContext success
+                return@withContext uploadAllFoldersToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleteFolderOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -559,17 +575,8 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Creating item on disk: id=${item.id}, name=${item.name}")
-                val (_, existingItems) = downloadDataFromDisk()
-                val updatedList = existingItems.toMutableList().apply { add(item) }
-                val json = gson.toJson(updatedList)
-                val success = uploadJsonWithToken("data/items.json", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "Item uploaded to disk: ${item.id}")
-                } else {
-                    Logger.log(TAG, "Failed to upload item to disk: ${item.id}")
-                }
-                return@withContext success
+                // 🛡️ Заливаем ВЕСЬ локальный список (предмет уже в БД)
+                return@withContext uploadAllItemsToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error createItemOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -582,24 +589,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Updating item on disk: id=${item.id}")
-                val (_, existingItems) = downloadDataFromDisk()
-                val idx = existingItems.indexOfFirst { it.id == item.id }
-                if (idx != -1) {
-                    val updatedList = existingItems.toMutableList()
-                    updatedList[idx] = item
-                    val json = gson.toJson(updatedList)
-                    val success = uploadJsonWithToken("data/items.json", json)
-                    if (success) {
-                        updateLastModifiedWithToken()
-                        Logger.log(TAG, "Item updated on disk: ${item.id}")
-                    } else {
-                        Logger.log(TAG, "Failed to update item on disk: ${item.id}")
-                    }
-                    return@withContext success
-                } else {
-                    Logger.log(TAG, "Item not found on disk: ${item.id}")
-                    return@withContext false
-                }
+                return@withContext uploadAllItemsToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error updateItemOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -612,17 +602,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Deleting item on disk: $itemId")
-                val (_, existingItems) = downloadDataFromDisk()
-                val updatedList = existingItems.filter { it.id != itemId }
-                val json = gson.toJson(updatedList)
-                val success = uploadJsonWithToken("data/items.json", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "Item deleted from disk: $itemId")
-                } else {
-                    Logger.log(TAG, "Failed to delete item from disk: $itemId")
-                }
-                return@withContext success
+                return@withContext uploadAllItemsToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleteItemOnDisk: ${e.message}")
                 e.printStackTrace()
@@ -787,65 +767,109 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    suspend fun downloadDataFromDisk(): Pair<List<FolderEntity>, List<ItemEntity>> {
+    /**
+     * Результат скачивания с Диска: данные + флаг ошибки.
+     * 🛡️ Позволяет отличить «на Диске реально пусто» от «сеть/токен упал».
+     */
+    data class DownloadResult(
+        val folders: List<FolderEntity>,
+        val items: List<ItemEntity>,
+        val foldersError: Boolean,
+        val itemsError: Boolean
+    ) {
+        val hasAnyError: Boolean get() = foldersError || itemsError
+    }
+
+    suspend fun downloadDataFromDisk(): DownloadResult {
         return withContext(Dispatchers.IO) {
             try {
                 val auth = getAuthHeader()
                 if (auth == null) {
                     Logger.log(TAG, "No auth header, cannot download data")
-                    return@withContext Pair(emptyList(), emptyList())
+                    return@withContext DownloadResult(
+                        folders = emptyList(),
+                        items = emptyList(),
+                        foldersError = true,
+                        itemsError = true
+                    )
                 }
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
 
                 Logger.log(TAG, "Downloading data from disk...")
 
-                val folders = downloadJsonFile<FolderEntity>(api, auth, "$rootPath/data/folders.json")
-                Logger.log(TAG, "Downloaded ${folders.size} folders")
+                val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, "$rootPath/data/folders.json")
+                Logger.log(TAG, "Downloaded ${foldersResult.data.size} folders (error=${foldersResult.error})")
 
-                val items = downloadJsonFile<ItemEntity>(api, auth, "$rootPath/data/items.json")
-                Logger.log(TAG, "Downloaded ${items.size} items")
+                val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/items.json")
+                Logger.log(TAG, "Downloaded ${itemsResult.data.size} items (error=${itemsResult.error})")
 
-                Pair(folders, items)
+                DownloadResult(
+                    folders = foldersResult.data,
+                    items = itemsResult.data,
+                    foldersError = foldersResult.error,
+                    itemsError = itemsResult.error
+                )
             } catch (e: Exception) {
                 Logger.log(TAG, "Error downloadDataFromDisk: ${e.message}")
                 e.printStackTrace()
-                Pair(emptyList(), emptyList())
+                DownloadResult(
+                    folders = emptyList(),
+                    items = emptyList(),
+                    foldersError = true,
+                    itemsError = true
+                )
             }
         }
     }
 
+    private data class JsonDownloadResult<T>(
+        val data: List<T>,
+        val error: Boolean
+    )
+
     @Suppress("UNCHECKED_CAST")
-    private suspend fun <T> downloadJsonFile(api: YandexDiskApi, auth: String, path: String): List<T> {
+    private suspend fun <T> downloadJsonFileSafe(api: YandexDiskApi, auth: String, path: String): JsonDownloadResult<T> {
         return try {
             Logger.log(TAG, "Getting download URL for: $path")
             val urlResponse = api.getDiskDownloadUrl(auth, path)
             Logger.log(TAG, "Get download URL response: code=${urlResponse.code()}")
 
-            if (urlResponse.isSuccessful) {
-                val href = urlResponse.body()?.href
-                if (href != null) {
-                    Logger.log(TAG, "Downloading from: $href")
-                    val downloadResponse = api.downloadFile(href)
-                    Logger.log(TAG, "Download response: code=${downloadResponse.code()}")
-                    if (downloadResponse.isSuccessful) {
-                        val json = downloadResponse.body()?.string()
-                        if (!json.isNullOrEmpty()) {
-                            val type = if (path.contains("folders")) {
-                                object : TypeToken<List<FolderEntity>>() {}.type
-                            } else {
-                                object : TypeToken<List<ItemEntity>>() {}.type
-                            }
-                            return gson.fromJson(json, type)
-                        }
-                    }
-                }
+            if (!urlResponse.isSuccessful) {
+                // 404 — файла нет (это норма), иначе — ошибка
+                val isError = urlResponse.code() != 404
+                return JsonDownloadResult(emptyList(), isError)
             }
-            emptyList()
+
+            val href = urlResponse.body()?.href
+            if (href == null) {
+                return JsonDownloadResult(emptyList(), true)
+            }
+
+            Logger.log(TAG, "Downloading from: $href")
+            val downloadResponse = api.downloadFile(href)
+            Logger.log(TAG, "Download response: code=${downloadResponse.code()}")
+
+            if (!downloadResponse.isSuccessful) {
+                return JsonDownloadResult(emptyList(), true)
+            }
+
+            val json = downloadResponse.body()?.string()
+            if (json.isNullOrEmpty()) {
+                return JsonDownloadResult(emptyList(), false) // пустой файл — не ошибка
+            }
+
+            val type = if (path.contains("folders")) {
+                object : TypeToken<List<FolderEntity>>() {}.type
+            } else {
+                object : TypeToken<List<ItemEntity>>() {}.type
+            }
+            val parsed: List<T> = gson.fromJson(json, type) ?: emptyList()
+            JsonDownloadResult(parsed, false)
         } catch (e: Exception) {
             Logger.log(TAG, "Error downloading $path: ${e.message}")
             e.printStackTrace()
-            emptyList()
+            JsonDownloadResult(emptyList(), true)
         }
     }
 
