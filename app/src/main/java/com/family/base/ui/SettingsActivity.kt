@@ -260,35 +260,41 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // LOGOUT — БЕЗ УДАЛЕНИЯ ЛОКАЛЬНОЙ БД
+    // ============================================================
     private fun showLogoutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Выход")
-            .setMessage("Вы уверены, что хотите выйти? Все локальные данные будут удалены.")
-            .setPositiveButton("Да") { _, _ -> logout() }
-            .setNegativeButton("Нет", null)
+            .setTitle("Выход из аккаунта")
+            .setMessage(
+                "Вы выходите из аккаунта Яндекс.Диска.\n\n" +
+                "Локальные данные (каталог, предметы, фото) СОХРАНЯТСЯ на устройстве. " +
+                "После повторного входа в ту же папку они будут доступны.\n\n" +
+                "Продолжить?"
+            )
+            .setPositiveButton("Выйти") { _, _ -> logout() }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
-    // ============================================================
-    // LOGOUT — без синка (только холодный старт и кнопка синкают)
-    // ============================================================
+    /**
+     * Logout: стираем только токены и метаданные сессии.
+     * Локальная БД (folders, items, history, images) НЕ трогается.
+     *
+     * Это позволяет при повторном входе в ту же папку сразу увидеть свои данные,
+     * не дожидаясь синка с Яндекс.Диска.
+     *
+     * Для полного удаления данных есть отдельная кнопка "Очистить все данные".
+     */
     private fun logout() {
         try {
+            Logger.log(TAG, "=== LOGOUT START (local DB preserved) ===")
+
+            // Стираем только сессионные данные — токены, publicKey, folderName, currentUser.
+            // БД и images/ НЕ трогаем.
             tokenStorage.clear()
 
-            lifecycleScope.launch {
-                try {
-                    val db = AppDatabase.getInstance(this@SettingsActivity)
-                    db.folderDao().getAllFolders().forEach { db.folderDao().deleteFolder(it) }
-                    db.itemDao().getAllItemsRaw().forEach { db.itemDao().deleteItem(it) }
-                    db.lockDao().deleteAllLocks()
-                    db.syncQueueDao().clearAll()
-
-                    java.io.File(filesDir, "images").deleteRecursively()
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Error clearing database", e)
-                }
-            }
+            Logger.log(TAG, "TokenStorage cleared. Local DB and images preserved.")
 
             val intent = Intent(this, LoginActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
