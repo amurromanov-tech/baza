@@ -111,11 +111,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
+            val allFoldersCount = db.folderDao().getAllFolders().size
             val orphans = db.itemDao().getOrphanItems()
-            if (orphans.isNotEmpty()) {
+            if (orphans.isNotEmpty() && allFoldersCount > 0) {
+                // 🛡️ Только если папки ЕСТЬ — иначе orphan'ы нормальны (пустая база)
                 Logger.log(TAG, "Found ${orphans.size} orphan items, moving to root")
                 db.itemDao().fixOrphanItems()
                 Logger.log(TAG, "Orphan items fixed")
+            } else if (orphans.isNotEmpty()) {
+                Logger.log(TAG, "Found ${orphans.size} orphan items but no folders — SKIP fix to protect data")
             } else {
                 Logger.log(TAG, "No orphan items found")
             }
@@ -368,6 +372,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 syncProgress.postValue(SyncProgress(SyncPhase.SENDING, 0, 1, "Проверка авторизации…"))
 
+                // 🛡️ ЗАЩИТА: без токена синк бессмыслен и опасен
+                val token = tokenStorage.getAccessToken()
+                if (token.isNullOrEmpty()) {
+                    Logger.log(TAG, "syncWithDisk: no token, skipping sync")
+                    syncMutex.unlock()
+                    return@launch
+                }
+
                 if (!ensureValidToken()) {
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     notifySyncResult("Не удалось авторизоваться")
@@ -385,10 +397,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 uploadedCount = processPendingChangesInternal()
 
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
-                val (diskFolders, diskItems) = repository.downloadDataFromDisk()
+                val downloadResult = repository.downloadDataFromDisk()
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
-                mergeData(diskFolders, diskItems)
-                downloadedCount = diskFolders.size + diskItems.size
+                mergeData(
+                    downloadResult.folders,
+                    downloadResult.items,
+                    downloadResult.foldersError,
+                    downloadResult.itemsError
+                )
+                downloadedCount = downloadResult.folders.size + downloadResult.items.size
 
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
@@ -641,28 +658,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) { false }
     }
 
-    private suspend fun mergeData(diskFolders: List<FolderEntity>, diskItems: List<ItemEntity>) {
+    /**
+     * 🛡️ БЕЗОПАСНОЕ слияние данных с Диска.
+     *
+     * Если скачивание items/folders упало ИЛИ с Диска пришло пусто,
+     * а локально данные есть — НЕ ТРОГАЕМ локальные данные.
+     *
+     * Это защищает от затирания каталога при сетевых сбоях.
+     */
+    private suspend fun mergeData(
+        diskFolders: List<FolderEntity>,
+        diskItems: List<ItemEntity>,
+        foldersError: Boolean,
+        itemsError: Boolean
+    ) {
         withContext(Dispatchers.IO) {
-            diskFolders.forEach { diskFolder ->
-                val local = db.folderDao().getFolderById(diskFolder.id)
-                if (local == null) {
-                    db.folderDao().insertFolder(diskFolder)
-                } else if (diskFolder.updatedAt > local.updatedAt) {
-                    val merged = diskFolder.copy(iconUrl = diskFolder.iconUrl ?: local.iconUrl)
-                    db.folderDao().updateFolder(merged)
+            val localFoldersCount = db.folderDao().getAllFolders().size
+            val localItemsCount = db.itemDao().getAllItemsRaw().size
+
+            // ---------- ITEMS ----------
+            if (itemsError && localItemsCount > 0) {
+                Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
+            } else if (diskItems.isEmpty() && localItemsCount > 0) {
+                Logger.log(TAG, "mergeData: disk items empty but local has $localItemsCount — SKIP to protect data")
+            } else {
+                diskItems.forEach { diskItem ->
+                    val local = db.itemDao().getItemById(diskItem.id)
+                    if (local == null) {
+                        db.itemDao().insertItem(diskItem)
+                    } else if (diskItem.updatedDate > local.updatedDate) {
+                        val merged = diskItem.copy(imageUrl = diskItem.imageUrl ?: local.imageUrl)
+                        db.itemDao().updateItem(merged)
+                    }
                 }
             }
 
-            diskItems.forEach { diskItem ->
-                val local = db.itemDao().getItemById(diskItem.id)
-                if (local == null) {
-                    db.itemDao().insertItem(diskItem)
-                } else if (diskItem.updatedDate > local.updatedDate) {
-                    val merged = diskItem.copy(imageUrl = diskItem.imageUrl ?: local.imageUrl)
-                    db.itemDao().updateItem(merged)
+            // ---------- FOLDERS ----------
+            if (foldersError && localFoldersCount > 0) {
+                Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
+            } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
+                Logger.log(TAG, "mergeData: disk folders empty but local has $localFoldersCount — SKIP to protect data")
+            } else {
+                diskFolders.forEach { diskFolder ->
+                    val local = db.folderDao().getFolderById(diskFolder.id)
+                    if (local == null) {
+                        db.folderDao().insertFolder(diskFolder)
+                    } else if (diskFolder.updatedAt > local.updatedAt) {
+                        val merged = diskFolder.copy(iconUrl = diskFolder.iconUrl ?: local.iconUrl)
+                        db.folderDao().updateFolder(merged)
+                    }
                 }
             }
 
+            // ---------- LAST_MODIFIED ----------
             val diskLastModified = repository.getDiskLastModified()
             val localLastModified = syncInfoDao.getLastModified()
             if (diskLastModified > localLastModified) syncInfoDao.setLastModified(diskLastModified)
