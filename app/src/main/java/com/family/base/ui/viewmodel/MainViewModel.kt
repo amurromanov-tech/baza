@@ -466,23 +466,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ФИКС №4: ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
+    // ============================================================
     private suspend fun uploadUnsyncedImages() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
-        val itemsToUpload = allItems.filter { item ->
+
+        // Собираем items, у которых ЕСТЬ локальный файл фото
+        val itemsWithLocalPhoto = allItems.filter { item ->
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
-            f != null && f.exists() && item.imageUrl.isNullOrEmpty()
+            f != null && f.exists() && f.length() > 0L
         }
 
-        if (itemsToUpload.isEmpty()) {
-            Logger.log(TAG, "No images to upload")
+        if (itemsWithLocalPhoto.isEmpty()) {
+            Logger.log(TAG, "No local photos to check")
             return
         }
 
-        var uploadedCount = 0
-        val total = itemsToUpload.size
+        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} local photos against disk")
 
-        itemsToUpload.forEachIndexed { index, item ->
+        var uploadedCount = 0
+        var skippedCount = 0
+        val total = itemsWithLocalPhoto.size
+
+        itemsWithLocalPhoto.forEachIndexed { index, item ->
+            // 🛡️ Проверяем, есть ли уже фото на Диске
+            val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
+            if (existsOnDisk == true) {
+                // Фото уже на Диске. Если imageUrl в БД пустой — восстановим ссылку.
+                if (item.imageUrl.isNullOrEmpty()) {
+                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                }
+                skippedCount++
+                return@forEachIndexed
+            }
+
+            // Фото НЕТ на Диске (или не смогли проверить) — заливаем.
             syncProgress.postValue(
                 SyncProgress(
                     SyncPhase.UPLOADING_PHOTOS,
@@ -499,34 +520,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val bytes = localFile.readBytes()
                 val success = repository.uploadItemImage(item.id, bytes)
                 if (success) {
-                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                    // uploadItemImage сам обновит imageUrl в БД
                     uploadedCount++
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
         }
-        Logger.log(TAG, "Uploaded $uploadedCount images")
+        Logger.log(TAG, "Images upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
     }
 
+    // ============================================================
+    // ФИКС №4: ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
+    // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
-        val foldersToUpload = allFolders.filter { folder ->
+
+        val foldersWithLocalIcon = allFolders.filter { folder ->
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
-            f != null && f.exists() && f.length() > 0L && folder.iconUrl.isNullOrEmpty()
+            f != null && f.exists() && f.length() > 0L
         }
 
-        if (foldersToUpload.isEmpty()) {
-            Logger.log(TAG, "No folder images to upload")
+        if (foldersWithLocalIcon.isEmpty()) {
+            Logger.log(TAG, "No local folder icons to check")
             return
         }
 
-        var uploadedCount = 0
-        val total = foldersToUpload.size
+        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} local folder icons against disk")
 
-        foldersToUpload.forEachIndexed { index, folder ->
+        var uploadedCount = 0
+        var skippedCount = 0
+        val total = foldersWithLocalIcon.size
+
+        foldersWithLocalIcon.forEachIndexed { index, folder ->
+            val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
+            if (existsOnDisk == true) {
+                if (folder.iconUrl.isNullOrEmpty()) {
+                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                }
+                skippedCount++
+                return@forEachIndexed
+            }
+
             syncProgress.postValue(
                 SyncProgress(
                     SyncPhase.UPLOADING_PHOTOS,
@@ -544,17 +581,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val success = repository.uploadFolderImage(folder.id, bytes)
                 if (success) {
                     val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                    withContext(Dispatchers.IO) {
-                        db.folderDao().updateFolder(updated)
-                        repository.updateFolderOnDisk(updated)
-                    }
+                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                     uploadedCount++
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
             }
         }
-        Logger.log(TAG, "Uploaded $uploadedCount folder images")
+        Logger.log(TAG, "Folder icons upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
     }
 
     private suspend fun syncImages() {
@@ -563,7 +597,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val itemsToDownload = allItems.filter { item ->
             if (item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
-            f == null || !f.exists()
+            f == null || !f.exists() || f.length() == 0L
         }
 
         if (itemsToDownload.isEmpty()) {
