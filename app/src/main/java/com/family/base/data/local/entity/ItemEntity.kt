@@ -24,7 +24,7 @@ data class ItemEntity(
     var daysUntilExpiry: Int = Int.MAX_VALUE,
     var isExpired: Boolean = false,
     val itemType: String? = null,
-    val itemSubtype: String? = null,   // подтип (milk, bread, antibiotics ...)
+    val itemSubtype: String? = null,
     val price: Double? = null,
 
     // ===== АРХИВ =====
@@ -40,6 +40,13 @@ data class ItemEntity(
      * NULL — если это обычный предмет (не отделённый).
      */
     val originalId: String? = null,
+
+    // ===== РЕВИЗИЯ =====
+    /**
+     * Дата последней ревизии (проверки) предмета.
+     * NULL — ревизия не проводилась.
+     */
+    val lastRevisionDate: Long? = null,
 
     // ===== ЗАЙМ (ВЫДАЧА) =====
     val isLent: Boolean = false,
