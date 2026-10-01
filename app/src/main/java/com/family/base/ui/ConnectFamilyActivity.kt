@@ -1,7 +1,9 @@
 package com.family.base.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.family.base.data.TokenStorage
 import com.family.base.data.remote.YandexDiskApi
@@ -17,6 +19,20 @@ class ConnectFamilyActivity : AppCompatActivity() {
     private lateinit var binding: ActivityConnectFamilyBinding
     private lateinit var tokenStorage: TokenStorage
     private val TAG = "ConnectFamilyActivity"
+
+    // ===== ЗАПУСК ЭКРАНА ВЫБОРА ПОЛЬЗОВАТЕЛЯ =====
+    private val selectUserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
+        if (result.resultCode == RESULT_OK) {
+            setResult(RESULT_OK)
+            finish()
+        } else {
+            // Пользователь не выбрал — остаёмся на этом экране
+            Logger.log(TAG, "User not selected, staying on ConnectFamilyActivity")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,23 +106,20 @@ class ConnectFamilyActivity : AppCompatActivity() {
                         withContext(Dispatchers.Main) {
                             tokenStorage.saveFolderName(folderName)
                             Logger.log(TAG, "Folder name saved: $folderName")
-                            setResult(RESULT_OK)
-                            finish()
+                            openSelectUser()
                         }
                     } else {
                         Logger.log(TAG, "API error: ${response.code()}, using default BAZA")
                         withContext(Dispatchers.Main) {
                             tokenStorage.saveFolderName("BAZA")
-                            setResult(RESULT_OK)
-                            finish()
+                            openSelectUser()
                         }
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "Error getting folder name: ${e.message}", e)
                     withContext(Dispatchers.Main) {
                         tokenStorage.saveFolderName("BAZA")
-                        setResult(RESULT_OK)
-                        finish()
+                        openSelectUser()
                     }
                 }
             }
@@ -114,6 +127,21 @@ class ConnectFamilyActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Logger.log(TAG, "Error saving public key", e)
             Toast.makeText(this, "Ошибка сохранения ключа", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Открывает экран выбора пользователя после успешного ввода пути.
+     */
+    private fun openSelectUser() {
+        Logger.log(TAG, "Opening SelectUserActivity")
+        try {
+            selectUserLauncher.launch(Intent(this, SelectUserActivity::class.java))
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
+            // Фолбэк: если экран не открылся — завершаем как раньше
+            setResult(RESULT_OK)
+            finish()
         }
     }
 
