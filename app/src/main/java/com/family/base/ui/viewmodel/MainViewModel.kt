@@ -355,24 +355,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // СИНХРОНИЗАЦИЯ
+    // СИНХРОНИЗАЦИЯ (ИНКРЕМЕНТАЛЬНАЯ)
     // ============================================================
 
     /**
      * Основной метод синхронизации.
      *
-     * 🆕 ВАЖНО (фикс БАЗА6): теперь синк ВСЕГДА начинается с принудительного
-     * полного upload локальных items и folders на Диск. Это защищает от ситуации,
-     * когда на Диске устаревший items.json (например, после импорта бэкапа),
-     * а очередь pending пуста, и синк ничего не заливает.
+     * 🆕 БАЗА6 этап 2 — инкрементальный синк.
      *
      * Порядок:
      *   1. Проверка токена/сети.
-     *   2. 🆕 uploadAllItemsToDisk() + uploadAllFoldersToDisk() — заливаем ВСЁ.
-     *   3. processPendingChangesInternal() — обрабатываем очередь (фото и т.п.).
-     *   4. downloadDataFromDisk() + mergeData() — подтягиваем чужие изменения.
-     *   5. uploadUnsyncedImages / FolderImages — фото.
-     *   6. syncImages / syncFolderImages — скачивание фото.
+     *   2. Собираем метрики: local counts, pendingCount, lastModified (local/disk), isFirstLaunch.
+     *   3. ЕСЛИ БД ПУСТАЯ (первый запуск):
+     *        → download + merge + фото. Upload не нужен (заливать нечего).
+     *   4. ИНАЧЕ (БД есть):
+     *        a) pendingCount > 0 → uploadAll + processPending + обновить localLastModified.
+     *        b) diskLastModified > localLastModified → download + merge.
+     *           Иначе — пропускаем скачивание (на Диске ничего не менялось).
+     *        c) фото (умные проверки — как было).
+     *
+     * Локальная БД = источник истины для upload.
+     * Диск = источник истины для download при первом запуске.
      */
     fun syncWithDisk() {
         applicationScope.launch {
@@ -411,41 +414,117 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncStatus.postValue(SyncStatus.SYNCING)
 
                 // ============================================================
-                // 🆕 ШАГ 1: ПРИНУДИТЕЛЬНЫЙ ПОЛНЫЙ UPLOAD (локальная БД = истина)
+                // ШАГ 2: СБОР МЕТРИК
                 // ============================================================
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
-                Logger.log(TAG, "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount")
+                val pendingCount = withContext(Dispatchers.IO) { syncQueueDao.getPendingCount() }
+                val localLastModified = withContext(Dispatchers.IO) { syncInfoDao.getLastModified() }
+                val diskLastModified = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
 
-                syncProgress.postValue(
-                    SyncProgress(SyncPhase.SENDING, 0, 1, "Отправка всех данных ($localItemsCount предм., $localFoldersCount папок)…")
+                val isFirstLaunch = (localItemsCount == 0 && localFoldersCount == 0)
+
+                Logger.log(
+                    TAG,
+                    "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount, " +
+                        "pending=$pendingCount, localModified=$localLastModified, diskModified=$diskLastModified, " +
+                        "isFirstLaunch=$isFirstLaunch"
                 )
 
-                val uploadedItems = repository.uploadAllItemsToDisk()
-                val uploadedFolders = repository.uploadAllFoldersToDisk()
-                Logger.log(TAG, "syncWithDisk: full upload items=$uploadedItems, folders=$uploadedFolders")
+                // ============================================================
+                // ШАГ 3: ПЕРВЫЙ ЗАПУСК — только DOWNLOAD
+                // ============================================================
+                if (isFirstLaunch) {
+                    Logger.log(TAG, "syncWithDisk: FIRST LAUNCH — download only (no upload)")
+
+                    syncProgress.postValue(
+                        SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Первый запуск: загрузка данных с Диска…")
+                    )
+
+                    val downloadResult = repository.downloadDataFromDisk()
+                    syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
+                    mergeData(
+                        downloadResult.folders,
+                        downloadResult.items,
+                        downloadResult.foldersError,
+                        downloadResult.itemsError
+                    )
+                    downloadedCount = downloadResult.folders.size + downloadResult.items.size
+
+                    // Фото: только скачивание (заливать нечего)
+                    syncImages()
+                    syncFolderImages()
+
+                    // Обновляем localLastModified — мы теперь синхронизированы с Диском
+                    if (diskLastModified > 0) {
+                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
+                    }
+
+                    finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
+                    return@launch
+                }
 
                 // ============================================================
-                // ШАГ 2: обработка очереди (фото, доп. изменения)
+                // ШАГ 4a: ЕСТЬ ЛОКАЛЬНЫЕ ИЗМЕНЕНИЯ → ПОЛНЫЙ UPLOAD
                 // ============================================================
-                uploadedCount = processPendingChangesInternal()
+                if (pendingCount > 0) {
+                    Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
+
+                    syncProgress.postValue(
+                        SyncProgress(
+                            SyncPhase.SENDING,
+                            0,
+                            1,
+                            "Отправка данных ($localItemsCount предм., $localFoldersCount папок, $pendingCount в очереди)…"
+                        )
+                    )
+
+                    val uploadedItems = repository.uploadAllItemsToDisk()
+                    val uploadedFolders = repository.uploadAllFoldersToDisk()
+                    Logger.log(TAG, "syncWithDisk: full upload items=$uploadedItems, folders=$uploadedFolders")
+
+                    uploadedCount = processPendingChangesInternal()
+
+                    // Обновляем localLastModified — мы только что писали на Диск
+                    if (uploadedItems || uploadedFolders) {
+                        val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                        if (fresh > 0) {
+                            withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
+                        }
+                    }
+                } else {
+                    Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
+                }
 
                 // ============================================================
-                // ШАГ 3: скачивание данных с Диска
+                // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
                 // ============================================================
-                syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
-                val downloadResult = repository.downloadDataFromDisk()
-                syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
-                mergeData(
-                    downloadResult.folders,
-                    downloadResult.items,
-                    downloadResult.foldersError,
-                    downloadResult.itemsError
-                )
-                downloadedCount = downloadResult.folders.size + downloadResult.items.size
+                val shouldDownload = diskLastModified > localLastModified
+
+                if (shouldDownload) {
+                    Logger.log(TAG, "syncWithDisk: disk modified ($diskLastModified) > local ($localLastModified) → download")
+
+                    syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
+                    val downloadResult = repository.downloadDataFromDisk()
+                    syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
+                    mergeData(
+                        downloadResult.folders,
+                        downloadResult.items,
+                        downloadResult.foldersError,
+                        downloadResult.itemsError
+                    )
+                    downloadedCount = downloadResult.folders.size + downloadResult.items.size
+
+                    // Обновляем localLastModified
+                    if (diskLastModified > 0) {
+                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
+                    }
+                } else {
+                    Logger.log(TAG, "syncWithDisk: disk not modified since last sync → SKIP download")
+                }
 
                 // ============================================================
-                // ШАГ 4: фото — загрузка и скачивание
+                // ШАГ 4c: ФОТО (умные проверки — как было)
                 // ============================================================
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
@@ -453,37 +532,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncImages()
                 syncFolderImages()
 
-                val pendingCount = syncQueueDao.getPendingCount()
-                if (pendingCount > 0) {
-                    syncStatus.postValue(SyncStatus.PENDING)
-                } else {
-                    syncStatus.postValue(SyncStatus.SYNCED)
-                }
-
-                syncProgress.postValue(
-                    SyncProgress(
-                        SyncPhase.DONE,
-                        uploadedCount + downloadedCount,
-                        uploadedCount + downloadedCount,
-                        "Готово: отправлено $uploadedCount, получено $downloadedCount"
-                    )
-                )
-
-                loadContents()
-
-                val elapsed = System.currentTimeMillis() - startedAt
-                Logger.log(TAG, "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount, localItems=$localItemsCount")
-
-                if (forceSyncRequested) {
-                    val msg = buildString {
-                        append("✅ Синхронизация завершена\n")
-                        append("⬆️ Отправлено: $uploadedCount\n")
-                        append("⬇️ Получено: $downloadedCount")
-                        if (pendingCount > 0) append("\n⏳ Осталось в очереди: $pendingCount")
-                    }
-                    notifySyncResult(msg)
-                    forceSyncRequested = false
-                }
+                finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
 
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in syncWithDisk: ${e.message}", e)
@@ -495,6 +544,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 syncMutex.unlock()
             }
+        }
+    }
+
+    /**
+     * Финализация синка: статус, прогресс, лог, сообщение пользователю.
+     */
+    private suspend fun finalizeSync(
+        uploadedCount: Int,
+        downloadedCount: Int,
+        startedAt: Long,
+        localItemsCount: Int,
+        localFoldersCount: Int
+    ) {
+        val pendingCount = syncQueueDao.getPendingCount()
+        if (pendingCount > 0) {
+            syncStatus.postValue(SyncStatus.PENDING)
+        } else {
+            syncStatus.postValue(SyncStatus.SYNCED)
+        }
+
+        syncProgress.postValue(
+            SyncProgress(
+                SyncPhase.DONE,
+                uploadedCount + downloadedCount,
+                uploadedCount + downloadedCount,
+                "Готово: отправлено $uploadedCount, получено $downloadedCount"
+            )
+        )
+
+        loadContents()
+
+        val elapsed = System.currentTimeMillis() - startedAt
+        Logger.log(
+            TAG,
+            "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount, " +
+                "pending=$pendingCount, localItems=$localItemsCount, localFolders=$localFoldersCount"
+        )
+
+        if (forceSyncRequested) {
+            val msg = buildString {
+                append("✅ Синхронизация завершена\n")
+                append("⬆️ Отправлено: $uploadedCount\n")
+                append("⬇️ Получено: $downloadedCount")
+                if (pendingCount > 0) append("\n⏳ Осталось в очереди: $pendingCount")
+            }
+            notifySyncResult(msg)
+            forceSyncRequested = false
         }
     }
 
@@ -737,8 +833,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *
      * Если скачивание items/folders упало ИЛИ с Диска пришло пусто,
      * а локально данные есть — НЕ ТРОГАЕМ локальные данные.
-     *
-     * Это защищает от затирания каталога при сетевых сбоях.
      */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
