@@ -372,10 +372,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ПОЛЬЗОВАТЕЛИ (users.json на Яндекс.Диске)
     // ============================================================
 
-    /**
-     * Скачивает users.json с Яндекс.Диска.
-     * Возвращает UsersFile или null, если файла нет / ошибка.
-     */
     suspend fun downloadUsersJson(): UsersFile? {
         return withContext(Dispatchers.IO) {
             try {
@@ -425,9 +421,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Загружает users.json на Яндекс.Диск.
-     */
     suspend fun uploadUsersJson(usersFile: UsersFile): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -449,17 +442,10 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Найти пользователя по имени в UsersFile.
-     */
     fun findUserByName(usersFile: UsersFile?, name: String): UserModel? {
         return usersFile?.users?.firstOrNull { it.name == name }
     }
 
-    /**
-     * Добавить или обновить пользователя в UsersFile.
-     * Возвращает новый UsersFile.
-     */
     fun addOrUpdateUser(usersFile: UsersFile?, user: UserModel): UsersFile {
         val current = usersFile ?: UsersFile(emptyList())
         val idx = current.users.indexOfFirst { it.name == user.name }
@@ -531,7 +517,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Creating folder on disk: id=${folder.id}, name=${folder.name}")
-                // 🛡️ Заливаем ВЕСЬ локальный список (после того, как папка уже вставлена в БД)
                 return@withContext uploadAllFoldersToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error createFolderOnDisk: ${e.message}")
@@ -575,7 +560,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 Logger.log(TAG, "Creating item on disk: id=${item.id}, name=${item.name}")
-                // 🛡️ Заливаем ВЕСЬ локальный список (предмет уже в БД)
                 return@withContext uploadAllItemsToDisk()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error createItemOnDisk: ${e.message}")
@@ -856,7 +840,7 @@ class CatalogRepository(private val db: AppDatabase) {
 
             val json = downloadResponse.body()?.string()
             if (json.isNullOrEmpty()) {
-                return JsonDownloadResult(emptyList(), false) // пустой файл — не ошибка
+                return JsonDownloadResult(emptyList(), false)
             }
 
             val type = if (path.contains("folders")) {
@@ -870,6 +854,58 @@ class CatalogRepository(private val db: AppDatabase) {
             Logger.log(TAG, "Error downloading $path: ${e.message}")
             e.printStackTrace()
             JsonDownloadResult(emptyList(), true)
+        }
+    }
+
+    // ============================================================
+    // ПРОВЕРКА: ЕСТЬ ЛИ ФОТО ПРЕДМЕТА НА ДИСКЕ
+    // ============================================================
+
+    /**
+     * Проверяет, существует ли фото предмета на Яндекс.Диске.
+     * Использует getDiskDownloadUrl без фактического скачивания.
+     * 200 → есть, 404 → нет, иначе → null (неизвестно).
+     */
+    suspend fun itemImageExistsOnDisk(itemId: String): Boolean? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader() ?: return@withContext null
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/images/$itemId.jpg"
+                val response = api.getDiskDownloadUrl(auth, path)
+                when (response.code()) {
+                    200 -> true
+                    404 -> false
+                    else -> null
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "itemImageExistsOnDisk($itemId) error: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Проверяет, существует ли иконка папки на Яндекс.Диске.
+     */
+    suspend fun folderImageExistsOnDisk(folderId: String): Boolean? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader() ?: return@withContext null
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/images/folder_$folderId.jpg"
+                val response = api.getDiskDownloadUrl(auth, path)
+                when (response.code()) {
+                    200 -> true
+                    404 -> false
+                    else -> null
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "folderImageExistsOnDisk($folderId) error: ${e.message}")
+                null
+            }
         }
     }
 
