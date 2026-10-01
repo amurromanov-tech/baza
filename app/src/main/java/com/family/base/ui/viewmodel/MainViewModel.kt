@@ -59,8 +59,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val syncProgress = MutableLiveData<SyncProgress?>(null)
 
     private var currentFolderId: String? = null
+
+    /**
+     * Текущий пользователь приложения (Алексей / Рима / Дима / Гость).
+     * Берётся из TokenStorage (сохранён при выборе на экране SelectUserActivity).
+     * Фолбэки: displayName → "Пользователь".
+     */
     private val currentUser: String
-        get() = tokenStorage.getUserEmail() ?: "unknown_user"
+        get() = tokenStorage.getCurrentUser()
+            ?: tokenStorage.getUserDisplayName()
+            ?: "Пользователь"
+
     private val currentUserDisplayName: String
         get() = tokenStorage.getUserDisplayName() ?: "User"
 
@@ -1114,12 +1123,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // РЕВИЗИЯ ПРЕДМЕТА
     // ============================================================
-    /**
-     * Отмечает ревизию предмета:
-     * - ставит lastRevisionDate = now
-     * - пишет запись в историю (action = "revision")
-     * - отправляет в синк (updateItemOnDisk)
-     */
     fun markRevision(itemId: String) {
         Logger.log(TAG, "markRevision: itemId=$itemId")
         viewModelScope.launch {
