@@ -17,7 +17,14 @@ class LoginActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityLoginBinding
     private lateinit var tokenStorage: TokenStorage
-    private lateinit var authService: AuthorizationService
+
+    /**
+     * 🆕 БАЗА6 этап 2: было lateinit var — падало в onDestroy(),
+     * если onCreate() вышел раньше (токен уже есть → openMainActivity → finish).
+     * Теперь nullable + безопасный вызов.
+     */
+    private var authService: AuthorizationService? = null
+
     private val authStateManager = AtomicReference<AuthState>()
     private val TAG = "LoginActivity"
 
@@ -74,6 +81,14 @@ class LoginActivity : AppCompatActivity() {
     private fun performLogin() {
         Logger.log(TAG, "Starting login flow...")
 
+        // 🆕 ЗАЩИТА: authService может быть null, если инициализация упала
+        val service = authService
+        if (service == null) {
+            Logger.log(TAG, "performLogin: authService is null — cannot start OAuth")
+            Toast.makeText(this, "Ошибка авторизации: сервис недоступен", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val serviceConfig = AuthorizationServiceConfiguration(
             Uri.parse(Config.YANDEX_OAUTH_AUTHORIZE_URL),
             Uri.parse(Config.YANDEX_OAUTH_TOKEN_URL)
@@ -92,7 +107,7 @@ class LoginActivity : AppCompatActivity() {
 
         Logger.log(TAG, "Auth request built: $authRequest")
 
-        val authIntent = authService.getAuthorizationRequestIntent(authRequest)
+        val authIntent = service.getAuthorizationRequestIntent(authRequest)
 
         try {
             Logger.log(TAG, "Starting auth intent...")
@@ -122,6 +137,14 @@ class LoginActivity : AppCompatActivity() {
     private fun exchangeCodeForToken(data: Intent) {
         Logger.log(TAG, "Exchanging code for token...")
 
+        // 🆕 ЗАЩИТА: на всякий случай проверяем сервис
+        val service = authService
+        if (service == null) {
+            Logger.log(TAG, "exchangeCodeForToken: authService is null")
+            Toast.makeText(this, "Ошибка авторизации: сервис недоступен", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val authResponse = AuthorizationResponse.fromIntent(data)
         val authException = AuthorizationException.fromIntent(data)
 
@@ -129,7 +152,7 @@ class LoginActivity : AppCompatActivity() {
             Logger.log(TAG, "Auth response received, performing token exchange")
 
             try {
-                authService.performTokenRequest(
+                service.performTokenRequest(
                     authResponse.createTokenExchangeRequest(),
                     object : AuthorizationService.TokenResponseCallback {
                         override fun onTokenRequestCompleted(
@@ -186,7 +209,7 @@ class LoginActivity : AppCompatActivity() {
                         val json = org.json.JSONObject(decoded)
                         val email = json.optString("email")
                         val name = json.optString("name")
-                        
+
                         if (email.isNotEmpty()) {
                             tokenStorage.saveUserInfo(email, name)
                             Logger.log(TAG, "User info saved: email=$email, name=$name")
@@ -220,11 +243,15 @@ class LoginActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Logger.log(TAG, "onDestroy called")
+
+        // 🆕 БАЗА6 этап 2: безопасный dispose — authService может быть null
         try {
-            authService.dispose()
-            Logger.log(TAG, "AuthorizationService disposed")
+            authService?.dispose()
+            Logger.log(TAG, "AuthorizationService disposed (or was null)")
         } catch (e: Exception) {
             Logger.log(TAG, "Error disposing AuthorizationService", e)
+        } finally {
+            authService = null
         }
     }
 
