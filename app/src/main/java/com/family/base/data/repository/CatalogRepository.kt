@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.UnknownHostException
 
 class CatalogRepository(private val db: AppDatabase) {
 
@@ -32,6 +33,20 @@ class CatalogRepository(private val db: AppDatabase) {
     private val FOLDERS_FILENAME = "folders.json.bak"
 
     private var folderPathCache: String? = null
+
+    // 🆕 БАЗА6 этап 2: флаг DNS-сбоя.
+    // Если хост cloud-api.yandex.net не резолвится (РКН/провайдер),
+    // нет смысла пытаться снова и снова — быстро выходим и не спамим лог.
+    @Volatile
+    private var dnsFailureUntil: Long = 0L
+
+    private fun isDnsBlocked(): Boolean =
+        System.currentTimeMillis() < dnsFailureUntil
+
+    private fun noteDnsFailure() {
+        // Блокируем сетевые вызовы на 60 секунд
+        dnsFailureUntil = System.currentTimeMillis() + 60_000L
+    }
 
     private fun getFolderPath(): String {
         if (folderPathCache != null) return folderPathCache!!
@@ -143,13 +158,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return try {
             val context = BaseApplication.getAppContext()
             val tokenStorage = TokenStorage(context)
-            val token = tokenStorage.getAccessToken()
-            if (token != null) {
-                Logger.log(TAG, "Token length: ${token.length}, first 20: ${token.take(20)}...")
-            } else {
-                Logger.log(TAG, "Access token is null")
-            }
-            token
+            tokenStorage.getAccessToken()
         } catch (e: Exception) {
             Logger.log(TAG, "getAccessToken error: ${e.message}")
             null
@@ -158,13 +167,26 @@ class CatalogRepository(private val db: AppDatabase) {
 
     private fun getAuthHeader(): String? {
         val token = getAccessToken()
-        val auth = if (token != null) "OAuth $token" else null
-        if (auth != null) {
-            Logger.log(TAG, "Authorization header (full): $auth")
-        } else {
-            Logger.log(TAG, "Authorization header is null")
+        return if (token != null) "OAuth $token" else null
+    }
+
+    // ============================================================
+    // 🆕 ОБРАБОТКА DNS-СБОЕВ
+    // ============================================================
+
+    /**
+     * Возвращает true, если ошибка — DNS-фейл (UnknownHostException).
+     * В этом случае мы помечаем сеть как «недоступную» на 60 секунд,
+     * чтобы не спамить однотипными логами и быстрее выходить.
+     */
+    private fun isDnsError(e: Exception): Boolean {
+        var cause: Throwable? = e
+        while (cause != null) {
+            if (cause is UnknownHostException) return true
+            if (cause.message?.contains("No address associated with hostname") == true) return true
+            cause = cause.cause
         }
-        return auth
+        return false
     }
 
     // ============================================================
@@ -172,6 +194,10 @@ class CatalogRepository(private val db: AppDatabase) {
     // ============================================================
 
     private suspend fun createFolderIfNotExists(folderPath: String) {
+        if (isDnsBlocked()) {
+            Logger.log(TAG, "createFolderIfNotExists: DNS blocked, skipping $folderPath")
+            return
+        }
         val auth = getAuthHeader()
         if (auth == null) {
             Logger.log(TAG, "No auth header, cannot create folder: $folderPath")
@@ -188,49 +214,42 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (createRoot.isSuccessful) {
                     Logger.log(TAG, "Root folder $rootPath created")
                 } else if (createRoot.code() == 409) {
-                    Logger.log(TAG, "Root folder $rootPath already exists (conflict), proceeding")
+                    // ok
                 } else {
-                    val errorBody = createRoot.errorBody()?.string()
-                    Logger.log(TAG, "Failed to create root folder $rootPath: ${createRoot.code()}, $errorBody")
+                    Logger.log(TAG, "Failed to create root folder $rootPath: ${createRoot.code()}")
                 }
-            } else if (!rootCheck.isSuccessful && rootCheck.code() != 404) {
-                val errorBody = rootCheck.errorBody()?.string()
-                Logger.log(TAG, "Unexpected response checking root folder: ${rootCheck.code()}, $errorBody")
             }
         } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                Logger.log(TAG, "DNS failure in createFolderIfNotExists (root): ${e.message}")
+                return
+            }
             Logger.log(TAG, "Error ensuring root folder: ${e.message}")
-            e.printStackTrace()
         }
 
-        Logger.log(TAG, "Checking folder existence: $folderPath")
         try {
             val checkResponse = api.getDiskResources(auth, folderPath)
-            Logger.log(TAG, "Check folder response: code=${checkResponse.code()}")
-
             if (checkResponse.isSuccessful) {
-                Logger.log(TAG, "Folder exists: $folderPath")
                 return
             } else if (checkResponse.code() == 404) {
-                Logger.log(TAG, "Folder not found, creating: $folderPath")
                 val createResponse = api.createFolder(auth, folderPath)
-                Logger.log(TAG, "Create folder response: code=${createResponse.code()}")
-                if (createResponse.isSuccessful) {
-                    Logger.log(TAG, "Folder created: $folderPath")
-                } else {
-                    val errorBody = createResponse.errorBody()?.string()
-                    Logger.log(TAG, "Failed to create folder $folderPath: code=${createResponse.code()}, body=$errorBody")
+                if (!createResponse.isSuccessful) {
+                    Logger.log(TAG, "Failed to create folder $folderPath: code=${createResponse.code()}")
                 }
-            } else {
-                val errorBody = checkResponse.errorBody()?.string()
-                Logger.log(TAG, "Failed to check folder $folderPath: code=${checkResponse.code()}, body=$errorBody")
             }
         } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                Logger.log(TAG, "DNS failure in createFolderIfNotExists: ${e.message}")
+                return
+            }
             Logger.log(TAG, "Error checking/creating folder $folderPath: ${e.message}")
-            e.printStackTrace()
         }
     }
 
     private suspend fun deleteFileOnDisk(path: String): Boolean {
+        if (isDnsBlocked()) return false
         val auth = getAuthHeader()
         if (auth == null) {
             Logger.log(TAG, "No auth header, cannot delete file: $path")
@@ -239,20 +258,28 @@ class CatalogRepository(private val db: AppDatabase) {
         val api = YandexDiskApi.getInstance()
         return try {
             val response = api.deleteFile(auth, path, false)
-            Logger.log(TAG, "Delete file $path response: code=${response.code()}")
             response.isSuccessful || response.code() == 404
         } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                Logger.log(TAG, "DNS failure in deleteFileOnDisk: ${e.message}")
+                return false
+            }
             Logger.log(TAG, "Error deleting file $path: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
 
     private suspend fun uploadJsonWithToken(fileName: String, json: String, maxRetries: Int = 3): Boolean {
+        if (isDnsBlocked()) {
+            Logger.log(TAG, "uploadJsonWithToken: DNS blocked, skipping $fileName")
+            return false
+        }
+
         var attempts = 0
         while (attempts < maxRetries) {
             attempts++
-            Logger.log(TAG, "Upload attempt $attempts for $fileName")
+
             val auth = getAuthHeader()
             if (auth == null) {
                 Logger.log(TAG, "No auth header, cannot upload: $fileName")
@@ -268,22 +295,17 @@ class CatalogRepository(private val db: AppDatabase) {
             deleteFileOnDisk(path)
             delay(500)
 
-            Logger.log(TAG, "Getting upload URL for: $path")
             try {
                 val body = json.toRequestBody("application/json".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
-                Logger.log(TAG, "Get upload URL response: code=${urlResponse.code()}")
 
                 if (!urlResponse.isSuccessful) {
-                    val errorBody = urlResponse.errorBody()?.string()
-                    Logger.log(TAG, "Failed to get upload URL: code=${urlResponse.code()}, body=$errorBody")
                     if (urlResponse.code() == 409 && attempts < maxRetries) {
-                        Logger.log(TAG, "Conflict (409) on getUploadUrl, retrying...")
                         delay(1000L * attempts)
                         continue
-                    } else {
-                        return false
                     }
+                    Logger.log(TAG, "Failed to get upload URL for $fileName: code=${urlResponse.code()}")
+                    return false
                 }
 
                 val href = urlResponse.body()?.href
@@ -292,29 +314,28 @@ class CatalogRepository(private val db: AppDatabase) {
                     return false
                 }
 
-                Logger.log(TAG, "Uploading to URL: $href")
                 val uploadResponse = api.uploadFileToUrl(href, body)
-                Logger.log(TAG, "Upload response: code=${uploadResponse.code()}")
                 if (uploadResponse.isSuccessful) {
                     Logger.log(TAG, "Uploaded successfully: $fileName")
                     return true
                 } else {
-                    val errorBody = uploadResponse.errorBody()?.string()
-                    Logger.log(TAG, "Upload failed: code=${uploadResponse.code()}, body=$errorBody")
                     if (uploadResponse.code() == 409 && attempts < maxRetries) {
-                        Logger.log(TAG, "Conflict (409), retrying after delay...")
                         delay(1000L * attempts)
                     } else {
-                        Logger.log(TAG, "Upload failed permanently, giving up.")
+                        Logger.log(TAG, "Upload failed permanently for $fileName: code=${uploadResponse.code()}")
                         return false
                     }
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error uploading $fileName: ${e.message}")
-                e.printStackTrace()
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "DNS failure in uploadJsonWithToken($fileName): ${e.message}")
+                    return false
+                }
                 if (attempts < maxRetries) {
                     delay(1000L * attempts)
                 } else {
+                    Logger.log(TAG, "Error uploading $fileName: ${e.message}")
                     return false
                 }
             }
@@ -323,7 +344,18 @@ class CatalogRepository(private val db: AppDatabase) {
         return false
     }
 
+    /**
+     * 🆕 БАЗА6 этап 2: обновление .last_modified.
+     *
+     * Было: delete → upload (если upload упал — файл на Диске потерян).
+     * Стало: сначала получаем upload URL, потом заливаем с overwrite=true.
+     * Если что-то падает — старый файл остаётся целым.
+     */
     private suspend fun updateLastModifiedWithToken(): Boolean {
+        if (isDnsBlocked()) {
+            Logger.log(TAG, "updateLastModifiedWithToken: DNS blocked")
+            return false
+        }
         val auth = getAuthHeader()
         if (auth == null) {
             Logger.log(TAG, "No auth header, cannot update last_modified")
@@ -334,43 +366,38 @@ class CatalogRepository(private val db: AppDatabase) {
         val path = "$rootPath/.last_modified"
 
         createFolderIfNotExists(rootPath)
-        deleteFileOnDisk(path)
-        delay(500)
 
-        Logger.log(TAG, "Getting upload URL for last_modified: $path")
         return try {
             val timestamp = System.currentTimeMillis()
             val json = "{\"timestamp\": $timestamp}"
             val body = json.toRequestBody("application/json".toMediaType())
-            val urlResponse = api.getUploadUrl(auth, path, true)
-            Logger.log(TAG, "Get upload URL response (last_modified): code=${urlResponse.code()}")
 
+            // 🆕 НЕ удаляем старый .last_modified. Загружаем с overwrite=true.
+            val urlResponse = api.getUploadUrl(auth, path, true)
             if (!urlResponse.isSuccessful) {
-                val errorBody = urlResponse.errorBody()?.string()
-                Logger.log(TAG, "Failed to get upload URL for last_modified: code=${urlResponse.code()}, body=$errorBody")
-                false
+                Logger.log(TAG, "Failed to get upload URL for last_modified: code=${urlResponse.code()}")
+                return false
+            }
+            val href = urlResponse.body()?.href
+            if (href == null) {
+                Logger.log(TAG, "Href is null for last_modified")
+                return false
+            }
+            val uploadResponse = api.uploadFileToUrl(href, body)
+            if (uploadResponse.isSuccessful) {
+                Logger.log(TAG, "Last_modified updated successfully: $timestamp")
+                true
             } else {
-                val href = urlResponse.body()?.href
-                if (href == null) {
-                    Logger.log(TAG, "Href is null for last_modified")
-                    false
-                } else {
-                    Logger.log(TAG, "Uploading last_modified to: $href")
-                    val uploadResponse = api.uploadFileToUrl(href, body)
-                    Logger.log(TAG, "Upload last_modified response: code=${uploadResponse.code()}")
-                    if (uploadResponse.isSuccessful) {
-                        Logger.log(TAG, "Last_modified updated successfully")
-                        true
-                    } else {
-                        val errorBody = uploadResponse.errorBody()?.string()
-                        Logger.log(TAG, "Failed to update last_modified: code=${uploadResponse.code()}, body=$errorBody")
-                        false
-                    }
-                }
+                Logger.log(TAG, "Failed to update last_modified: code=${uploadResponse.code()}")
+                false
             }
         } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                Logger.log(TAG, "DNS failure in updateLastModifiedWithToken: ${e.message}")
+                return false
+            }
             Logger.log(TAG, "Error updating last_modified: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
@@ -382,48 +409,33 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun downloadUsersJson(): UsersFile? {
         return withContext(Dispatchers.IO) {
             try {
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "downloadUsersJson: no auth header")
-                    return@withContext null
-                }
+                if (isDnsBlocked()) return@withContext null
+                val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val path = "$rootPath/${Config.USERS_JSON_FILE}"
 
-                Logger.log(TAG, "downloadUsersJson: getting download URL for $path")
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
-                if (!urlResponse.isSuccessful) {
-                    Logger.log(TAG, "downloadUsersJson: code=${urlResponse.code()} (файл ещё не создан — это норма при первом запуске)")
-                    return@withContext null
-                }
+                if (!urlResponse.isSuccessful) return@withContext null
 
-                val href = urlResponse.body()?.href
-                if (href == null) {
-                    Logger.log(TAG, "downloadUsersJson: href is null")
-                    return@withContext null
-                }
-
+                val href = urlResponse.body()?.href ?: return@withContext null
                 val downloadResponse = api.downloadFile(href)
-                if (!downloadResponse.isSuccessful) {
-                    Logger.log(TAG, "downloadUsersJson: download failed code=${downloadResponse.code()}")
-                    return@withContext null
-                }
+                if (!downloadResponse.isSuccessful) return@withContext null
 
                 val json = downloadResponse.body()?.string()
-                if (json.isNullOrEmpty()) {
-                    Logger.log(TAG, "downloadUsersJson: empty body")
-                    return@withContext null
-                }
+                if (json.isNullOrEmpty()) return@withContext null
 
                 val usersFile = gson.fromJson(json, UsersFile::class.java)
                 Logger.log(TAG, "downloadUsersJson: loaded ${usersFile?.users?.size ?: 0} users")
                 return@withContext usersFile
-
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "DNS failure in downloadUsersJson: ${e.message}")
+                    return@withContext null
+                }
                 Logger.log(TAG, "downloadUsersJson error: ${e.message}")
-                e.printStackTrace()
-                return@withContext null
+                null
             }
         }
     }
@@ -432,19 +444,14 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 val json = gson.toJson(usersFile)
-                Logger.log(TAG, "uploadUsersJson: uploading ${usersFile.users.size} users")
                 val success = uploadJsonWithToken(Config.USERS_JSON_FILE, json)
                 if (success) {
                     updateLastModifiedWithToken()
-                    Logger.log(TAG, "uploadUsersJson: success")
-                } else {
-                    Logger.log(TAG, "uploadUsersJson: failed")
                 }
                 return@withContext success
             } catch (e: Exception) {
                 Logger.log(TAG, "uploadUsersJson error: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
+                false
             }
         }
     }
@@ -470,7 +477,10 @@ class CatalogRepository(private val db: AppDatabase) {
 
     /**
      * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список папок целиком.
-     * Локальная БД = источник истины. Никаких «скачал-добавил».
+     * Локальная БД = источник истины.
+     *
+     * 🆕 БАЗА6 этап 2: возвращаем true, ТОЛЬКО если и folders.json,
+     * и .last_modified успешно обновились. Иначе — false.
      */
     suspend fun uploadAllFoldersToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
@@ -478,26 +488,31 @@ class CatalogRepository(private val db: AppDatabase) {
                 val allFolders = db.folderDao().getAllFolders()
                 Logger.log(TAG, "uploadAllFoldersToDisk: uploading ${allFolders.size} folders")
                 val json = gson.toJson(allFolders)
-                // 🚀 Используем .bak для обхода троттлинга
                 val success = uploadJsonWithToken("data/$FOLDERS_FILENAME", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "uploadAllFoldersToDisk: success")
-                } else {
-                    Logger.log(TAG, "uploadAllFoldersToDisk: failed")
+                if (!success) {
+                    Logger.log(TAG, "uploadAllFoldersToDisk: failed (json upload)")
+                    return@withContext false
                 }
-                return@withContext success
+                val lm = updateLastModifiedWithToken()
+                if (!lm) {
+                    Logger.log(TAG, "uploadAllFoldersToDisk: json OK, but last_modified FAILED")
+                    return@withContext false
+                }
+                Logger.log(TAG, "uploadAllFoldersToDisk: success")
+                true
             } catch (e: Exception) {
                 Logger.log(TAG, "uploadAllFoldersToDisk error: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
+                false
             }
         }
     }
 
     /**
      * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список предметов целиком.
-     * Локальная БД = источник истины. Никаких «скачал-добавил».
+     * Локальная БД = источник истины.
+     *
+     * 🆕 БАЗА6 этап 2: возвращаем true, ТОЛЬКО если и items.json,
+     * и .last_modified успешно обновились.
      */
     suspend fun uploadAllItemsToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
@@ -505,104 +520,46 @@ class CatalogRepository(private val db: AppDatabase) {
                 val allItems = db.itemDao().getAllItemsRaw()
                 Logger.log(TAG, "uploadAllItemsToDisk: uploading ${allItems.size} items")
                 val json = gson.toJson(allItems)
-                // 🚀 Используем .bak для обхода троттлинга
                 val success = uploadJsonWithToken("data/$ITEMS_FILENAME", json)
-                if (success) {
-                    updateLastModifiedWithToken()
-                    Logger.log(TAG, "uploadAllItemsToDisk: success")
-                } else {
-                    Logger.log(TAG, "uploadAllItemsToDisk: failed")
+                if (!success) {
+                    Logger.log(TAG, "uploadAllItemsToDisk: failed (json upload)")
+                    return@withContext false
                 }
-                return@withContext success
+                val lm = updateLastModifiedWithToken()
+                if (!lm) {
+                    Logger.log(TAG, "uploadAllItemsToDisk: json OK, but last_modified FAILED")
+                    return@withContext false
+                }
+                Logger.log(TAG, "uploadAllItemsToDisk: success")
+                true
             } catch (e: Exception) {
                 Logger.log(TAG, "uploadAllItemsToDisk error: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
+                false
             }
         }
     }
 
-    suspend fun createFolderOnDisk(folder: FolderEntity): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Creating folder on disk: id=${folder.id}, name=${folder.name}")
-                return@withContext uploadAllFoldersToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error createFolderOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun createFolderOnDisk(folder: FolderEntity): Boolean =
+        withContext(Dispatchers.IO) { uploadAllFoldersToDisk() }
 
-    suspend fun updateFolderOnDisk(folder: FolderEntity): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Updating folder on disk: id=${folder.id}")
-                return@withContext uploadAllFoldersToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error updateFolderOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun updateFolderOnDisk(folder: FolderEntity): Boolean =
+        withContext(Dispatchers.IO) { uploadAllFoldersToDisk() }
 
-    suspend fun deleteFolderOnDisk(folderId: String): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Deleting folder on disk: $folderId")
-                return@withContext uploadAllFoldersToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleteFolderOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun deleteFolderOnDisk(folderId: String): Boolean =
+        withContext(Dispatchers.IO) { uploadAllFoldersToDisk() }
 
     // ============================================================
     // ОПЕРАЦИИ С ПРЕДМЕТАМИ НА ДИСКЕ
     // ============================================================
 
-    suspend fun createItemOnDisk(item: ItemEntity): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Creating item on disk: id=${item.id}, name=${item.name}")
-                return@withContext uploadAllItemsToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error createItemOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun createItemOnDisk(item: ItemEntity): Boolean =
+        withContext(Dispatchers.IO) { uploadAllItemsToDisk() }
 
-    suspend fun updateItemOnDisk(item: ItemEntity): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Updating item on disk: id=${item.id}")
-                return@withContext uploadAllItemsToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error updateItemOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun updateItemOnDisk(item: ItemEntity): Boolean =
+        withContext(Dispatchers.IO) { uploadAllItemsToDisk() }
 
-    suspend fun deleteItemOnDisk(itemId: String): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                Logger.log(TAG, "Deleting item on disk: $itemId")
-                return@withContext uploadAllItemsToDisk()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleteItemOnDisk: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
-            }
-        }
-    }
+    suspend fun deleteItemOnDisk(itemId: String): Boolean =
+        withContext(Dispatchers.IO) { uploadAllItemsToDisk() }
 
     // ============================================================
     // ЗАГРУЗКА ФОТО ПАПКИ НА ДИСК
@@ -611,48 +568,35 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot upload folder image")
-                    return@withContext false
-                }
+                if (isDnsBlocked()) return@withContext false
+                val auth = getAuthHeader() ?: return@withContext false
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val path = "$rootPath/images/folder_$folderId.jpg"
 
                 createFolderIfNotExists("$rootPath/images")
-                deleteFileOnDisk(path)
-                delay(500)
 
-                Logger.log(TAG, "Getting upload URL for folder image: $path")
                 val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
                 if (!urlResponse.isSuccessful) {
-                    val errorBody = urlResponse.errorBody()?.string()
-                    Logger.log(TAG, "Failed to get upload URL for folder image: code=${urlResponse.code()}, body=$errorBody")
+                    Logger.log(TAG, "Failed to get upload URL for folder image: code=${urlResponse.code()}")
                     return@withContext false
                 }
-
-                val href = urlResponse.body()?.href
-                if (href == null) {
-                    Logger.log(TAG, "Href is null for folder image")
-                    return@withContext false
-                }
-
-                Logger.log(TAG, "Uploading folder image to: $href")
+                val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
-                    Logger.log(TAG, "Folder image uploaded: $path")
                     return@withContext true
                 } else {
-                    val errorBody = uploadResponse.errorBody()?.string()
-                    Logger.log(TAG, "Folder image upload failed: code=${uploadResponse.code()}, body=$errorBody")
+                    Logger.log(TAG, "Folder image upload failed: code=${uploadResponse.code()}")
                     return@withContext false
                 }
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext false
+                }
                 Logger.log(TAG, "Error uploadFolderImage: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
+                false
             }
         }
     }
@@ -663,38 +607,31 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun downloadFolderImage(folderId: String): Bitmap? {
         return withContext(Dispatchers.IO) {
             try {
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot download folder image")
-                    return@withContext null
-                }
+                if (isDnsBlocked()) return@withContext null
+                val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val path = "$rootPath/images/folder_$folderId.jpg"
 
-                Logger.log(TAG, "Getting download URL for folder image: $path")
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
-                Logger.log(TAG, "Get download URL response (folder image): code=${urlResponse.code()}")
-
                 if (urlResponse.isSuccessful) {
                     val href = urlResponse.body()?.href
                     if (href != null) {
-                        Logger.log(TAG, "Downloading folder image from: $href")
                         val downloadResponse = api.downloadFile(href)
-                        Logger.log(TAG, "Download folder image response: code=${downloadResponse.code()}")
                         if (downloadResponse.isSuccessful) {
                             val bytes = downloadResponse.body()?.bytes()
-                            Logger.log(TAG, "Folder image downloaded: folder_$folderId.jpg")
                             return@withContext bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
                         }
                     }
                 }
-                Logger.log(TAG, "Folder image not found: folder_$folderId.jpg")
                 return@withContext null
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext null
+                }
                 Logger.log(TAG, "Error downloadFolderImage: ${e.message}")
-                e.printStackTrace()
-                return@withContext null
+                null
             }
         }
     }
@@ -703,9 +640,21 @@ class CatalogRepository(private val db: AppDatabase) {
     // ЧТЕНИЕ С ДИСКА (ПРИВАТНЫЙ API)
     // ============================================================
 
+    /**
+     * 🆕 БАЗА6 этап 2: фикс парсинга timestamp.
+     *
+     * Было: `jsonObject["timestamp"]?.toString()?.toLongOrNull()`
+     * Gson парсит число как Double → "1.790348763104E12" → toLongOrNull() → null.
+     *
+     * Стало: `(raw as? Number)?.toLong()` — корректно обрабатывает и Long, и Double.
+     */
     suspend fun getDiskLastModified(): Long {
         return withContext(Dispatchers.IO) {
             try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "getDiskLastModified: DNS blocked")
+                    return@withContext 0L
+                }
                 val auth = getAuthHeader()
                 if (auth == null) {
                     Logger.log(TAG, "No auth header, cannot get last_modified")
@@ -715,47 +664,47 @@ class CatalogRepository(private val db: AppDatabase) {
                 val rootPath = getRootPath()
                 val path = "$rootPath/.last_modified"
 
-                Logger.log(TAG, "Checking last_modified file: $path")
                 val response = api.getDiskResources(auth, path)
-                Logger.log(TAG, "Check last_modified response: code=${response.code()}")
-
-                if (response.isSuccessful) {
-                    Logger.log(TAG, "Last_modified file exists, getting download URL")
-                    val urlResponse = api.getDiskDownloadUrl(auth, path)
-                    Logger.log(TAG, "Get download URL response (last_modified): code=${urlResponse.code()}")
-
-                    if (urlResponse.isSuccessful) {
-                        val href = urlResponse.body()?.href
-                        if (href != null) {
-                            val downloadResponse = api.downloadFile(href)
-                            Logger.log(TAG, "Download last_modified response: code=${downloadResponse.code()}")
-                            if (downloadResponse.isSuccessful) {
-                                val json = downloadResponse.body()?.string()
-                                if (!json.isNullOrEmpty()) {
-                                    try {
-                                        val jsonObject = gson.fromJson(json, Map::class.java)
-                                        val timestamp = jsonObject["timestamp"]?.toString()?.toLongOrNull()
-                                        if (timestamp != null) {
-                                            Logger.log(TAG, "Last_modified: $timestamp")
-                                            return@withContext timestamp
-                                        }
-                                    } catch (e: Exception) {
-                                        Logger.log(TAG, "Error parsing last_modified json: ${e.message}")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    Logger.log(TAG, "Last_modified not found (code ${response.code()})")
+                if (!response.isSuccessful) {
+                    return@withContext 0L
                 }
 
-                Logger.log(TAG, "Last_modified not found, returning 0")
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    return@withContext 0L
+                }
+                val href = urlResponse.body()?.href ?: return@withContext 0L
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    return@withContext 0L
+                }
+                val json = downloadResponse.body()?.string()
+                if (json.isNullOrEmpty()) {
+                    return@withContext 0L
+                }
+
+                val jsonObject = gson.fromJson(json, Map::class.java)
+                val raw = jsonObject["timestamp"]
+                // 🆕 Фикс: Gson отдаёт Double для чисел → аккуратно конвертируем
+                val timestamp: Long? = when (raw) {
+                    is Number -> raw.toLong()
+                    is String -> raw.toLongOrNull()
+                    else -> null
+                }
+                if (timestamp != null && timestamp > 0L) {
+                    Logger.log(TAG, "Last_modified: $timestamp")
+                    return@withContext timestamp
+                }
+                Logger.log(TAG, "Last_modified parsed but empty/invalid: raw=$raw")
                 return@withContext 0L
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "DNS failure in getDiskLastModified: ${e.message}")
+                    return@withContext 0L
+                }
                 Logger.log(TAG, "Error getDiskLastModified: ${e.message}")
-                e.printStackTrace()
-                return@withContext 0L
+                0L
             }
         }
     }
@@ -776,22 +725,17 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun downloadDataFromDisk(): DownloadResult {
         return withContext(Dispatchers.IO) {
             try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "downloadDataFromDisk: DNS blocked")
+                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
+                }
                 val auth = getAuthHeader()
                 if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot download data")
-                    return@withContext DownloadResult(
-                        folders = emptyList(),
-                        items = emptyList(),
-                        foldersError = true,
-                        itemsError = true
-                    )
+                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
                 }
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
 
-                Logger.log(TAG, "Downloading data from disk...")
-
-                // 🚀 Используем .bak имена
                 val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, "$rootPath/data/$FOLDERS_FILENAME")
                 Logger.log(TAG, "Downloaded ${foldersResult.data.size} folders (error=${foldersResult.error})")
 
@@ -805,14 +749,13 @@ class CatalogRepository(private val db: AppDatabase) {
                     itemsError = itemsResult.error
                 )
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "DNS failure in downloadDataFromDisk: ${e.message}")
+                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
+                }
                 Logger.log(TAG, "Error downloadDataFromDisk: ${e.message}")
-                e.printStackTrace()
-                DownloadResult(
-                    folders = emptyList(),
-                    items = emptyList(),
-                    foldersError = true,
-                    itemsError = true
-                )
+                DownloadResult(emptyList(), emptyList(), true, true)
             }
         }
     }
@@ -825,35 +768,20 @@ class CatalogRepository(private val db: AppDatabase) {
     @Suppress("UNCHECKED_CAST")
     private suspend fun <T> downloadJsonFileSafe(api: YandexDiskApi, auth: String, path: String): JsonDownloadResult<T> {
         return try {
-            Logger.log(TAG, "Getting download URL for: $path")
-            val urlResponse = api.getDiskDownloadUrl(auth, path)
-            Logger.log(TAG, "Get download URL response: code=${urlResponse.code()}")
+            if (isDnsBlocked()) return JsonDownloadResult(emptyList(), true)
 
+            val urlResponse = api.getDiskDownloadUrl(auth, path)
             if (!urlResponse.isSuccessful) {
-                // 404 — файла нет (это норма), иначе — ошибка
                 val isError = urlResponse.code() != 404
                 return JsonDownloadResult(emptyList(), isError)
             }
-
-            val href = urlResponse.body()?.href
-            if (href == null) {
-                return JsonDownloadResult(emptyList(), true)
-            }
-
-            Logger.log(TAG, "Downloading from: $href")
+            val href = urlResponse.body()?.href ?: return JsonDownloadResult(emptyList(), true)
             val downloadResponse = api.downloadFile(href)
-            Logger.log(TAG, "Download response: code=${downloadResponse.code()}")
-
-            if (!downloadResponse.isSuccessful) {
-                return JsonDownloadResult(emptyList(), true)
-            }
+            if (!downloadResponse.isSuccessful) return JsonDownloadResult(emptyList(), true)
 
             val json = downloadResponse.body()?.string()
-            if (json.isNullOrEmpty()) {
-                return JsonDownloadResult(emptyList(), false)
-            }
+            if (json.isNullOrEmpty()) return JsonDownloadResult(emptyList(), false)
 
-            // ✅ path.contains("folders") работает и для "folders.json.bak"
             val type = if (path.contains("folders")) {
                 object : TypeToken<List<FolderEntity>>() {}.type
             } else {
@@ -862,8 +790,11 @@ class CatalogRepository(private val db: AppDatabase) {
             val parsed: List<T> = gson.fromJson(json, type) ?: emptyList()
             JsonDownloadResult(parsed, false)
         } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                return JsonDownloadResult(emptyList(), true)
+            }
             Logger.log(TAG, "Error downloading $path: ${e.message}")
-            e.printStackTrace()
             JsonDownloadResult(emptyList(), true)
         }
     }
@@ -873,13 +804,13 @@ class CatalogRepository(private val db: AppDatabase) {
     // ============================================================
 
     /**
-     * Проверяет, существует ли фото предмета на Яндекс.Диске.
-     * Использует getDiskDownloadUrl без фактического скачивания.
      * 200 → есть, 404 → нет, иначе → null (неизвестно).
+     * 🆕 при DNS-фейле возвращаем null, не пытаемся снова 98 раз.
      */
     suspend fun itemImageExistsOnDisk(itemId: String): Boolean? {
         return withContext(Dispatchers.IO) {
             try {
+                if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -891,18 +822,23 @@ class CatalogRepository(private val db: AppDatabase) {
                     else -> null
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "itemImageExistsOnDisk($itemId) error: ${e.message}")
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext null
+                }
+                // Не логируем каждый — их 98 штук
                 null
             }
         }
     }
 
     /**
-     * Проверяет, существует ли иконка папки на Яндекс.Диске.
+     * 🆕 при DNS-фейле возвращаем null, не спамим.
      */
     suspend fun folderImageExistsOnDisk(folderId: String): Boolean? {
         return withContext(Dispatchers.IO) {
             try {
+                if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -914,7 +850,10 @@ class CatalogRepository(private val db: AppDatabase) {
                     else -> null
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "folderImageExistsOnDisk($folderId) error: ${e.message}")
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext null
+                }
                 null
             }
         }
@@ -927,11 +866,8 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot upload image")
-                    return@withContext false
-                }
+                if (isDnsBlocked()) return@withContext false
+                val auth = getAuthHeader() ?: return@withContext false
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val imagesPath = "$rootPath/images"
@@ -939,22 +875,15 @@ class CatalogRepository(private val db: AppDatabase) {
 
                 createFolderIfNotExists(imagesPath)
 
-                deleteFileOnDisk(path)
-                delay(500)
-
-                Logger.log(TAG, "Getting upload URL for image: $path")
                 val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
                 if (!urlResponse.isSuccessful) {
-                    val errorBody = urlResponse.errorBody()?.string()
-                    Logger.log(TAG, "Failed to get upload URL for image: code=${urlResponse.code()}, body=$errorBody")
+                    Logger.log(TAG, "Failed to get upload URL for image: code=${urlResponse.code()}")
                     return@withContext false
                 }
-
                 val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
-                    Logger.log(TAG, "Image uploaded: $path")
                     val item = db.itemDao().getItemById(itemId)
                     item?.let {
                         val updated = it.copy(imageUrl = "images/$itemId.jpg")
@@ -963,14 +892,16 @@ class CatalogRepository(private val db: AppDatabase) {
                     }
                     return@withContext true
                 } else {
-                    val errorBody = uploadResponse.errorBody()?.string()
-                    Logger.log(TAG, "Image upload failed: code=${uploadResponse.code()}, body=$errorBody")
+                    Logger.log(TAG, "Image upload failed: code=${uploadResponse.code()}")
                     return@withContext false
                 }
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext false
+                }
                 Logger.log(TAG, "Error uploadItemImage: ${e.message}")
-                e.printStackTrace()
-                return@withContext false
+                false
             }
         }
     }
@@ -978,38 +909,31 @@ class CatalogRepository(private val db: AppDatabase) {
     suspend fun downloadItemImage(itemId: String): Bitmap? {
         return withContext(Dispatchers.IO) {
             try {
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot download image")
-                    return@withContext null
-                }
+                if (isDnsBlocked()) return@withContext null
+                val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
                 val path = "$rootPath/images/$itemId.jpg"
 
-                Logger.log(TAG, "Getting download URL for image: $path")
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
-                Logger.log(TAG, "Get download URL response (image): code=${urlResponse.code()}")
-
                 if (urlResponse.isSuccessful) {
                     val href = urlResponse.body()?.href
                     if (href != null) {
-                        Logger.log(TAG, "Downloading image from: $href")
                         val downloadResponse = api.downloadFile(href)
-                        Logger.log(TAG, "Download image response: code=${downloadResponse.code()}")
                         if (downloadResponse.isSuccessful) {
                             val bytes = downloadResponse.body()?.bytes()
-                            Logger.log(TAG, "Image downloaded: $itemId.jpg")
                             return@withContext bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
                         }
                     }
                 }
-                Logger.log(TAG, "Image not found: $itemId.jpg")
                 return@withContext null
             } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext null
+                }
                 Logger.log(TAG, "Error downloadItemImage: ${e.message}")
-                e.printStackTrace()
-                return@withContext null
+                null
             }
         }
     }
