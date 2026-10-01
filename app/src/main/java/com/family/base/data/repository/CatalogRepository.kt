@@ -8,6 +8,8 @@ import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
 import com.family.base.data.remote.YandexDiskApi
+import com.family.base.data.remote.model.UserModel
+import com.family.base.data.remote.model.UsersFile
 import com.family.base.util.Logger
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -170,7 +172,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
         val api = YandexDiskApi.getInstance()
 
-        // ===== ВАЖНО: сначала убеждаемся, что корневая папка существует =====
         val rootPath = getRootPath()
         try {
             val rootCheck = api.getDiskResources(auth, rootPath)
@@ -194,7 +195,6 @@ class CatalogRepository(private val db: AppDatabase) {
             e.printStackTrace()
         }
 
-        // ===== Теперь создаём целевую папку =====
         Logger.log(TAG, "Checking folder existence: $folderPath")
         try {
             val checkResponse = api.getDiskResources(auth, folderPath)
@@ -259,7 +259,6 @@ class CatalogRepository(private val db: AppDatabase) {
             createFolderIfNotExists(dataFolder)
 
             deleteFileOnDisk(path)
-            // Небольшая задержка после удаления, чтобы сервер успел обработать
             delay(500)
 
             Logger.log(TAG, "Getting upload URL for: $path")
@@ -367,6 +366,109 @@ class CatalogRepository(private val db: AppDatabase) {
             e.printStackTrace()
             false
         }
+    }
+
+    // ============================================================
+    // ПОЛЬЗОВАТЕЛИ (users.json на Яндекс.Диске)
+    // ============================================================
+
+    /**
+     * Скачивает users.json с Яндекс.Диска.
+     * Возвращает UsersFile или null, если файла нет / ошибка.
+     */
+    suspend fun downloadUsersJson(): UsersFile? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "downloadUsersJson: no auth header")
+                    return@withContext null
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/${Config.USERS_JSON_FILE}"
+
+                Logger.log(TAG, "downloadUsersJson: getting download URL for $path")
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadUsersJson: code=${urlResponse.code()} (файл ещё не создан — это норма при первом запуске)")
+                    return@withContext null
+                }
+
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "downloadUsersJson: href is null")
+                    return@withContext null
+                }
+
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadUsersJson: download failed code=${downloadResponse.code()}")
+                    return@withContext null
+                }
+
+                val json = downloadResponse.body()?.string()
+                if (json.isNullOrEmpty()) {
+                    Logger.log(TAG, "downloadUsersJson: empty body")
+                    return@withContext null
+                }
+
+                val usersFile = gson.fromJson(json, UsersFile::class.java)
+                Logger.log(TAG, "downloadUsersJson: loaded ${usersFile?.users?.size ?: 0} users")
+                return@withContext usersFile
+
+            } catch (e: Exception) {
+                Logger.log(TAG, "downloadUsersJson error: ${e.message}")
+                e.printStackTrace()
+                return@withContext null
+            }
+        }
+    }
+
+    /**
+     * Загружает users.json на Яндекс.Диск.
+     */
+    suspend fun uploadUsersJson(usersFile: UsersFile): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val json = gson.toJson(usersFile)
+                Logger.log(TAG, "uploadUsersJson: uploading ${usersFile.users.size} users")
+                val success = uploadJsonWithToken(Config.USERS_JSON_FILE, json)
+                if (success) {
+                    updateLastModifiedWithToken()
+                    Logger.log(TAG, "uploadUsersJson: success")
+                } else {
+                    Logger.log(TAG, "uploadUsersJson: failed")
+                }
+                return@withContext success
+            } catch (e: Exception) {
+                Logger.log(TAG, "uploadUsersJson error: ${e.message}")
+                e.printStackTrace()
+                return@withContext false
+            }
+        }
+    }
+
+    /**
+     * Найти пользователя по имени в UsersFile.
+     */
+    fun findUserByName(usersFile: UsersFile?, name: String): UserModel? {
+        return usersFile?.users?.firstOrNull { it.name == name }
+    }
+
+    /**
+     * Добавить или обновить пользователя в UsersFile.
+     * Возвращает новый UsersFile.
+     */
+    fun addOrUpdateUser(usersFile: UsersFile?, user: UserModel): UsersFile {
+        val current = usersFile ?: UsersFile(emptyList())
+        val idx = current.users.indexOfFirst { it.name == user.name }
+        val updatedList = if (idx >= 0) {
+            current.users.toMutableList().apply { this[idx] = user }
+        } else {
+            current.users + user
+        }
+        return UsersFile(updatedList)
     }
 
     // ============================================================
@@ -760,11 +862,10 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext false
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath() // "/BAZA"
+                val rootPath = getRootPath()
                 val imagesPath = "$rootPath/images"
                 val path = "$imagesPath/$itemId.jpg"
 
-                // Создаём папку images, если её нет (без создания корня)
                 createFolderIfNotExists(imagesPath)
 
                 deleteFileOnDisk(path)
