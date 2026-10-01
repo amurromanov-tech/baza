@@ -26,6 +26,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.AppUser
 import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
@@ -66,6 +67,21 @@ class MainActivity : AppCompatActivity() {
     // ===== ДЛЯ LONG-PRESS СТЕППЕРА =====
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
+
+    // ===== ЗАПУСК ЭКРАНА ВЫБОРА ПОЛЬЗОВАТЕЛЯ =====
+    private val selectUserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
+        if (result.resultCode == RESULT_OK) {
+            // Пользователь выбран — применяем гостевой режим, если нужно
+            applyGuestModeIfNeeded()
+            viewModel.loadContents()
+        } else {
+            Logger.log(TAG, "User not selected, finishing")
+            finish()
+        }
+    }
 
     private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -149,6 +165,8 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
+            // После ConnectFamilyActivity (ввода пути) — сразу на выбор пользователя
+            launchSelectUserIfNeeded()
             viewModel.loadContents()
         }
     }
@@ -166,9 +184,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         Logger.init(applicationContext)
-
         tokenStorage = TokenStorage(this)
-
         viewModel = BaseApplication.mainViewModel
 
         try {
@@ -178,6 +194,7 @@ class MainActivity : AppCompatActivity() {
             Logger.log(TAG, "Error registering AppLifecycleObserver", e)
         }
 
+        // ===== ПРОВЕРКА: ПУБЛИЧНЫЙ КЛЮЧ =====
         val publicKey = tokenStorage.getPublicKey()
         if (publicKey == null) {
             connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
@@ -199,8 +216,12 @@ class MainActivity : AppCompatActivity() {
         adapter = CatalogAdapter(
             onFolderClick = { folder -> navigateToFolder(folder) },
             onItemClick = { item -> openItemDetail(item) },
-            onFolderLongClick = { folder -> showFolderContextMenu(folder) },
-            onItemLongClick = { item -> showItemContextMenu(item) }
+            onFolderLongClick = { folder ->
+                if (!isGuestMode()) showFolderContextMenu(folder)
+            },
+            onItemLongClick = { item ->
+                if (!isGuestMode()) showItemContextMenu(item)
+            }
         )
         binding.rvCatalog.layoutManager = LinearLayoutManager(this)
         binding.rvCatalog.adapter = adapter
@@ -220,11 +241,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
+        binding.btnAddFolder.setOnClickListener {
+            if (!isGuestMode()) showCreateFolderDialog()
+        }
         binding.btnAddItem.setOnClickListener {
-            val intent = Intent(this, AddItemActivity::class.java)
-            intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-            startActivity(intent)
+            if (!isGuestMode()) {
+                val intent = Intent(this, AddItemActivity::class.java)
+                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                startActivity(intent)
+            }
         }
         binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
@@ -237,12 +262,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnScanCheck.setOnClickListener {
-            Logger.log(TAG, "Scan check clicked")
-            checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
+            if (!isGuestMode()) {
+                Logger.log(TAG, "Scan check clicked")
+                checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
+            }
         }
 
         viewModel.navigateToFolder(null)
         updateSearchIcon(viewModel.searchQueryLiveData.value)
+
+        // ===== ПРОВЕРКА: ВЫБРАН ЛИ ПОЛЬЗОВАТЕЛЬ =====
+        if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
+            launchSelectUserIfNeeded()
+        } else {
+            applyGuestModeIfNeeded()
+        }
 
         // ===== ЗАЩИТА ОТ СЛУЧАЙНОГО ВЫХОДА =====
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -263,6 +297,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.loadContents()
+        applyGuestModeIfNeeded()
     }
 
     override fun onPause() {
@@ -275,6 +310,39 @@ class MainActivity : AppCompatActivity() {
         stopSyncAnimation()
         hideProgressJob?.cancel()
         stopRepeat()
+    }
+
+    // ============================================================
+    // ГОСТЕВОЙ РЕЖИМ
+    // ============================================================
+    private fun isGuestMode(): Boolean {
+        return tokenStorage.isCurrentUserGuest()
+    }
+
+    /**
+     * Применяет гостевой режим:
+     * - скрывает FAB «Добавить папку», «Добавить предмет», «Сканировать чек»
+     * - отключает long-click (через лямбды в адаптере)
+     */
+    private fun applyGuestModeIfNeeded() {
+        val guest = isGuestMode()
+        binding.btnAddFolder.visibility = if (guest) View.GONE else View.VISIBLE
+        binding.btnAddItem.visibility = if (guest) View.GONE else View.VISIBLE
+        binding.btnScanCheck.visibility = if (guest) View.GONE else View.VISIBLE
+        Logger.log(TAG, "applyGuestModeIfNeeded: guest=$guest")
+    }
+
+    private fun launchSelectUserIfNeeded() {
+        if (tokenStorage.getCurrentUser() == null) {
+            Logger.log(TAG, "No user selected, launching SelectUserActivity")
+            try {
+                selectUserLauncher.launch(Intent(this, SelectUserActivity::class.java))
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
+            }
+        } else {
+            applyGuestModeIfNeeded()
+        }
     }
 
     // ============================================================
@@ -386,10 +454,12 @@ class MainActivity : AppCompatActivity() {
                             .setTitle("Ничего не найдено")
                             .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
                             .setPositiveButton("Создать") { _, _ ->
-                                val intent = Intent(this@MainActivity, AddItemActivity::class.java)
-                                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-                                intent.putExtra("barcode", barcode)
-                                startActivity(intent)
+                                if (!isGuestMode()) {
+                                    val intent = Intent(this@MainActivity, AddItemActivity::class.java)
+                                    intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                                    intent.putExtra("barcode", barcode)
+                                    startActivity(intent)
+                                }
                             }
                             .setNegativeButton("Отмена", null)
                             .show()
@@ -540,7 +610,6 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                // ВСЕГДА спрашиваем причину
                 showWriteOffReasonDialog(item, count)
             }
             .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
@@ -646,7 +715,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS (+ чекбокс «Всё»)
+    // СТЕППЕР
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
