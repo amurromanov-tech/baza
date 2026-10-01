@@ -358,6 +358,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // СИНХРОНИЗАЦИЯ
     // ============================================================
 
+    /**
+     * Основной метод синхронизации.
+     *
+     * 🆕 ВАЖНО (фикс БАЗА6): теперь синк ВСЕГДА начинается с принудительного
+     * полного upload локальных items и folders на Диск. Это защищает от ситуации,
+     * когда на Диске устаревший items.json (например, после импорта бэкапа),
+     * а очередь pending пуста, и синк ничего не заливает.
+     *
+     * Порядок:
+     *   1. Проверка токена/сети.
+     *   2. 🆕 uploadAllItemsToDisk() + uploadAllFoldersToDisk() — заливаем ВСЁ.
+     *   3. processPendingChangesInternal() — обрабатываем очередь (фото и т.п.).
+     *   4. downloadDataFromDisk() + mergeData() — подтягиваем чужие изменения.
+     *   5. uploadUnsyncedImages / FolderImages — фото.
+     *   6. syncImages / syncFolderImages — скачивание фото.
+     */
     fun syncWithDisk() {
         applicationScope.launch {
             if (!syncMutex.tryLock()) {
@@ -394,8 +410,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
+                // ============================================================
+                // 🆕 ШАГ 1: ПРИНУДИТЕЛЬНЫЙ ПОЛНЫЙ UPLOAD (локальная БД = истина)
+                // ============================================================
+                val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
+                val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
+                Logger.log(TAG, "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount")
+
+                syncProgress.postValue(
+                    SyncProgress(SyncPhase.SENDING, 0, 1, "Отправка всех данных ($localItemsCount предм., $localFoldersCount папок)…")
+                )
+
+                val uploadedItems = repository.uploadAllItemsToDisk()
+                val uploadedFolders = repository.uploadAllFoldersToDisk()
+                Logger.log(TAG, "syncWithDisk: full upload items=$uploadedItems, folders=$uploadedFolders")
+
+                // ============================================================
+                // ШАГ 2: обработка очереди (фото, доп. изменения)
+                // ============================================================
                 uploadedCount = processPendingChangesInternal()
 
+                // ============================================================
+                // ШАГ 3: скачивание данных с Диска
+                // ============================================================
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
                 val downloadResult = repository.downloadDataFromDisk()
                 syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
@@ -407,6 +444,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 downloadedCount = downloadResult.folders.size + downloadResult.items.size
 
+                // ============================================================
+                // ШАГ 4: фото — загрузка и скачивание
+                // ============================================================
                 uploadUnsyncedImages()
                 uploadUnsyncedFolderImages()
 
@@ -432,7 +472,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loadContents()
 
                 val elapsed = System.currentTimeMillis() - startedAt
-                Logger.log(TAG, "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount")
+                Logger.log(TAG, "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount, localItems=$localItemsCount")
 
                 if (forceSyncRequested) {
                     val msg = buildString {
@@ -467,7 +507,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ФИКС №4: ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
+    // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
         val appContext = getApplication<Application>().applicationContext
@@ -531,7 +571,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ФИКС №4: ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
+    // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
     // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
         val appContext = getApplication<Application>().applicationContext
