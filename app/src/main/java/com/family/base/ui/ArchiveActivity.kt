@@ -6,7 +6,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.family.base.R
+import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityArchiveBinding
@@ -22,6 +22,7 @@ class ArchiveActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityArchiveBinding
     private lateinit var db: AppDatabase
+    private lateinit var tokenStorage: TokenStorage
     private lateinit var adapter: ArchiveAdapter
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
@@ -41,10 +42,14 @@ class ArchiveActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         db = AppDatabase.getInstance(this)
+        tokenStorage = TokenStorage(this)
 
         adapter = ArchiveAdapter(
+            isGuestMode = isGuestMode(),
             onItemClick = { item -> showItemDetails(item) },
-            onRestoreClick = { item -> restoreItem(item) }
+            onRestoreClick = { item ->
+                if (!isGuestMode()) restoreItem(item)
+            }
         )
 
         binding.rvArchive.layoutManager = LinearLayoutManager(this)
@@ -59,6 +64,10 @@ class ArchiveActivity : AppCompatActivity() {
 
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
     }
+
+    private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
+
+    // ==================== ПАПКИ ====================
 
     private fun setupFolderChips() {
         binding.chipGroupFolder.setOnCheckedStateChangeListener { _, checkedIds ->
@@ -89,6 +98,8 @@ class ArchiveActivity : AppCompatActivity() {
             applyFilters()
         }
     }
+
+    // ==================== ЗАГРУЗКА ====================
 
     private fun loadAllArchive() {
         lifecycleScope.launch {
@@ -130,6 +141,8 @@ class ArchiveActivity : AppCompatActivity() {
             }
         }
     }
+
+    // ==================== ДЕТАЛИ / ВОССТАНОВЛЕНИЕ ====================
 
     private fun showItemDetails(item: ItemEntity) {
         val reasonText = getReasonText(item.archivedReason)
@@ -176,6 +189,8 @@ class ArchiveActivity : AppCompatActivity() {
             .setNegativeButton("Отмена", null)
             .show()
     }
+
+    // ==================== ХЕЛПЕРЫ ====================
 
     private fun getReasonText(reason: String?): String {
         return when (reason) {
