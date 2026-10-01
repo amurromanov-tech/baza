@@ -33,6 +33,7 @@ import coil.load
 import com.family.base.BaseApplication
 import com.family.base.Config
 import com.family.base.R
+import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
@@ -65,6 +66,7 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
     private lateinit var viewModel: MainViewModel
+    private lateinit var tokenStorage: TokenStorage
     private val CAMERA_PERMISSION_REQUEST = 200
 
     private val productLookupService = ProductLookupService()
@@ -179,6 +181,7 @@ class ItemDetailActivity : AppCompatActivity() {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
             viewModel = BaseApplication.mainViewModel
+            tokenStorage = TokenStorage(this)
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             return
@@ -206,6 +209,40 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // ГОСТЕВОЙ РЕЖИМ
+    // ============================================================
+    private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
+
+    /**
+     * Скрывает элементы редактирования в карточке, если пользователь — гость.
+     */
+    private fun applyGuestModeIfNeeded() {
+        if (!isGuestMode()) return
+
+        // FAB-кнопки действий
+        binding.btnWriteOff.visibility = View.GONE
+
+        // Секция «⚙️ Действия» — целиком скрываем
+        binding.tvActionsTitle.visibility = View.GONE
+        binding.btnActionEdit.visibility = View.GONE
+        binding.btnActionLend.visibility = View.GONE
+        binding.btnActionMove.visibility = View.GONE
+        binding.btnActionRevision.visibility = View.GONE
+        binding.btnActionArchive.visibility = View.GONE
+        binding.btnActionDelete.visibility = View.GONE
+
+        // Кнопки редактирования
+        binding.btnSave.visibility = View.GONE
+        binding.btnCancelEdit.visibility = View.GONE
+        binding.btnAddPhoto.visibility = View.GONE
+
+        // Займ
+        binding.btnReturnItem.visibility = View.GONE
+
+        Logger.log(TAG, "Guest mode applied: edit buttons hidden")
+    }
+
     private fun setupListeners() {
         binding.toolbar.setNavigationOnClickListener { finish() }
         binding.ivPhoto.setOnClickListener { openFullscreenPhoto() }
@@ -218,18 +255,19 @@ class ItemDetailActivity : AppCompatActivity() {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
         binding.btnActionEdit.setOnClickListener {
-            itemId?.let { isEditMode = true; showEditMode(it) }
+            if (!isGuestMode()) itemId?.let { isEditMode = true; showEditMode(it) }
         }
-        binding.btnActionLend.setOnClickListener { showLendDialog() }
-        binding.btnActionMove.setOnClickListener { showMoveDialog() }
-        binding.btnActionRevision.setOnClickListener { showRevisionDialog() }
-        binding.btnActionArchive.setOnClickListener { showArchiveDialog() }
-        binding.btnActionDelete.setOnClickListener { showDeleteDialog() }
-        binding.btnReturnItem.setOnClickListener { showReturnDialog() }
+        binding.btnActionLend.setOnClickListener { if (!isGuestMode()) showLendDialog() }
+        binding.btnActionMove.setOnClickListener { if (!isGuestMode()) showMoveDialog() }
+        binding.btnActionRevision.setOnClickListener { if (!isGuestMode()) showRevisionDialog() }
+        binding.btnActionArchive.setOnClickListener { if (!isGuestMode()) showArchiveDialog() }
+        binding.btnActionDelete.setOnClickListener { if (!isGuestMode()) showDeleteDialog() }
+        binding.btnReturnItem.setOnClickListener { if (!isGuestMode()) showReturnDialog() }
 
-        binding.btnWriteOff.setOnClickListener { showWriteOffDialog() }
+        binding.btnWriteOff.setOnClickListener { if (!isGuestMode()) showWriteOffDialog() }
 
         binding.chipQuantityView.setOnLongClickListener {
+            if (isGuestMode()) return@setOnLongClickListener true
             showQuickQuantityDialog()
             true
         }
@@ -344,12 +382,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Форматирует дату ревизии:
-     * - null → «не проводилась»
-     * - свежая (< 365 дней) → «01.10.2026 (5 дней назад)»
-     * - просрочена (>= 365 дней) → «01.10.2024 ⚠️ (400 дней назад)»
-     */
     private fun formatRevisionDate(timestamp: Long?): String {
         if (timestamp == null) return "не проводилась"
 
@@ -410,9 +442,6 @@ class ItemDetailActivity : AppCompatActivity() {
         return "Переместить $noun: $shortName"
     }
 
-    // ============================================================
-    // СПИСАНИЕ: ДИАЛОГ «СКОЛЬКО?» → ПОТОМ ВСЕГДА «ПРИЧИНА»
-    // ============================================================
     private fun showWriteOffDialog() {
         val id = itemId ?: return
         val item = currentItem ?: return
@@ -493,7 +522,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СТЕППЕР [−] [N] [+] С LONG-PRESS
+    // СТЕППЕР
     // ============================================================
     private class StepperResult(
         val container: LinearLayout,
@@ -921,7 +950,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПОДТИП: ВЫПАДАЮЩИЙ СПИСОК В РЕДАКТИРОВАНИИ
+    // ПОДТИП
     // ============================================================
     private fun setupSubtypeEditDropdown() {
         val view = binding.autoCompleteSubtypeEdit
@@ -971,6 +1000,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     applyChips(item)
                     updateExpiryProgress(item)
                     updateSyncIndicator(item)
+                    applyGuestModeIfNeeded()
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -1029,6 +1059,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     applyChips(item)
                     updateExpiryProgress(item)
                     updateSyncIndicator(item)
+                    applyGuestModeIfNeeded()
 
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, itemId)
                     if (localFile != null && localFile.exists()) {
@@ -1149,7 +1180,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.tvDateExpiry.visibility = View.GONE
         }
 
-        // ===== РЕВИЗИЯ =====
         binding.tvDateRevisionLabel.visibility = View.VISIBLE
         binding.tvDateRevision.visibility = View.VISIBLE
         updateRevisionRow(item.lastRevisionDate)
@@ -1207,7 +1237,6 @@ class ItemDetailActivity : AppCompatActivity() {
             binding.tvDateExpiry.visibility = View.GONE
         }
 
-        // ===== РЕВИЗИЯ =====
         binding.tvDateRevisionLabel.visibility = View.VISIBLE
         binding.tvDateRevision.visibility = View.VISIBLE
         updateRevisionRow(item.lastRevisionDate)
@@ -1299,7 +1328,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tvDateExpiryLabel.visibility = View.GONE
                     binding.tvDateExpiry.visibility = View.GONE
                     binding.expiryProgressBlock.visibility = View.GONE
-                    // Ревизия в истории — скрываем
                     binding.tvDateRevisionLabel.visibility = View.GONE
                     binding.tvDateRevision.visibility = View.GONE
 
@@ -1337,6 +1365,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     private fun showImageSourceDialog() {
+        if (isGuestMode()) return
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(this)
             .setTitle("Выберите источник фото")
