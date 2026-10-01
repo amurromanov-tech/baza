@@ -75,7 +75,6 @@ class SelectUserActivity : AppCompatActivity() {
 
         setupClickListeners()
 
-        // Скачиваем users.json с Диска
         loadUsers()
 
         Logger.log(TAG, "=== SelectUserActivity onCreate FINISHED ===")
