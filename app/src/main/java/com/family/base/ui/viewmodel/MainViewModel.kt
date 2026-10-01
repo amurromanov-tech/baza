@@ -879,16 +879,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ВОЗВРАТ ИЗ АРХИВА (с учётом originalId)
     // ============================================================
-    /**
-     * Возвращает предмет из архива.
-     *
-     * Логика:
-     * - Если originalId == null → обычный возврат (isArchived = 0).
-     * - Если originalId != null (это «часть» от частичного списания):
-     *     - Ищем оригинал по originalId.
-     *     - Если оригинал найден и активен → quantity += count, архивную запись удаляем.
-     *     - Если оригинал не найден → создаём новую активную запись в исходной папке.
-     */
     fun unarchiveItem(itemId: String) {
         viewModelScope.launch {
             try {
@@ -901,7 +891,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val originalId = item.originalId
 
                 if (originalId == null) {
-                    // ===== Обычный возврат =====
                     db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
                     enqueue("item", itemId, "update", item.parentId)
 
@@ -916,11 +905,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     Logger.log(TAG, "unarchiveItem: обычный возврат $itemId")
                 } else {
-                    // ===== Возврат «части» от частичного списания =====
                     val original = db.itemDao().getItemById(originalId)
 
                     if (original != null && !original.isArchived) {
-                        // Оригинал есть → возвращаем количество
                         val newQty = original.quantity + item.quantity
                         val updatedOriginal = original.copy(
                             quantity = newQty,
@@ -931,11 +918,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         db.itemDao().updateItem(updatedOriginal)
                         enqueue("item", originalId, "update", original.parentId)
 
-                        // Архивную запись удаляем
                         db.itemDao().deleteItemById(itemId)
                         enqueue("item", itemId, "delete", item.parentId)
 
-                        // Фото архивной записи уже не нужно — удаляем локально
                         val appContext = getApplication<Application>().applicationContext
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
@@ -950,7 +935,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                         Logger.log(TAG, "unarchiveItem: часть возвращена в оригинал $originalId, qty=$newQty")
                     } else {
-                        // Оригинала нет → создаём новую активную запись
                         val restored = item.copy(
                             isArchived = false,
                             archivedReason = null,
@@ -995,21 +979,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off → архив)
     // ============================================================
-    /**
-     * Списывает [count] штук предмета.
-     *
-     * ВАЖНО (новая логика):
-     * - ЛЮБОЕ списание идёт в архив отдельной записью с originalId.
-     * - Если count < quantity:
-     *     - Создаётся новая запись (isArchived = true, quantity = count, originalId = itemId).
-     *     - У оригинала quantity -= count.
-     *     - Если quantity оригинала стало 0 → оригинал удаляется.
-     * - Если count == quantity:
-     *     - Оригинал архивируется (как раньше), originalId = null.
-     *
-     * @param reason ключ причины (используется всегда).
-     * @param note комментарий (опционально).
-     */
     fun writeOffItem(itemId: String, count: Int, reason: String?, note: String?) {
         Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
         viewModelScope.launch {
@@ -1035,7 +1004,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val reasonKey = reason ?: "used_up"
 
                 if (count == item.quantity) {
-                    // ===== Списываем ВСЁ → оригинал в архив =====
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
                     enqueue("item", itemId, "update", item.parentId)
 
@@ -1051,10 +1019,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
 
                 } else {
-                    // ===== ЧАСТИЧНОЕ СПИСАНИЕ → создаём архивную запись =====
                     val newId = java.util.UUID.randomUUID().toString()
 
-                    // 1. Создаём архивную «часть»
                     val archivedPart = item.copy(
                         id = newId,
                         quantity = count,
@@ -1063,7 +1029,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         archivedDate = now,
                         archivedNote = note,
                         originalId = itemId,
-                        imageUrl = null,        // фото загрузится отдельно
+                        imageUrl = null,
                         addedDate = now,
                         updatedDate = now,
                         updatedBy = currentUser
@@ -1075,7 +1041,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     enqueue("item", newId, "create", item.parentId)
 
-                    // 2. Копируем фото (если есть)
                     try {
                         val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
                         if (localFile != null && localFile.exists()) {
@@ -1087,10 +1052,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         Logger.log(TAG, "writeOffItem: failed to copy photo: ${e.message}")
                     }
 
-                    // 3. Уменьшаем оригинал
                     val newQty = item.quantity - count
                     if (newQty == 0) {
-                        // Оригинал стал пустым — удаляем
                         withContext(Dispatchers.IO) {
                             db.itemDao().deleteItemById(itemId)
                         }
@@ -1108,7 +1071,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                         Logger.log(TAG, "writeOffItem: partial → original deleted (qty was $count)")
                     } else {
-                        // Оригинал ещё жив
                         val updatedOriginal = item.copy(
                             quantity = newQty,
                             updatedDate = now,
@@ -1147,6 +1109,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "Error writing off item: ${e.message}", e)
             }
         }
+    }
+
+    // ============================================================
+    // РЕВИЗИЯ ПРЕДМЕТА
+    // ============================================================
+    /**
+     * Отмечает ревизию предмета:
+     * - ставит lastRevisionDate = now
+     * - пишет запись в историю (action = "revision")
+     * - отправляет в синк (updateItemOnDisk)
+     */
+    fun markRevision(itemId: String) {
+        Logger.log(TAG, "markRevision: itemId=$itemId")
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    Logger.log(TAG, "markRevision: item not found: $itemId")
+                    return@launch
+                }
+
+                val now = System.currentTimeMillis()
+                val updated = item.copy(
+                    lastRevisionDate = now,
+                    updatedDate = now,
+                    updatedBy = currentUser
+                )
+                updated.computeExpiryFields()
+                db.itemDao().updateItem(updated)
+                enqueue("item", itemId, "update", item.parentId)
+
+                val history = HistoryEntry(
+                    itemId = itemId,
+                    action = "revision",
+                    oldValue = item.lastRevisionDate?.let { formatDateShort(it) } ?: "не проводилась",
+                    newValue = formatDateShort(now),
+                    changedBy = currentUser
+                )
+                db.historyDao().insertEntry(history)
+
+                Logger.log(TAG, "markRevision: done for $itemId")
+
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error marking revision: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun formatDateShort(timestamp: Long): String {
+        val sdf = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
+        return sdf.format(java.util.Date(timestamp))
     }
 
     // ============================================================
