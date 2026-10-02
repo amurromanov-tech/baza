@@ -656,18 +656,27 @@ class CatalogRepository(private val db: AppDatabase) {
      * Gson парсит число как Double → "1.790348763104E12" → toLongOrNull() → null.
      *
      * Стало: `(raw as? Number)?.toLong()` — корректно обрабатывает и Long, и Double.
+     *
+     * 🆕 БАЗА6 этап 3 (Вариант A): возвращаем Long? вместо Long.
+     *
+     *   null  — сеть/DNS упали, состояние Диска неизвестно (НЕ трогать localModified).
+     *   0L    — файл .last_modified отсутствует или пуст (первый запуск).
+     *   > 0   — реальный timestamp последнего изменения на Диске.
+     *
+     * Это позволяет MainViewModel отличить «на Диске точно ничего не менялось»
+     * от «мы не знаем, что там — сеть упала».
      */
-    suspend fun getDiskLastModified(): Long {
+    suspend fun getDiskLastModified(): Long? {
         return withContext(Dispatchers.IO) {
             try {
                 if (isDnsBlocked()) {
                     Logger.log(TAG, "getDiskLastModified: DNS blocked")
-                    return@withContext 0L
+                    return@withContext null
                 }
                 val auth = getAuthHeader()
                 if (auth == null) {
                     Logger.log(TAG, "No auth header, cannot get last_modified")
-                    return@withContext 0L
+                    return@withContext null
                 }
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -675,20 +684,25 @@ class CatalogRepository(private val db: AppDatabase) {
 
                 val response = api.getDiskResources(auth, path)
                 if (!response.isSuccessful) {
-                    return@withContext 0L
+                    // Файла нет (404) — вернём 0L. Прочие ошибки — null.
+                    if (response.code() == 404) {
+                        return@withContext 0L
+                    }
+                    return@withContext null
                 }
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (!urlResponse.isSuccessful) {
-                    return@withContext 0L
+                    return@withContext null
                 }
-                val href = urlResponse.body()?.href ?: return@withContext 0L
+                val href = urlResponse.body()?.href ?: return@withContext null
                 val downloadResponse = api.downloadFile(href)
                 if (!downloadResponse.isSuccessful) {
-                    return@withContext 0L
+                    return@withContext null
                 }
                 val json = downloadResponse.body()?.string()
                 if (json.isNullOrEmpty()) {
+                    // Файл есть, но пуст — считаем «нет данных».
                     return@withContext 0L
                 }
 
@@ -710,10 +724,10 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsError(e)) {
                     noteDnsFailure()
                     Logger.log(TAG, "DNS failure in getDiskLastModified: ${e.message}")
-                    return@withContext 0L
+                    return@withContext null
                 }
                 Logger.log(TAG, "Error getDiskLastModified: ${e.message}")
-                0L
+                null
             }
         }
     }
