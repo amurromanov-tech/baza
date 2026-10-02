@@ -1,17 +1,35 @@
 package com.family.base.ui
 
-import android.content.Intent
 import android.os.Bundle
+import android.view.LayoutInflater
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.family.base.data.TokenStorage
+import com.family.base.data.local.AppDatabase
+import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityDiagnosticsBinding
 import com.family.base.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class DiagnosticsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDiagnosticsBinding
     private val TAG = "DiagnosticsActivity"
+
+    private lateinit var tokenStorage: TokenStorage
+    private lateinit var repository: CatalogRepository
+
+    private var isUploading = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,6 +43,9 @@ class DiagnosticsActivity : AppCompatActivity() {
             Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
             return
         }
+
+        tokenStorage = TokenStorage(this)
+        repository = CatalogRepository(AppDatabase.getInstance(this))
 
         binding.btnBack.setOnClickListener { finish() }
 
@@ -44,10 +65,10 @@ class DiagnosticsActivity : AppCompatActivity() {
             showClearLogsDialog()
         }
 
-        // ===== ОТПРАВКА ЛОГОВ =====
+        // ===== ОТПРАВКА ЛОГОВ НА ЯНДЕКС.ДИСК =====
         binding.btnSendLog.setOnClickListener {
             Logger.log(TAG, "Send log clicked")
-            sendLogs()
+            uploadLogsToDisk()
         }
 
         Logger.log(TAG, "=== DiagnosticsActivity onCreate FINISHED ===")
@@ -97,40 +118,168 @@ class DiagnosticsActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ОТПРАВКА ЛОГОВ
+    // 🆕 ОТПРАВКА ЛОГОВ НА ЯНДЕКС.ДИСК (папка /logs/)
     // ============================================================
 
-    private fun sendLogs() {
-        Logger.log(TAG, "Sending logs...")
-        try {
-            val logsDir = Logger.getLogsDirectory()
-            if (logsDir == null || !logsDir.exists()) {
-                Toast.makeText(this, "Логи не найдены", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val logFiles = logsDir.listFiles()
-            if (logFiles.isNullOrEmpty()) {
-                Toast.makeText(this, "Логи не найдены", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_EMAIL, arrayOf("support@familybase.com"))
-                putExtra(Intent.EXTRA_SUBJECT, "Логи приложения БАЗА")
-                val uris = logFiles.map { file ->
-                    android.net.Uri.fromFile(file)
-                }
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-            }
-
-            startActivity(Intent.createChooser(intent, "Отправить логи"))
-            Logger.log(TAG, "Logs sent successfully")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error sending logs", e)
-            Toast.makeText(this, "Ошибка отправки логов", Toast.LENGTH_SHORT).show()
+    private fun uploadLogsToDisk() {
+        if (isUploading) {
+            Toast.makeText(this, "Отправка уже идёт…", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        // Проверяем авторизацию
+        val token = tokenStorage.getAccessToken()
+        if (token.isNullOrEmpty()) {
+            Toast.makeText(this, "Требуется вход в аккаунт Яндекс", Toast.LENGTH_LONG).show()
+            Logger.log(TAG, "uploadLogsToDisk: no token, aborting")
+            return
+        }
+
+        // Собираем логи
+        val logsDir = Logger.getLogsDirectory()
+        if (logsDir == null || !logsDir.exists()) {
+            Toast.makeText(this, "Папка логов не найдена", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val logFiles = logsDir.listFiles { file ->
+            file.isFile && file.name.endsWith(".txt")
+        }?.sortedBy { it.lastModified() }
+
+        if (logFiles.isNullOrEmpty()) {
+            Toast.makeText(this, "Логи не найдены", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isUploading = true
+        val dialog = createProgressDialog("Отправка логов на Яндекс.Диск…")
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                // Формируем содержимое: склейка всех файлов с разделителями
+                val merged = withContext(Dispatchers.IO) {
+                    buildMergedLogContent(logFiles)
+                }
+
+                // Формируем имя файла: baza_log_{user}_{yyyy-MM-dd_HH-mm-ss}.txt
+                val user = sanitizeFileName(
+                    tokenStorage.getCurrentUser()
+                        ?: tokenStorage.getUserDisplayName()
+                        ?: "User"
+                )
+                val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
+                    .format(Date())
+                val fileName = "baza_log_${user}_${timestamp}.txt"
+
+                Logger.log(TAG, "uploadLogsToDisk: uploading '$fileName' (${merged.size} chars from ${logFiles.size} files)")
+
+                val success = repository.uploadLogToDisk(fileName, merged.toByteArray(Charsets.UTF_8))
+
+                dialog.dismiss()
+                isUploading = false
+
+                if (success) {
+                    Toast.makeText(
+                        this@DiagnosticsActivity,
+                        "✅ Логи отправлены в /logs/$fileName",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    Logger.log(TAG, "uploadLogsToDisk: success ($fileName)")
+                } else {
+                    Toast.makeText(
+                        this@DiagnosticsActivity,
+                        "❌ Не удалось отправить логи. Проверьте сеть.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    Logger.log(TAG, "uploadLogsToDisk: failed")
+                }
+            } catch (e: Exception) {
+                dialog.dismiss()
+                isUploading = false
+                Logger.log(TAG, "uploadLogsToDisk error: ${e.message}", e)
+                Toast.makeText(
+                    this@DiagnosticsActivity,
+                    "Ошибка: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    /**
+     * Склеивает все файлы логов в один String с разделителями.
+     * Формат:
+     *   ============================================================
+     *   FILE: baza_log.txt (12345 bytes, modified 2026-10-02 16:30:00)
+     *   ============================================================
+     *   <содержимое>
+     *
+     *   (пустая строка)
+     */
+    private fun buildMergedLogContent(files: List<File>): String {
+        val sb = StringBuilder()
+        val df = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+        sb.append("BAZA — merged log dump\n")
+        sb.append("Generated: ${df.format(Date())}\n")
+        sb.append("User: ${tokenStorage.getCurrentUser() ?: "—"}\n")
+        sb.append("Files: ${files.size}\n")
+        sb.append("============================================================\n\n")
+
+        for (file in files) {
+            sb.append("============================================================\n")
+            sb.append("FILE: ${file.name} (${file.length()} bytes, modified ${df.format(Date(file.lastModified()))})\n")
+            sb.append("============================================================\n")
+            try {
+                val content = file.readText(Charsets.UTF_8)
+                sb.append(content)
+                if (!content.endsWith("\n")) sb.append("\n")
+            } catch (e: Exception) {
+                sb.append("[ERROR reading file: ${e.message}]\n")
+            }
+            sb.append("\n")
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Убираем из имени файла всё, что не буквы/цифры/._-
+     * (кириллица остаётся, т.к. Яндекс.Диск её принимает)
+     */
+    private fun sanitizeFileName(name: String): String {
+        return name.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
+    }
+
+    /**
+     * Диалог с ProgressBar + текстом. Без deprecated ProgressDialog.
+     */
+    private fun createProgressDialog(message: String): AlertDialog {
+        val view = LayoutInflater.from(this).inflate(
+            android.R.layout.activity_list_item, null
+        )
+        // Простой кастомный layout: ProgressBar + TextView
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setPadding(48, 48, 48, 48)
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val progress = ProgressBar(this).apply {
+            isIndeterminate = true
+        }
+        val text = TextView(this).apply {
+            this.text = message
+            setPadding(32, 0, 0, 0)
+            textSize = 16f
+        }
+        container.addView(progress)
+        container.addView(text)
+
+        return AlertDialog.Builder(this)
+            .setView(container)
+            .setCancelable(false)
+            .create()
     }
 
     override fun onDestroy() {
