@@ -1,7 +1,6 @@
 package com.family.base.ui
 
 import android.os.Bundle
-import android.view.LayoutInflater
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -209,13 +208,6 @@ class DiagnosticsActivity : AppCompatActivity() {
 
     /**
      * Склеивает все файлы логов в один String с разделителями.
-     * Формат:
-     *   ============================================================
-     *   FILE: baza_log.txt (12345 bytes, modified 2026-10-02 16:30:00)
-     *   ============================================================
-     *   <содержимое>
-     *
-     *   (пустая строка)
      */
     private fun buildMergedLogContent(files: List<File>): String {
         val sb = StringBuilder()
@@ -246,17 +238,15 @@ class DiagnosticsActivity : AppCompatActivity() {
 
     /**
      * Убираем из имени файла всё, что не буквы/цифры/._-
-     * (кириллица остаётся, т.к. Яндекс.Диск её принимает)
      */
     private fun sanitizeFileName(name: String): String {
         return name.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
     }
 
     /**
-     * Диалог с ProgressBar + текстом. Без deprecated ProgressDialog.
+     * Диалог с ProgressBar + текстом.
      */
     private fun createProgressDialog(message: String): AlertDialog {
-        // Простой кастомный layout: ProgressBar + TextView
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             setPadding(48, 48, 48, 48)
@@ -275,7 +265,7 @@ class DiagnosticsActivity : AppCompatActivity() {
 
         return AlertDialog.Builder(this)
             .setView(container)
-            .cancelable(false)
+            .setCancelable(false)
             .create()
     }
 
