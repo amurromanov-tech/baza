@@ -363,7 +363,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *
      * 🆕 БАЗА6 этап 2 — инкрементальный синк.
      * 🆕 БАЗА6 этап 3 — Вариант В (ранний выход при DNS-блоке)
-     *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось).
+     *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось)
+     *                  + Вариант A (getDiskLastModified → Long?, различаем «нет файла» и «сеть упала»).
      *
      * Порядок:
      *   1. Проверка токена/сети.
@@ -372,10 +373,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *        → download + merge + фото. Upload не нужен (заливать нечего).
      *   4. ИНАЧЕ (БД есть):
      *        a) pendingCount > 0 → uploadAll + processPending + обновить localLastModified.
-     *        b) diskLastModified > localLastModified → download + merge.
-     *           Иначе — пропускаем скачивание (на Диске ничего не менялось).
+     *        b) diskLastModified != null && > localLastModified → download + merge.
+     *           Иначе — пропускаем скачивание.
      *        c) 🆕 ФОТО — только если pending > 0 ИЛИ diskModified > localModified.
-     *           Если ничего не менялось нигде — фото тоже не менялись → SKIP.
+     *           Если diskLastModified == null (сеть упала) — НЕ пропускаем фото-циклы,
+     *           потому что не знаем, менялось ли что-то на Диске.
+     *           (Но при DNS-блоке фото-циклы всё равно выйдут мгновенно — Вариант В.)
      *
      * Локальная БД = источник истины для upload.
      * Диск = источник истины для download при первом запуске.
@@ -423,14 +426,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
                 val pendingCount = withContext(Dispatchers.IO) { syncQueueDao.getPendingCount() }
                 val localLastModified = withContext(Dispatchers.IO) { syncInfoDao.getLastModified() }
-                val diskLastModified = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                // 🆕 Вариант A: Long? — null означает «не смогли прочитать (сеть)»
+                val diskLastModified: Long? = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
 
                 val isFirstLaunch = (localItemsCount == 0 && localFoldersCount == 0)
 
                 Logger.log(
                     TAG,
                     "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount, " +
-                        "pending=$pendingCount, localModified=$localLastModified, diskModified=$diskLastModified, " +
+                        "pending=$pendingCount, localModified=$localLastModified, " +
+                        "diskModified=${diskLastModified ?: "null (network error)"}, " +
                         "isFirstLaunch=$isFirstLaunch"
                 )
 
@@ -459,7 +464,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     syncFolderImages()
 
                     // Обновляем localLastModified — мы теперь синхронизированы с Диском
-                    if (diskLastModified > 0) {
+                    if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
 
@@ -491,7 +496,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // Обновляем localLastModified — мы только что писали на Диск
                     if (uploadedItems || uploadedFolders) {
                         val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                        if (fresh > 0) {
+                        if (fresh != null && fresh > 0L) {
                             withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
                         }
                     }
@@ -501,8 +506,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // ============================================================
                 // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
+                //
+                // 🆕 Вариант A: diskLastModified == null означает «не знаем».
+                // В этом случае download НЕ запускаем (сеть всё равно мертва),
+                // но и localLastModified не трогаем.
                 // ============================================================
-                val shouldDownload = diskLastModified > localLastModified
+                val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
                 if (shouldDownload) {
                     Logger.log(TAG, "syncWithDisk: disk modified ($diskLastModified) > local ($localLastModified) → download")
@@ -519,24 +528,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     downloadedCount = downloadResult.folders.size + downloadResult.items.size
 
                     // Обновляем localLastModified
-                    if (diskLastModified > 0) {
+                    if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
                 } else {
-                    Logger.log(TAG, "syncWithDisk: disk not modified since last sync → SKIP download")
+                    if (diskLastModified == null) {
+                        Logger.log(TAG, "syncWithDisk: disk modified unknown (network error) → SKIP download")
+                    } else {
+                        Logger.log(TAG, "syncWithDisk: disk not modified since last sync → SKIP download")
+                    }
                 }
 
                 // ============================================================
                 // ШАГ 4c: ФОТО
                 //
                 // 🆕 БАЗА6 этап 3 (Приоритет 1):
-                // Если pending=0 И diskModified <= localModified — значит, ничего
-                // не менялось ни локально, ни на Диске. Фото тоже не менялись.
-                // Не гоняем 98+6 HTTP-запросов на проверку существования фото.
+                // Если pending=0 И diskModified != null И diskModified <= localModified —
+                // значит, ничего не менялось ни локально, ни на Диске.
+                // Фото тоже не менялись → SKIP 98+6 HTTP-запросов.
                 //
-                // Это убирает ~100 секунд на холодном синке, когда всё уже синхронизировано.
+                // 🆕 Вариант A: если diskLastModified == null (сеть упала) —
+                // мы НЕ знаем состояние Диска, поэтому фото-циклы НЕ пропускаем.
+                // (При DNS-блоке они всё равно выйдут мгновенно — Вариант В.)
                 // ============================================================
-                val nothingChanged = (pendingCount == 0) && (diskLastModified <= localLastModified)
+                val nothingChanged = (pendingCount == 0)
+                    && (diskLastModified != null)
+                    && (diskLastModified <= localLastModified)
 
                 if (nothingChanged) {
                     Logger.log(TAG, "syncWithDisk: nothing changed → SKIP all photo checks")
@@ -873,6 +890,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *
      * Если скачивание items/folders упало ИЛИ с Диска пришло пусто,
      * а локально данные есть — НЕ ТРОГАЕМ локальные данные.
+     *
+     * 🆕 Вариант A: getDiskLastModified() теперь Long?.
+     * null означает «не смогли прочитать» → localLastModified не трогаем.
      */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
@@ -919,9 +939,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // ---------- LAST_MODIFIED ----------
+            // 🆕 Вариант A: если getDiskLastModified() == null — сеть упала,
+            // НЕ трогаем localLastModified.
             val diskLastModified = repository.getDiskLastModified()
             val localLastModified = syncInfoDao.getLastModified()
-            if (diskLastModified > localLastModified) syncInfoDao.setLastModified(diskLastModified)
+            if (diskLastModified != null && diskLastModified > localLastModified) {
+                syncInfoDao.setLastModified(diskLastModified)
+            }
         }
     }
 
