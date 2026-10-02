@@ -361,16 +361,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Основной метод синхронизации.
      *
-     * 🆕 БАЗА6 этап 2 — инкрементальный синк.
-     * 🆕 БАЗА6 этап 3 — Вариант В (ранний выход при DNS-блоке)
-     *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось)
-     *                  + Вариант A (getDiskLastModified → Long?, различаем «нет файла» и «сеть упала»).
-     * 🆕 БАЗА6 этап 3 (fix) — 5 фиксов:
-     *   2) ensureValidToken — не false при сетевой ошибке;
-     *   3a) сначала isInternetAvailable(), потом ensureValidToken();
-     *   3b) syncProgress.postValue(null) во всех early-return ветках;
-     *   4) uploadUnsynced* — чекаем только items/folders с пустым imageUrl/iconUrl;
-     *   5) syncFolderImages — фильтр по iconUrl (не качаем иконки для папок без иконок).
+     * 🆕 БАЗА6 этап 3 — Вариант В, Приоритет 1, Вариант A, 5 фиксов,
+     *                  + диагностические логи для поиска «невидимых» задержек.
      */
     fun syncWithDisk() {
         applicationScope.launch {
@@ -391,7 +383,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (token.isNullOrEmpty()) {
                     Logger.log(TAG, "syncWithDisk: no token, skipping sync")
                     syncStatus.postValue(SyncStatus.OFFLINE)
-                    syncProgress.postValue(null)   // 🆕 фикс 3b
+                    syncProgress.postValue(null)
                     return@launch
                 }
 
@@ -401,14 +393,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     checkPendingChanges()
                     notifySyncResult("Нет сети. Изменения сохранены локально")
-                    syncProgress.postValue(null)   // 🆕 фикс 3b
+                    syncProgress.postValue(null)
                     return@launch
                 }
 
                 if (!ensureValidToken()) {
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     notifySyncResult("Не удалось авторизоваться")
-                    syncProgress.postValue(null)   // 🆕 фикс 3b
+                    syncProgress.postValue(null)
                     return@launch
                 }
 
@@ -417,12 +409,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // ============================================================
                 // ШАГ 2: СБОР МЕТРИК
                 // ============================================================
+                val tMetrics = System.currentTimeMillis()
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
                 val pendingCount = withContext(Dispatchers.IO) { syncQueueDao.getPendingCount() }
                 val localLastModified = withContext(Dispatchers.IO) { syncInfoDao.getLastModified() }
-                // 🆕 Вариант A: Long? — null означает «не смогли прочитать (сеть)»
                 val diskLastModified: Long? = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                Logger.log(TAG, "TIMING: collect metrics took ${System.currentTimeMillis() - tMetrics}ms")
 
                 val isFirstLaunch = (localItemsCount == 0 && localFoldersCount == 0)
 
@@ -454,11 +447,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     downloadedCount = downloadResult.folders.size + downloadResult.items.size
 
-                    // Фото: только скачивание (заливать нечего)
+                    val tPhotoBlock = System.currentTimeMillis()
                     syncImages()
                     syncFolderImages()
+                    Logger.log(TAG, "TIMING: photo block (first launch) took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
-                    // Обновляем localLastModified — мы теперь синхронизированы с Диском
                     if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
@@ -482,11 +475,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
 
+                    val tUploadItems = System.currentTimeMillis()
                     val uploadedItems = repository.uploadAllItemsToDisk()
+                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk took ${System.currentTimeMillis() - tUploadItems}ms")
+
+                    val tUploadFolders = System.currentTimeMillis()
                     val uploadedFolders = repository.uploadAllFoldersToDisk()
+                    Logger.log(TAG, "TIMING: uploadAllFoldersToDisk took ${System.currentTimeMillis() - tUploadFolders}ms")
+
                     Logger.log(TAG, "syncWithDisk: full upload items=$uploadedItems, folders=$uploadedFolders")
 
+                    val tPending = System.currentTimeMillis()
                     uploadedCount = processPendingChangesInternal()
+                    Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
 
                     // Обновляем localLastModified — мы только что писали на Диск
                     if (uploadedItems || uploadedFolders) {
@@ -501,8 +502,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // ============================================================
                 // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
-                //
-                // 🆕 Вариант A: diskLastModified == null означает «не знаем».
                 // ============================================================
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
@@ -510,17 +509,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "syncWithDisk: disk modified ($diskLastModified) > local ($localLastModified) → download")
 
                     syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
+
+                    val tDownload = System.currentTimeMillis()
                     val downloadResult = repository.downloadDataFromDisk()
+                    Logger.log(TAG, "TIMING: downloadDataFromDisk took ${System.currentTimeMillis() - tDownload}ms")
+
                     syncProgress.postValue(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
+
+                    val tMerge = System.currentTimeMillis()
                     mergeData(
                         downloadResult.folders,
                         downloadResult.items,
                         downloadResult.foldersError,
                         downloadResult.itemsError
                     )
+                    Logger.log(TAG, "TIMING: mergeData took ${System.currentTimeMillis() - tMerge}ms")
+
                     downloadedCount = downloadResult.folders.size + downloadResult.items.size
 
-                    // Обновляем localLastModified
                     if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
@@ -534,26 +540,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // ============================================================
                 // ШАГ 4c: ФОТО
-                //
-                // 🆕 Приоритет 1: если pending=0 И diskModified != null И <= local —
-                // ничего не менялось → SKIP всех фото-проверок.
-                //
-                // 🆕 Вариант A: если diskLastModified == null (сеть упала) —
-                // не пропускаем фото-циклы (не знаем состояние Диска).
                 // ============================================================
                 val nothingChanged = (pendingCount == 0)
                     && (diskLastModified != null)
                     && (diskLastModified <= localLastModified)
 
+                val tPhotoBlock = System.currentTimeMillis()
                 if (nothingChanged) {
                     Logger.log(TAG, "syncWithDisk: nothing changed → SKIP all photo checks")
                 } else {
+                    val tUploadImages = System.currentTimeMillis()
                     uploadUnsyncedImages()
-                    uploadUnsyncedFolderImages()
+                    Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - tUploadImages}ms")
 
+                    val tUploadFolderImages = System.currentTimeMillis()
+                    uploadUnsyncedFolderImages()
+                    Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
+
+                    val tSyncImages = System.currentTimeMillis()
                     syncImages()
+                    Logger.log(TAG, "TIMING: syncImages took ${System.currentTimeMillis() - tSyncImages}ms")
+
+                    val tSyncFolderImages = System.currentTimeMillis()
                     syncFolderImages()
+                    Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
                 }
+                Logger.log(TAG, "TIMING: photo block total took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
                 finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
 
@@ -580,7 +592,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         localItemsCount: Int,
         localFoldersCount: Int
     ) {
+        val tPendingCount = System.currentTimeMillis()
         val pendingCount = syncQueueDao.getPendingCount()
+        Logger.log(TAG, "TIMING: finalizeSync getPendingCount took ${System.currentTimeMillis() - tPendingCount}ms")
+
         if (pendingCount > 0) {
             syncStatus.postValue(SyncStatus.PENDING)
         } else {
@@ -596,7 +611,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         )
 
+        val tLoad = System.currentTimeMillis()
         loadContents()
+        Logger.log(TAG, "TIMING: finalizeSync loadContents took ${System.currentTimeMillis() - tLoad}ms")
 
         val elapsed = System.currentTimeMillis() - startedAt
         Logger.log(
@@ -627,11 +644,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============================================================
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
-    //
-    // 🆕 Фикс 4: чекаем только те items, у которых imageUrl пустой.
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
-        // 🆕 Вариант В: ранний выход при DNS-блоке.
+        val t0 = System.currentTimeMillis()
+
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "uploadUnsyncedImages: network blocked, skipping")
             return
@@ -640,7 +656,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        // 🆕 Фикс 4: только items с локальным фото И пустым imageUrl.
         val itemsWithLocalPhoto = allItems.filter { item ->
             if (!item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -649,6 +664,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (itemsWithLocalPhoto.isEmpty()) {
             Logger.log(TAG, "No new local photos to upload (all have imageUrl)")
+            Logger.log(TAG, "TIMING: uploadUnsyncedImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
@@ -659,17 +675,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val total = itemsWithLocalPhoto.size
 
         itemsWithLocalPhoto.forEachIndexed { index, item ->
-            // 🛡️ Проверяем, есть ли уже фото на Диске
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
             if (existsOnDisk == true) {
-                // Фото уже на Диске — восстановим ссылку в БД.
                 val updated = item.copy(imageUrl = "images/${item.id}.jpg")
                 withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
                 skippedCount++
                 return@forEachIndexed
             }
 
-            // Фото НЕТ на Диске (или не смогли проверить) — заливаем.
             syncProgress.postValue(
                 SyncProgress(
                     SyncPhase.UPLOADING_PHOTOS,
@@ -686,7 +699,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val bytes = localFile.readBytes()
                 val success = repository.uploadItemImage(item.id, bytes)
                 if (success) {
-                    // uploadItemImage сам обновит imageUrl в БД
                     uploadedCount++
                 }
             } catch (e: Exception) {
@@ -694,15 +706,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         Logger.log(TAG, "Images upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
+        Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - t0}ms")
     }
 
     // ============================================================
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
-    //
-    // 🆕 Фикс 4: чекаем только те folders, у которых iconUrl пустой.
     // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
-        // 🆕 Вариант В: ранний выход при DNS-блоке.
+        val t0 = System.currentTimeMillis()
+
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "uploadUnsyncedFolderImages: network blocked, skipping")
             return
@@ -711,7 +723,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
-        // 🆕 Фикс 4: только folders с локальной иконкой И пустым iconUrl.
         val foldersWithLocalIcon = allFolders.filter { folder ->
             if (!folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
@@ -720,6 +731,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (foldersWithLocalIcon.isEmpty()) {
             Logger.log(TAG, "No new local folder icons to upload (all have iconUrl)")
+            Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
@@ -763,10 +775,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         Logger.log(TAG, "Folder icons upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
+        Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - t0}ms")
     }
 
     private suspend fun syncImages() {
-        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncImages: network blocked, skipping")
             return
@@ -815,15 +827,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 🆕 Фикс 5: синхронизация иконок папок.
-     *
-     * Фильтруем только те папки, у которых iconUrl НЕ пустой
-     * (значит, иконка должна быть на Диске) И локально её нет.
-     *
-     * Это убирает 60+ HTTP-запросов на папки, у которых иконки
-     * в принципе нет (iconUrl пустой → качать нечего).
      */
     private suspend fun syncFolderImages() {
-        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncFolderImages: network blocked, skipping")
             return
@@ -832,7 +837,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
         val foldersToDownload = allFolders.filter { folder ->
-            // 🆕 Фикс 5: если iconUrl пустой — иконки нет нигде, качать нечего.
             if (folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f == null || !f.exists() || f.length() == 0L
@@ -878,9 +882,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "Folder images downloaded: $downloadedCount")
     }
 
-    /**
-     * 🆕 Фикс 2: при сетевой ошибке возвращаем true, не false.
-     */
     private suspend fun ensureValidToken(): Boolean {
         val token = tokenStorage.getAccessToken() ?: return false
         val auth = "OAuth $token"
@@ -895,15 +896,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else -> true
             }
         } catch (e: Exception) {
-            // 🆕 Фикс 2: сетевая ошибка ≠ невалидный токен.
             Logger.log(TAG, "ensureValidToken: network error, assuming token ok: ${e.message}")
             true
         }
     }
 
-    /**
-     * 🛡️ БЕЗОПАСНОЕ слияние данных с Диска.
-     */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -914,7 +911,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
 
-            // ---------- ITEMS ----------
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
             } else if (diskItems.isEmpty() && localItemsCount > 0) {
@@ -931,7 +927,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // ---------- FOLDERS ----------
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
             } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
@@ -948,7 +943,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // ---------- LAST_MODIFIED ----------
             val diskLastModified = repository.getDiskLastModified()
             val localLastModified = syncInfoDao.getLastModified()
             if (diskLastModified != null && diskLastModified > localLastModified) {
@@ -982,10 +976,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
 
+                val tEntry = System.currentTimeMillis()
                 when (entry.entityType) {
                     "folder" -> applyFolderChange(entry)
                     "item" -> applyItemChange(entry)
                 }
+                Logger.log(TAG, "TIMING: applyChange for ${entry.entityType}/${entry.entityId} took ${System.currentTimeMillis() - tEntry}ms")
+
                 syncQueueDao.removeFromQueueById(entry.id)
                 successCount++
             } catch (e: Exception) {
@@ -1026,14 +1023,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun applyItemChange(entry: SyncQueueEntity) {
         when (entry.action) {
             "create" -> db.itemDao().getItemById(entry.entityId)?.let {
+                val t1 = System.currentTimeMillis()
                 repository.createItemOnDisk(it)
+                Logger.log(TAG, "TIMING: applyItemChange createItemOnDisk took ${System.currentTimeMillis() - t1}ms")
+
+                val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(it)
+                Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
             }
             "update" -> db.itemDao().getItemById(entry.entityId)?.let {
                 val fresh = it.copy(updatedDate = System.currentTimeMillis())
                 db.itemDao().updateItem(fresh)
+
+                val t1 = System.currentTimeMillis()
                 repository.updateItemOnDisk(fresh)
+                Logger.log(TAG, "TIMING: applyItemChange updateItemOnDisk took ${System.currentTimeMillis() - t1}ms")
+
+                val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(fresh)
+                Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
             }
             "delete" -> repository.deleteItemOnDisk(entry.entityId)
         }
