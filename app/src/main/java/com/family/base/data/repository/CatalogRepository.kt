@@ -927,4 +927,64 @@ class CatalogRepository(private val db: AppDatabase) {
             }
         }
     }
+
+    // ============================================================
+    // 🆕 ЗАГРУЗКА ЛОГОВ НА ЯНДЕКС.ДИСК (папка /logs/)
+    // ============================================================
+    /**
+     * Заливает текстовый файл лога в папку $rootPath/logs/.
+     *
+     * @param fileName имя файла (например, "baza_log_Алексей_2026-10-02_16-30-00.txt")
+     * @param bytes    содержимое файла в UTF-8
+     * @return true, если загрузка успешна
+     */
+    suspend fun uploadLogToDisk(fileName: String, bytes: ByteArray): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "uploadLogToDisk: DNS blocked")
+                    return@withContext false
+                }
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "uploadLogToDisk: no auth header")
+                    return@withContext false
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val logsFolder = "$rootPath/logs"
+                val path = "$logsFolder/$fileName"
+
+                createFolderIfNotExists(logsFolder)
+
+                val body = bytes.toRequestBody("text/plain".toMediaType())
+                val urlResponse = api.getUploadUrl(auth, path, true)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadLogToDisk: failed to get upload URL, code=${urlResponse.code()}")
+                    return@withContext false
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "uploadLogToDisk: href is null")
+                    return@withContext false
+                }
+                val uploadResponse = api.uploadFileToUrl(href, body)
+                if (uploadResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadLogToDisk: uploaded $path (${bytes.size} bytes)")
+                    return@withContext true
+                } else {
+                    Logger.log(TAG, "uploadLogToDisk: upload failed, code=${uploadResponse.code()}")
+                    return@withContext false
+                }
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "uploadLogToDisk: DNS failure: ${e.message}")
+                    return@withContext false
+                }
+                Logger.log(TAG, "uploadLogToDisk error: ${e.message}")
+                false
+            }
+        }
+    }
 }
