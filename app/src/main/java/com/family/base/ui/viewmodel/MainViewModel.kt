@@ -114,7 +114,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val allFoldersCount = db.folderDao().getAllFolders().size
             val orphans = db.itemDao().getOrphanItems()
             if (orphans.isNotEmpty() && allFoldersCount > 0) {
-                // 🛡️ Только если папки ЕСТЬ — иначе orphan'ы нормальны (пустая база)
                 Logger.log(TAG, "Found ${orphans.size} orphan items, moving to root")
                 db.itemDao().fixOrphanItems()
                 Logger.log(TAG, "Orphan items fixed")
@@ -361,8 +360,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Основной метод синхронизации.
      *
-     * 🆕 БАЗА6 этап 3 — Вариант В, Приоритет 1, Вариант A, 5 фиксов,
-     *                  + диагностические логи для поиска «невидимых» задержек.
+     * 🆕 БАЗА6 этап 3 (Фикс 6):
+     *   - applyItemChange больше НЕ вызывает createItemOnDisk/updateItemOnDisk
+     *     (items.json залит в ШАГ 4a и ещё раз — финально в конце ШАГ 4a).
+     *   - Добавлен финальный uploadAllItemsToDisk после processPendingChangesInternal,
+     *     чтобы сохранить новые imageUrl в JSON.
+     *   - CatalogRepository.uploadItemImage больше НЕ триггерит updateItemOnDisk.
+     *
+     * Эффект: 3 × uploadAllItemsToDisk → 2. Экономия ~8-15 сек.
      */
     fun syncWithDisk() {
         applicationScope.launch {
@@ -378,7 +383,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 syncProgress.postValue(SyncProgress(SyncPhase.SENDING, 0, 1, "Проверка авторизации…"))
 
-                // 🛡️ ЗАЩИТА: без токена синк бессмыслен и опасен
                 val token = tokenStorage.getAccessToken()
                 if (token.isNullOrEmpty()) {
                     Logger.log(TAG, "syncWithDisk: no token, skipping sync")
@@ -387,7 +391,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // 🆕 Фикс 3a: сначала проверяем сеть (мгновенно), потом токен (может ждать таймаут).
                 if (!isInternetAvailable()) {
                     Logger.log(TAG, "syncWithDisk: no internet, skipping sync")
                     syncStatus.postValue(SyncStatus.OFFLINE)
@@ -462,6 +465,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // ============================================================
                 // ШАГ 4a: ЕСТЬ ЛОКАЛЬНЫЕ ИЗМЕНЕНИЯ → ПОЛНЫЙ UPLOAD
+                //
+                // 🆕 Фикс 6: здесь — uploadAllItemsToDisk #1 (до pending)
+                // и uploadAllItemsToDisk #2 (финальный, после pending + фото).
                 // ============================================================
                 if (pendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
@@ -477,7 +483,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     val tUploadItems = System.currentTimeMillis()
                     val uploadedItems = repository.uploadAllItemsToDisk()
-                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk took ${System.currentTimeMillis() - tUploadItems}ms")
+                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk #1 took ${System.currentTimeMillis() - tUploadItems}ms")
 
                     val tUploadFolders = System.currentTimeMillis()
                     val uploadedFolders = repository.uploadAllFoldersToDisk()
@@ -489,11 +495,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     uploadedCount = processPendingChangesInternal()
                     Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
 
-                    // Обновляем localLastModified — мы только что писали на Диск
-                    if (uploadedItems || uploadedFolders) {
-                        val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                        if (fresh != null && fresh > 0L) {
-                            withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
+                    // 🆕 Фикс 6: финальный upload — обновляем items.json с новыми imageUrl.
+                    // Нужен, если:
+                    //   - были pending-изменения (uploadedCount > 0) → возможно, фото залились
+                    //   - или uploadAllItemsToDisk #1 упал (uploadedItems = false), надо повторить
+                    if (uploadedCount > 0 || !uploadedItems) {
+                        val tFinal = System.currentTimeMillis()
+                        val refreshed = repository.uploadAllItemsToDisk()
+                        Logger.log(TAG, "TIMING: uploadAllItemsToDisk #2 (final) took ${System.currentTimeMillis() - tFinal}ms, success=$refreshed")
+                        if (refreshed) {
+                            val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                            if (fresh != null && fresh > 0L) {
+                                withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
+                            }
+                        }
+                    } else {
+                        // Ничего не менялось в pending — обновляем только lastModified от #1
+                        if (uploadedItems || uploadedFolders) {
+                            val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                            if (fresh != null && fresh > 0L) {
+                                withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
+                            }
                         }
                     }
                 } else {
@@ -583,7 +605,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Финализация синка: статус, прогресс, лог, сообщение пользователю.
+     * Финализация синка.
      */
     private suspend fun finalizeSync(
         uploadedCount: Int,
@@ -826,7 +848,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 🆕 Фикс 5: синхронизация иконок папок.
+     * 🆕 Фикс 5: синхронизация иконок папок (только с iconUrl).
      */
     private suspend fun syncFolderImages() {
         if (!repository.isNetworkAvailable()) {
@@ -1020,13 +1042,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 🆕 Фикс 6: убраны createItemOnDisk / updateItemOnDisk.
+     *
+     * Раньше:
+     *   "create" → createItemOnDisk (uploadAllItemsToDisk) + uploadItemImageIfExists
+     *   "update" → updateItemOnDisk (uploadAllItemsToDisk) + uploadItemImageIfExists
+     *
+     * Теперь: items.json уже залит в ШАГ 4a (#1), а финальный upload (#2)
+     * в конце ШАГ 4a подхватит новые imageUrl. Здесь только фото.
+     */
     private suspend fun applyItemChange(entry: SyncQueueEntity) {
         when (entry.action) {
             "create" -> db.itemDao().getItemById(entry.entityId)?.let {
-                val t1 = System.currentTimeMillis()
-                repository.createItemOnDisk(it)
-                Logger.log(TAG, "TIMING: applyItemChange createItemOnDisk took ${System.currentTimeMillis() - t1}ms")
-
+                // 🆕 Фикс 6: createItemOnDisk не нужен — предмет уже в items.json.
                 val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(it)
                 Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
@@ -1034,11 +1063,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "update" -> db.itemDao().getItemById(entry.entityId)?.let {
                 val fresh = it.copy(updatedDate = System.currentTimeMillis())
                 db.itemDao().updateItem(fresh)
-
-                val t1 = System.currentTimeMillis()
-                repository.updateItemOnDisk(fresh)
-                Logger.log(TAG, "TIMING: applyItemChange updateItemOnDisk took ${System.currentTimeMillis() - t1}ms")
-
+                // 🆕 Фикс 6: updateItemOnDisk не нужен — финальный upload зальёт items.json.
                 val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(fresh)
                 Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
