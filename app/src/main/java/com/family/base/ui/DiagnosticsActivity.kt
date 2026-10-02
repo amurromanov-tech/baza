@@ -172,7 +172,7 @@ class DiagnosticsActivity : AppCompatActivity() {
                     .format(Date())
                 val fileName = "baza_log_${user}_${timestamp}.txt"
 
-                Logger.log(TAG, "uploadLogsToDisk: uploading '$fileName' (${merged.size} chars from ${logFiles.size} files)")
+                Logger.log(TAG, "uploadLogsToDisk: uploading '$fileName' (${merged.length} chars from ${logFiles.size} files)")
 
                 val success = repository.uploadLogToDisk(fileName, merged.toByteArray(Charsets.UTF_8))
 
@@ -256,9 +256,6 @@ class DiagnosticsActivity : AppCompatActivity() {
      * Диалог с ProgressBar + текстом. Без deprecated ProgressDialog.
      */
     private fun createProgressDialog(message: String): AlertDialog {
-        val view = LayoutInflater.from(this).inflate(
-            android.R.layout.activity_list_item, null
-        )
         // Простой кастомный layout: ProgressBar + TextView
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
@@ -278,7 +275,7 @@ class DiagnosticsActivity : AppCompatActivity() {
 
         return AlertDialog.Builder(this)
             .setView(container)
-            .setCancelable(false)
+            .cancelable(false)
             .create()
     }
 
