@@ -99,7 +99,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Отправить логи разработчику через email или мессенджер"
+            android:text="Загрузить все логи на Яндекс.Диск в папку /logs"
             android:textSize="12sp"
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="24dp" />
