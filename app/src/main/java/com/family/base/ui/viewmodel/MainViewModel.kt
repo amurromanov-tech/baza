@@ -365,11 +365,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * 🆕 БАЗА6 этап 3 — Вариант В (ранний выход при DNS-блоке)
      *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось)
      *                  + Вариант A (getDiskLastModified → Long?, различаем «нет файла» и «сеть упала»).
-     * 🆕 БАЗА6 этап 3 (fix) — 4 фикса:
+     * 🆕 БАЗА6 этап 3 (fix) — 5 фиксов:
      *   2) ensureValidToken — не false при сетевой ошибке;
      *   3a) сначала isInternetAvailable(), потом ensureValidToken();
      *   3b) syncProgress.postValue(null) во всех early-return ветках;
-     *   4) uploadUnsynced* — чекаем только items/folders с пустым imageUrl/iconUrl.
+     *   4) uploadUnsynced* — чекаем только items/folders с пустым imageUrl/iconUrl;
+     *   5) syncFolderImages — фильтр по iconUrl (не качаем иконки для папок без иконок).
      */
     fun syncWithDisk() {
         applicationScope.launch {
@@ -628,8 +629,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
     //
     // 🆕 Фикс 4: чекаем только те items, у которых imageUrl пустой.
-    // Если imageUrl уже стоит — считаем, что фото на Диске есть,
-    // и не тратим HTTP-запрос на проверку.
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
         // 🆕 Вариант В: ранний выход при DNS-блоке.
@@ -814,6 +813,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadContents()
     }
 
+    /**
+     * 🆕 Фикс 5: синхронизация иконок папок.
+     *
+     * Фильтруем только те папки, у которых iconUrl НЕ пустой
+     * (значит, иконка должна быть на Диске) И локально её нет.
+     *
+     * Это убирает 60+ HTTP-запросов на папки, у которых иконки
+     * в принципе нет (iconUrl пустой → качать нечего).
+     */
     private suspend fun syncFolderImages() {
         // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
@@ -824,11 +832,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
         val foldersToDownload = allFolders.filter { folder ->
+            // 🆕 Фикс 5: если iconUrl пустой — иконки нет нигде, качать нечего.
+            if (folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f == null || !f.exists() || f.length() == 0L
         }
 
-        if (foldersToDownload.isEmpty()) return
+        if (foldersToDownload.isEmpty()) {
+            Logger.log(TAG, "No folder images to download")
+            return
+        }
+
+        Logger.log(TAG, "Checking ${foldersToDownload.size} folder icons to download")
 
         var downloadedCount = 0
         val total = foldersToDownload.size
@@ -865,12 +880,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 🆕 Фикс 2: при сетевой ошибке возвращаем true, не false.
-     *
-     * Логика: если сеть упала — мы не знаем, живой ли токен.
-     * Считать это «невалидным токеном» неправильно (пользователь видит
-     * «Не удалось авторизоваться», хотя токен в порядке).
-     * Пусть синк продолжит и упадёт дальше — там будут более осмысленные
-     * сообщения (или DNS-защита сработает).
      */
     private suspend fun ensureValidToken(): Boolean {
         val token = tokenStorage.getAccessToken() ?: return false
@@ -894,11 +903,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 🛡️ БЕЗОПАСНОЕ слияние данных с Диска.
-     *
-     * Если скачивание items/folders упало ИЛИ с Диска пришло пусто,
-     * а локально данные есть — НЕ ТРОГАЕМ локальные данные.
-     *
-     * 🆕 Вариант A: getDiskLastModified() теперь Long?.
      */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
