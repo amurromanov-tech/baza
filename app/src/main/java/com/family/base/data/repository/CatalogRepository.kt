@@ -48,6 +48,15 @@ class CatalogRepository(private val db: AppDatabase) {
         dnsFailureUntil = System.currentTimeMillis() + 60_000L
     }
 
+    /**
+     * 🆕 БАЗА6 этап 3 (Вариант В): публичный флаг доступности сети.
+     *
+     * MainViewModel использует его для раннего выхода из фото-циклов:
+     * если DNS уже заблокирован — не идём по 98 предметам + 6 иконкам,
+     * а сразу выходим. Это убирает лишние итерации и спам в логе.
+     */
+    fun isNetworkAvailable(): Boolean = !isDnsBlocked()
+
     private fun getFolderPath(): String {
         if (folderPathCache != null) return folderPathCache!!
         val folderName = try {
