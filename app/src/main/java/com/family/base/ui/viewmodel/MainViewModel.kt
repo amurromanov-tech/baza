@@ -365,23 +365,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * 🆕 БАЗА6 этап 3 — Вариант В (ранний выход при DNS-блоке)
      *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось)
      *                  + Вариант A (getDiskLastModified → Long?, различаем «нет файла» и «сеть упала»).
-     *
-     * Порядок:
-     *   1. Проверка токена/сети.
-     *   2. Собираем метрики: local counts, pendingCount, lastModified (local/disk), isFirstLaunch.
-     *   3. ЕСЛИ БД ПУСТАЯ (первый запуск):
-     *        → download + merge + фото. Upload не нужен (заливать нечего).
-     *   4. ИНАЧЕ (БД есть):
-     *        a) pendingCount > 0 → uploadAll + processPending + обновить localLastModified.
-     *        b) diskLastModified != null && > localLastModified → download + merge.
-     *           Иначе — пропускаем скачивание.
-     *        c) 🆕 ФОТО — только если pending > 0 ИЛИ diskModified > localModified.
-     *           Если diskLastModified == null (сеть упала) — НЕ пропускаем фото-циклы,
-     *           потому что не знаем, менялось ли что-то на Диске.
-     *           (Но при DNS-блоке фото-циклы всё равно выйдут мгновенно — Вариант В.)
-     *
-     * Локальная БД = источник истины для upload.
-     * Диск = источник истины для download при первом запуске.
+     * 🆕 БАЗА6 этап 3 (fix) — 4 фикса:
+     *   2) ensureValidToken — не false при сетевой ошибке;
+     *   3a) сначала isInternetAvailable(), потом ensureValidToken();
+     *   3b) syncProgress.postValue(null) во всех early-return ветках;
+     *   4) uploadUnsynced* — чекаем только items/folders с пустым imageUrl/iconUrl.
      */
     fun syncWithDisk() {
         applicationScope.launch {
@@ -401,19 +389,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val token = tokenStorage.getAccessToken()
                 if (token.isNullOrEmpty()) {
                     Logger.log(TAG, "syncWithDisk: no token, skipping sync")
-                    syncMutex.unlock()
+                    syncStatus.postValue(SyncStatus.OFFLINE)
+                    syncProgress.postValue(null)   // 🆕 фикс 3b
+                    return@launch
+                }
+
+                // 🆕 Фикс 3a: сначала проверяем сеть (мгновенно), потом токен (может ждать таймаут).
+                if (!isInternetAvailable()) {
+                    Logger.log(TAG, "syncWithDisk: no internet, skipping sync")
+                    syncStatus.postValue(SyncStatus.OFFLINE)
+                    checkPendingChanges()
+                    notifySyncResult("Нет сети. Изменения сохранены локально")
+                    syncProgress.postValue(null)   // 🆕 фикс 3b
                     return@launch
                 }
 
                 if (!ensureValidToken()) {
                     syncStatus.postValue(SyncStatus.OFFLINE)
                     notifySyncResult("Не удалось авторизоваться")
-                    return@launch
-                }
-                if (!isInternetAvailable()) {
-                    syncStatus.postValue(SyncStatus.OFFLINE)
-                    checkPendingChanges()
-                    notifySyncResult("Нет сети. Изменения сохранены локально")
+                    syncProgress.postValue(null)   // 🆕 фикс 3b
                     return@launch
                 }
 
@@ -508,8 +502,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
                 //
                 // 🆕 Вариант A: diskLastModified == null означает «не знаем».
-                // В этом случае download НЕ запускаем (сеть всё равно мертва),
-                // но и localLastModified не трогаем.
                 // ============================================================
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
@@ -542,14 +534,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // ============================================================
                 // ШАГ 4c: ФОТО
                 //
-                // 🆕 БАЗА6 этап 3 (Приоритет 1):
-                // Если pending=0 И diskModified != null И diskModified <= localModified —
-                // значит, ничего не менялось ни локально, ни на Диске.
-                // Фото тоже не менялись → SKIP 98+6 HTTP-запросов.
+                // 🆕 Приоритет 1: если pending=0 И diskModified != null И <= local —
+                // ничего не менялось → SKIP всех фото-проверок.
                 //
                 // 🆕 Вариант A: если diskLastModified == null (сеть упала) —
-                // мы НЕ знаем состояние Диска, поэтому фото-циклы НЕ пропускаем.
-                // (При DNS-блоке они всё равно выйдут мгновенно — Вариант В.)
+                // не пропускаем фото-циклы (не знаем состояние Диска).
                 // ============================================================
                 val nothingChanged = (pendingCount == 0)
                     && (diskLastModified != null)
@@ -637,9 +626,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============================================================
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
+    //
+    // 🆕 Фикс 4: чекаем только те items, у которых imageUrl пустой.
+    // Если imageUrl уже стоит — считаем, что фото на Диске есть,
+    // и не тратим HTTP-запрос на проверку.
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
-        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "uploadUnsyncedImages: network blocked, skipping")
             return
@@ -648,18 +641,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        // Собираем items, у которых ЕСТЬ локальный файл фото
+        // 🆕 Фикс 4: только items с локальным фото И пустым imageUrl.
         val itemsWithLocalPhoto = allItems.filter { item ->
+            if (!item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
             f != null && f.exists() && f.length() > 0L
         }
 
         if (itemsWithLocalPhoto.isEmpty()) {
-            Logger.log(TAG, "No local photos to check")
+            Logger.log(TAG, "No new local photos to upload (all have imageUrl)")
             return
         }
 
-        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} local photos against disk")
+        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} new local photos against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -669,11 +663,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // 🛡️ Проверяем, есть ли уже фото на Диске
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
             if (existsOnDisk == true) {
-                // Фото уже на Диске. Если imageUrl в БД пустой — восстановим ссылку.
-                if (item.imageUrl.isNullOrEmpty()) {
-                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                }
+                // Фото уже на Диске — восстановим ссылку в БД.
+                val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -707,9 +699,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============================================================
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
+    //
+    // 🆕 Фикс 4: чекаем только те folders, у которых iconUrl пустой.
     // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
-        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "uploadUnsyncedFolderImages: network blocked, skipping")
             return
@@ -718,17 +712,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
+        // 🆕 Фикс 4: только folders с локальной иконкой И пустым iconUrl.
         val foldersWithLocalIcon = allFolders.filter { folder ->
+            if (!folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f != null && f.exists() && f.length() > 0L
         }
 
         if (foldersWithLocalIcon.isEmpty()) {
-            Logger.log(TAG, "No local folder icons to check")
+            Logger.log(TAG, "No new local folder icons to upload (all have iconUrl)")
             return
         }
 
-        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} local folder icons against disk")
+        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} new local folder icons against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -737,10 +733,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         foldersWithLocalIcon.forEachIndexed { index, folder ->
             val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
             if (existsOnDisk == true) {
-                if (folder.iconUrl.isNullOrEmpty()) {
-                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                }
+                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -773,7 +767,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun syncImages() {
-        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncImages: network blocked, skipping")
             return
@@ -821,7 +815,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun syncFolderImages() {
-        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        // 🆕 Вариант В: ранний выход при DNS-блоке.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncFolderImages: network blocked, skipping")
             return
@@ -869,6 +863,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "Folder images downloaded: $downloadedCount")
     }
 
+    /**
+     * 🆕 Фикс 2: при сетевой ошибке возвращаем true, не false.
+     *
+     * Логика: если сеть упала — мы не знаем, живой ли токен.
+     * Считать это «невалидным токеном» неправильно (пользователь видит
+     * «Не удалось авторизоваться», хотя токен в порядке).
+     * Пусть синк продолжит и упадёт дальше — там будут более осмысленные
+     * сообщения (или DNS-защита сработает).
+     */
     private suspend fun ensureValidToken(): Boolean {
         val token = tokenStorage.getAccessToken() ?: return false
         val auth = "OAuth $token"
@@ -882,7 +885,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 401, 403 -> tokenStorage.refreshAccessToken() != null
                 else -> true
             }
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            // 🆕 Фикс 2: сетевая ошибка ≠ невалидный токен.
+            Logger.log(TAG, "ensureValidToken: network error, assuming token ok: ${e.message}")
+            true
+        }
     }
 
     /**
@@ -892,7 +899,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * а локально данные есть — НЕ ТРОГАЕМ локальные данные.
      *
      * 🆕 Вариант A: getDiskLastModified() теперь Long?.
-     * null означает «не смогли прочитать» → localLastModified не трогаем.
      */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
@@ -939,8 +945,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // ---------- LAST_MODIFIED ----------
-            // 🆕 Вариант A: если getDiskLastModified() == null — сеть упала,
-            // НЕ трогаем localLastModified.
             val diskLastModified = repository.getDiskLastModified()
             val localLastModified = syncInfoDao.getLastModified()
             if (diskLastModified != null && diskLastModified > localLastModified) {
