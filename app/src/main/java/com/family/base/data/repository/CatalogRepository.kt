@@ -355,10 +355,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
     /**
      * 🆕 БАЗА6 этап 2: обновление .last_modified.
-     *
-     * Было: delete → upload (если upload упал — файл на Диске потерян).
-     * Стало: сначала получаем upload URL, потом заливаем с overwrite=true.
-     * Если что-то падает — старый файл остаётся целым.
      */
     private suspend fun updateLastModifiedWithToken(): Boolean {
         if (isDnsBlocked()) {
@@ -381,7 +377,6 @@ class CatalogRepository(private val db: AppDatabase) {
             val json = "{\"timestamp\": $timestamp}"
             val body = json.toRequestBody("application/json".toMediaType())
 
-            // 🆕 НЕ удаляем старый .last_modified. Загружаем с overwrite=true.
             val urlResponse = api.getUploadUrl(auth, path, true)
             if (!urlResponse.isSuccessful) {
                 Logger.log(TAG, "Failed to get upload URL for last_modified: code=${urlResponse.code()}")
@@ -484,13 +479,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ОПЕРАЦИИ С ПАПКАМИ НА ДИСКЕ
     // ============================================================
 
-    /**
-     * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список папок целиком.
-     * Локальная БД = источник истины.
-     *
-     * 🆕 БАЗА6 этап 2: возвращаем true, ТОЛЬКО если и folders.json,
-     * и .last_modified успешно обновились. Иначе — false.
-     */
     suspend fun uploadAllFoldersToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -516,13 +504,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * 🛡️ ЗАЩИТА: заливаем ВЕСЬ локальный список предметов целиком.
-     * Локальная БД = источник истины.
-     *
-     * 🆕 БАЗА6 этап 2: возвращаем true, ТОЛЬКО если и items.json,
-     * и .last_modified успешно обновились.
-     */
     suspend fun uploadAllItemsToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -650,21 +631,11 @@ class CatalogRepository(private val db: AppDatabase) {
     // ============================================================
 
     /**
-     * 🆕 БАЗА6 этап 2: фикс парсинга timestamp.
+     * 🆕 Вариант A: возвращаем Long? вместо Long.
      *
-     * Было: `jsonObject["timestamp"]?.toString()?.toLongOrNull()`
-     * Gson парсит число как Double → "1.790348763104E12" → toLongOrNull() → null.
-     *
-     * Стало: `(raw as? Number)?.toLong()` — корректно обрабатывает и Long, и Double.
-     *
-     * 🆕 БАЗА6 этап 3 (Вариант A): возвращаем Long? вместо Long.
-     *
-     *   null  — сеть/DNS упали, состояние Диска неизвестно (НЕ трогать localModified).
+     *   null  — сеть/DNS упали (НЕ трогать localModified).
      *   0L    — файл .last_modified отсутствует или пуст (первый запуск).
-     *   > 0   — реальный timestamp последнего изменения на Диске.
-     *
-     * Это позволяет MainViewModel отличить «на Диске точно ничего не менялось»
-     * от «мы не знаем, что там — сеть упала».
+     *   > 0   — реальный timestamp.
      */
     suspend fun getDiskLastModified(): Long? {
         return withContext(Dispatchers.IO) {
@@ -684,7 +655,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
                 val response = api.getDiskResources(auth, path)
                 if (!response.isSuccessful) {
-                    // Файла нет (404) — вернём 0L. Прочие ошибки — null.
                     if (response.code() == 404) {
                         return@withContext 0L
                     }
@@ -702,13 +672,11 @@ class CatalogRepository(private val db: AppDatabase) {
                 }
                 val json = downloadResponse.body()?.string()
                 if (json.isNullOrEmpty()) {
-                    // Файл есть, но пуст — считаем «нет данных».
                     return@withContext 0L
                 }
 
                 val jsonObject = gson.fromJson(json, Map::class.java)
                 val raw = jsonObject["timestamp"]
-                // 🆕 Фикс: Gson отдаёт Double для чисел → аккуратно конвертируем
                 val timestamp: Long? = when (raw) {
                     is Number -> raw.toLong()
                     is String -> raw.toLongOrNull()
@@ -732,10 +700,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Результат скачивания с Диска: данные + флаг ошибки.
-     * 🛡️ Позволяет отличить «на Диске реально пусто» от «сеть/токен упал».
-     */
     data class DownloadResult(
         val folders: List<FolderEntity>,
         val items: List<ItemEntity>,
@@ -826,10 +790,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ПРОВЕРКА: ЕСТЬ ЛИ ФОТО ПРЕДМЕТА НА ДИСКЕ
     // ============================================================
 
-    /**
-     * 200 → есть, 404 → нет, иначе → null (неизвестно).
-     * 🆕 при DNS-фейле возвращаем null, не пытаемся снова 98 раз.
-     */
     suspend fun itemImageExistsOnDisk(itemId: String): Boolean? {
         return withContext(Dispatchers.IO) {
             try {
@@ -849,15 +809,11 @@ class CatalogRepository(private val db: AppDatabase) {
                     noteDnsFailure()
                     return@withContext null
                 }
-                // Не логируем каждый — их 98 штук
                 null
             }
         }
     }
 
-    /**
-     * 🆕 при DNS-фейле возвращаем null, не спамим.
-     */
     suspend fun folderImageExistsOnDisk(folderId: String): Boolean? {
         return withContext(Dispatchers.IO) {
             try {
@@ -886,6 +842,16 @@ class CatalogRepository(private val db: AppDatabase) {
     // ИЗОБРАЖЕНИЯ ПРЕДМЕТОВ
     // ============================================================
 
+    /**
+     * 🆕 БАЗА6 этап 3 (Фикс 6): убран updateItemOnDisk.
+     *
+     * Раньше после успешной заливки фото мы вызывали updateItemOnDisk,
+     * что внутри делало uploadAllItemsToDisk() — то есть заливало весь
+     * items.json (104 предмета) из-за одного нового imageUrl.
+     *
+     * Теперь items.json обновляется ОДИН РАЗ в конце синка
+     * (final uploadAllItemsToDisk в syncWithDisk, ШАГ 4a).
+     */
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -911,7 +877,8 @@ class CatalogRepository(private val db: AppDatabase) {
                     item?.let {
                         val updated = it.copy(imageUrl = "images/$itemId.jpg")
                         db.itemDao().updateItem(updated)
-                        updateItemOnDisk(updated)
+                        // 🆕 Фикс 6: НЕ вызываем updateItemOnDisk.
+                        // items.json будет обновлён финальным upload в syncWithDisk.
                     }
                     return@withContext true
                 } else {
