@@ -362,6 +362,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Основной метод синхронизации.
      *
      * 🆕 БАЗА6 этап 2 — инкрементальный синк.
+     * 🆕 БАЗА6 этап 3 — Вариант В (ранний выход при DNS-блоке)
+     *                  + Приоритет 1 (пропуск фото-циклов, если ничего не менялось).
      *
      * Порядок:
      *   1. Проверка токена/сети.
@@ -372,7 +374,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *        a) pendingCount > 0 → uploadAll + processPending + обновить localLastModified.
      *        b) diskLastModified > localLastModified → download + merge.
      *           Иначе — пропускаем скачивание (на Диске ничего не менялось).
-     *        c) фото (умные проверки — как было).
+     *        c) 🆕 ФОТО — только если pending > 0 ИЛИ diskModified > localModified.
+     *           Если ничего не менялось нигде — фото тоже не менялись → SKIP.
      *
      * Локальная БД = источник истины для upload.
      * Диск = источник истины для download при первом запуске.
@@ -524,13 +527,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // ============================================================
-                // ШАГ 4c: ФОТО (умные проверки — как было)
+                // ШАГ 4c: ФОТО
+                //
+                // 🆕 БАЗА6 этап 3 (Приоритет 1):
+                // Если pending=0 И diskModified <= localModified — значит, ничего
+                // не менялось ни локально, ни на Диске. Фото тоже не менялись.
+                // Не гоняем 98+6 HTTP-запросов на проверку существования фото.
+                //
+                // Это убирает ~100 секунд на холодном синке, когда всё уже синхронизировано.
                 // ============================================================
-                uploadUnsyncedImages()
-                uploadUnsyncedFolderImages()
+                val nothingChanged = (pendingCount == 0) && (diskLastModified <= localLastModified)
 
-                syncImages()
-                syncFolderImages()
+                if (nothingChanged) {
+                    Logger.log(TAG, "syncWithDisk: nothing changed → SKIP all photo checks")
+                } else {
+                    uploadUnsyncedImages()
+                    uploadUnsyncedFolderImages()
+
+                    syncImages()
+                    syncFolderImages()
+                }
 
                 finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
 
@@ -607,8 +623,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
         // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
-        // Если сеть уже помечена как недоступная — не идём по 98 предметам,
-        // а сразу выходим. Это убирает лишние итерации и спам в логе.
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "uploadUnsyncedImages: network blocked, skipping")
             return
