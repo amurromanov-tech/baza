@@ -606,6 +606,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
     // ============================================================
     private suspend fun uploadUnsyncedImages() {
+        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        // Если сеть уже помечена как недоступная — не идём по 98 предметам,
+        // а сразу выходим. Это убирает лишние итерации и спам в логе.
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "uploadUnsyncedImages: network blocked, skipping")
+            return
+        }
+
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
@@ -670,6 +678,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
     // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
+        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "uploadUnsyncedFolderImages: network blocked, skipping")
+            return
+        }
+
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
@@ -728,6 +742,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun syncImages() {
+        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "syncImages: network blocked, skipping")
+            return
+        }
+
         val appContext = getApplication<Application>().applicationContext
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
         val itemsToDownload = allItems.filter { item ->
@@ -770,6 +790,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun syncFolderImages() {
+        // 🆕 БАЗА6 этап 3 (Вариант В): ранний выход при DNS-блоке.
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "syncFolderImages: network blocked, skipping")
+            return
+        }
+
         val appContext = getApplication<Application>().applicationContext
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
         val foldersToDownload = allFolders.filter { folder ->
