@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -141,6 +142,7 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         setupListeners()
+        setupQuantitySteppers()
         initSubtypeDropdowns()
         updateSubtypesForAuto(currentAutoType)
         updateSubtypesForManual(currentManualType)
@@ -206,6 +208,53 @@ class AddItemActivity : AppCompatActivity() {
             }
             selectedManualSubtype = null
             updateSubtypesForManual(currentManualType)
+        }
+    }
+
+    // ============================================================
+    // 🆕 СТЕППЕРЫ КОЛИЧЕСТВА
+    // ============================================================
+    /**
+     * Навешивает обработчики на кнопки [−] и [+] для auto- и manual-режимов.
+     *
+     * Логика:
+     *   −  → max(1, current - 1)
+     *   +  → current + 1 (без лимита сверху)
+     *
+     * Ручной ввод в EditText не ограничиваем жёстко — валидация
+     * происходит при сохранении (coerceAtLeast(1)).
+     */
+    private fun setupQuantitySteppers() {
+        setupStepper(binding.btnAutoQuantityMinus, binding.btnAutoQuantityPlus, binding.etAutoQuantity)
+        setupStepper(binding.btnManualQuantityMinus, binding.btnManualQuantityPlus, binding.etManualQuantity)
+    }
+
+    private fun setupStepper(minusBtn: View, plusBtn: View, field: EditText) {
+        minusBtn.setOnClickListener {
+            val current = field.text.toString().toIntOrNull() ?: 1
+            val next = (current - 1).coerceAtLeast(1)
+            field.setText(next.toString())
+            field.setSelection(field.text.length)
+        }
+
+        plusBtn.setOnClickListener {
+            val current = field.text.toString().toIntOrNull() ?: 1
+            val next = current + 1
+            field.setText(next.toString())
+            field.setSelection(field.text.length)
+        }
+
+        // Защита от ввода «0» / пусто при потере фокуса.
+        // Не блокируем жёстко во время ввода — только нормализуем по blur.
+        field.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                val current = field.text.toString().toIntOrNull() ?: 1
+                val normalized = current.coerceAtLeast(1)
+                if (field.text.toString() != normalized.toString()) {
+                    field.setText(normalized.toString())
+                    field.setSelection(field.text.length)
+                }
+            }
         }
     }
 
@@ -435,10 +484,11 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
+        // 🆕 Количество: парсим, при пусто/0/мусоре → 1, минимум 1.
         val quantity = if (isAutoMode) {
-            binding.etAutoQuantity.text.toString().toIntOrNull() ?: 1
+            (binding.etAutoQuantity.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1)
         } else {
-            binding.etManualQuantity.text.toString().toIntOrNull() ?: 1
+            (binding.etManualQuantity.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1)
         }
 
         val description = if (isAutoMode) {
@@ -473,7 +523,7 @@ class AddItemActivity : AppCompatActivity() {
         binding.tilAutoSubtype.error = null
         binding.tilManualSubtype.error = null
 
-        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype, hasImage=${imageBytes != null}")
+        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, hasImage=${imageBytes != null}")
 
         val newItemId = UUID.randomUUID().toString()
 
