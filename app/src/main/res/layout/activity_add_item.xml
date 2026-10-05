@@ -87,57 +87,61 @@
                     android:layout_height="wrap_content" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- ===== КОЛИЧЕСТВО (auto) — степпер ===== -->
-            <TextView
-                android:layout_width="wrap_content"
+            <!-- ===== КОЛИЧЕСТВО (auto) — TextInputLayout + [−][+] ===== -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilAutoQuantity"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Количество"
-                android:textSize="14sp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="4dp" />
+                android:hint="Количество">
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="8dp">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAutoQuantityMinus"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="56dp"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minWidth="0dp"
-                    android:paddingLeft="0dp"
-                    android:paddingRight="0dp"
-                    android:text="−"
-                    android:textSize="20sp" />
+                    android:minHeight="56dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                <EditText
-                    android:id="@+id/etAutoQuantity"
-                    android:layout_width="80dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:inputType="number"
-                    android:maxLength="6"
-                    android:text="1"
-                    android:textSize="16sp"
-                    android:importantForAutofill="no" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAutoQuantityMinus"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:padding="0dp"
+                        android:text="−"
+                        android:textSize="22sp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAutoQuantityPlus"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="56dp"
-                    android:layout_height="wrap_content"
-                    android:minWidth="0dp"
-                    android:paddingLeft="0dp"
-                    android:paddingRight="0dp"
-                    android:text="+"
-                    android:textSize="20sp" />
-            </LinearLayout>
+                    <EditText
+                        android:id="@+id/etAutoQuantity"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@null"
+                        android:gravity="center"
+                        android:inputType="number"
+                        android:maxLength="6"
+                        android:text="1"
+                        android:textSize="16sp"
+                        android:importantForAutofill="no" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAutoQuantityPlus"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:padding="0dp"
+                        android:text="+"
+                        android:textSize="22sp" />
+                </LinearLayout>
+            </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
@@ -276,57 +280,61 @@
                     android:inputType="numberDecimal" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- ===== КОЛИЧЕСТВО (manual) — степпер, ПОСЛЕ цены ===== -->
-            <TextView
-                android:layout_width="wrap_content"
+            <!-- ===== КОЛИЧЕСТВО (manual) — TextInputLayout + [−][+], после цены ===== -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilManualQuantity"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Количество"
-                android:textSize="14sp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="4dp" />
+                android:hint="Количество">
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="8dp">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnManualQuantityMinus"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="56dp"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minWidth="0dp"
-                    android:paddingLeft="0dp"
-                    android:paddingRight="0dp"
-                    android:text="−"
-                    android:textSize="20sp" />
+                    android:minHeight="56dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                <EditText
-                    android:id="@+id/etManualQuantity"
-                    android:layout_width="80dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:inputType="number"
-                    android:maxLength="6"
-                    android:text="1"
-                    android:textSize="16sp"
-                    android:importantForAutofill="no" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnManualQuantityMinus"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:padding="0dp"
+                        android:text="−"
+                        android:textSize="22sp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnManualQuantityPlus"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="56dp"
-                    android:layout_height="wrap_content"
-                    android:minWidth="0dp"
-                    android:paddingLeft="0dp"
-                    android:paddingRight="0dp"
-                    android:text="+"
-                    android:textSize="20sp" />
-            </LinearLayout>
+                    <EditText
+                        android:id="@+id/etManualQuantity"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@null"
+                        android:gravity="center"
+                        android:inputType="number"
+                        android:maxLength="6"
+                        android:text="1"
+                        android:textSize="16sp"
+                        android:importantForAutofill="no" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnManualQuantityPlus"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:padding="0dp"
+                        android:text="+"
+                        android:textSize="22sp" />
+                </LinearLayout>
+            </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
