@@ -125,6 +125,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhotoPlaceholder.visibility = View.GONE
                 binding.photoOverlay.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
+                Toast.makeText(this, "Фото выбрано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error picking image", e)
                 Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
@@ -144,6 +145,7 @@ class ItemDetailActivity : AppCompatActivity() {
                 binding.ivPhotoPlaceholder.visibility = View.GONE
                 binding.photoOverlay.visibility = View.VISIBLE
                 binding.btnAddPhoto.visibility = View.GONE
+                Toast.makeText(this, "Фото сделано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error processing camera photo", e)
                 Toast.makeText(this, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
@@ -245,7 +247,30 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.toolbar.setNavigationOnClickListener { finish() }
+
+        // ===== ТАП ПО ФОТО: fullscreen (как раньше) =====
         binding.ivPhoto.setOnClickListener { openFullscreenPhoto() }
+
+        // ===== 🆕 ДОЛГИЙ ТАП ПО ФОТО: меню действий =====
+        binding.ivPhoto.setOnLongClickListener {
+            if (isGuestMode()) return@setOnLongClickListener true
+            showPhotoActionsDialog(hasPhoto = true)
+            true
+        }
+
+        // ===== 🆕 ТАП ПО PLACEHOLDER (фото нет): сразу диалог выбора источника =====
+        binding.ivPhotoPlaceholder.setOnClickListener {
+            if (isGuestMode()) return@setOnClickListener
+            showImageSourceDialog()
+        }
+
+        // ===== 🆕 ДОЛГИЙ ТАП ПО PLACEHOLDER: то же меню (без «удалить») =====
+        binding.ivPhotoPlaceholder.setOnLongClickListener {
+            if (isGuestMode()) return@setOnLongClickListener true
+            showPhotoActionsDialog(hasPhoto = false)
+            true
+        }
+
         binding.btnSave.setOnClickListener { saveChanges() }
         binding.btnCancelEdit.setOnClickListener { finish() }
         binding.btnPlus.setOnClickListener { changeQuantity(+1) }
@@ -296,6 +321,115 @@ class ItemDetailActivity : AppCompatActivity() {
             }
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
+        }
+    }
+
+    // ============================================================
+    // 🆕 ДЕЙСТВИЯ С ФОТО (долгий тап)
+    // ============================================================
+    /**
+     * Показывает меню действий с фото.
+     *
+     * @param hasPhoto true — фото есть (доступны fullscreen + удалить);
+     *                 false — фото нет (только добавить).
+     */
+    private fun showPhotoActionsDialog(hasPhoto: Boolean) {
+        val actions = if (hasPhoto) {
+            arrayOf(
+                "📸 Сделать фото",
+                "🖼️ Выбрать из галереи",
+                "👁 Открыть на весь экран",
+                "❌ Удалить фото"
+            )
+        } else {
+            arrayOf(
+                "📸 Сделать фото",
+                "🖼️ Выбрать из галереи"
+            )
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(if (hasPhoto) "Действия с фото" else "Добавить фото")
+            .setItems(actions) { _, which ->
+                when (actions[which]) {
+                    "📸 Сделать фото" ->
+                        if (checkCameraPermission()) openCamera() else requestCameraPermission()
+
+                    "🖼️ Выбрать из галереи" ->
+                        pickImageLauncher.launch("image/*")
+
+                    "👁 Открыть на весь экран" ->
+                        openFullscreenPhoto()
+
+                    "❌ Удалить фото" ->
+                        confirmDeletePhoto()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Подтверждение удаления фото.
+     */
+    private fun confirmDeletePhoto() {
+        AlertDialog.Builder(this)
+            .setTitle("Удалить фото?")
+            .setMessage("Фото будет удалено с этого предмета. Данные предмета не пострадают.")
+            .setPositiveButton("Удалить") { _, _ -> deletePhoto() }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Удаляет фото: локальный файл + imageUrl = null.
+     * На Яндекс.Диске файл не трогаем (по решению — вариант A).
+     */
+    private fun deletePhoto() {
+        val id = itemId ?: return
+        val item = currentItem ?: return
+
+        lifecycleScope.launch {
+            try {
+                // 1. Удаляем локальный файл
+                withContext(Dispatchers.IO) {
+                    val f = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
+                    if (f != null && f.exists()) {
+                        val deleted = f.delete()
+                        Logger.log(TAG, "Local photo delete: id=$id, file=${f.absolutePath}, deleted=$deleted")
+                    } else {
+                        Logger.log(TAG, "Local photo delete: id=$id — file not found")
+                    }
+                }
+
+                // 2. Обнуляем imageUrl и обновляем запись
+                val updated = item.copy(
+                    imageUrl = null,
+                    updatedDate = System.currentTimeMillis(),
+                    updatedBy = "user"
+                )
+                viewModel.updateItemFull(updated)
+
+                // 3. Обновляем UI
+                newImageBytes = null
+                binding.ivPhoto.setImageDrawable(null)
+                binding.ivPhoto.visibility = View.GONE
+                binding.ivPhotoPlaceholder.visibility = View.VISIBLE
+                binding.photoOverlay.visibility = View.VISIBLE
+
+                // Если были в режиме редактирования — показать кнопку «Добавить фото»
+                if (isEditMode) {
+                    binding.btnAddPhoto.visibility = View.VISIBLE
+                }
+
+                // Обновляем currentItem
+                currentItem = updated
+
+                Toast.makeText(this@ItemDetailActivity, "Фото удалено", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error deleting photo", e)
+                Toast.makeText(this@ItemDetailActivity, "Ошибка удаления фото", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
