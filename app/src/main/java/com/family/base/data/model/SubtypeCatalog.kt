@@ -11,6 +11,7 @@ import java.util.Locale
  *
  * 🆕 БАЗА7: getSubtypes() возвращает список, отсортированный по алфавиту
  *           (по тексту после эмодзи, русская локаль).
+ *           Подтипы «Прочее» (*_other) ВСЕГДА идут в конце списка.
  */
 object SubtypeCatalog {
 
@@ -23,7 +24,8 @@ object SubtypeCatalog {
     // 🍎 ЕДА
     // ============================================================
     // Примечание: список в исходнике в произвольном порядке —
-    // сортировка по алфавиту делается в getSubtypes().
+    // сортировка по алфавиту делается в getSubtypes(),
+    // «прочее» (food_other) — всегда в конце.
     private val FOOD = listOf(
         Subtype("dairy",         "🥛 Молочка"),
         Subtype("bakery",        "🍞 Хлебобулочные"),
@@ -94,8 +96,11 @@ object SubtypeCatalog {
     )
 
     /**
-     * Возвращает список подтипов для указанного типа, отсортированный
-     * по алфавиту (по тексту после эмодзи, русская локаль).
+     * Возвращает список подтипов для указанного типа.
+     *
+     * Сортировка:
+     *   1. Обычные подтипы — по алфавиту (по тексту после эмодзи, Locale ru).
+     *   2. Подтипы «Прочее» (ключ оканчивается на "_other") — ВСЕГДА в конце.
      *
      * Если тип неизвестен или null — возвращает `OTHER`.
      */
@@ -111,17 +116,19 @@ object SubtypeCatalog {
     }
 
     /**
-     * Компаратор: сортировка по тексту без эмодзи (по первой букве
-     * «чистого» имени), русская локаль.
-     *
-     * Логика:
-     *   1. Берём displayName (например, "🥛 Молочка").
-     *   2. Отрезаем всё до первого пробела — остаётся "Молочка".
-     *   3. Сравниваем строки через String.CASE_INSENSITIVE_ORDER
-     *      с учётом русской локали.
+     * Компаратор:
+     *   - «Прочее» (*_other) всегда после обычных.
+     *   - Внутри группы — по алфавиту (без эмодзи, Locale ru).
      */
     private val SUBTYPE_ALPHABETICAL_ORDER: Comparator<Subtype> =
         Comparator { a, b ->
+            val aIsOther = a.key.endsWith("_other")
+            val bIsOther = b.key.endsWith("_other")
+
+            if (aIsOther != bIsOther) {
+                return@Comparator if (aIsOther) 1 else -1
+            }
+
             val nameA = cleanName(a.displayName)
             val nameB = cleanName(b.displayName)
             nameA.compareTo(nameB, ignoreCase = true)
