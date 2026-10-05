@@ -223,6 +223,9 @@ class AddItemActivity : AppCompatActivity() {
      *
      * Ручной ввод в EditText не ограничиваем жёстко — валидация
      * происходит при сохранении (coerceAtLeast(1)).
+     *
+     * EditText теперь находится внутри TextInputLayout (стиль как у
+     * остальных полей), но id и тип поля не изменились — код тот же.
      */
     private fun setupQuantitySteppers() {
         setupStepper(binding.btnAutoQuantityMinus, binding.btnAutoQuantityPlus, binding.etAutoQuantity)
@@ -484,7 +487,7 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
-        // 🆕 Количество: парсим, при пусто/0/мусоре → 1, минимум 1.
+        // Количество: парсим, при пусто/0/мусоре → 1, минимум 1.
         val quantity = if (isAutoMode) {
             (binding.etAutoQuantity.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1)
         } else {
@@ -508,6 +511,12 @@ class AddItemActivity : AppCompatActivity() {
         val itemType = if (isAutoMode) currentAutoType else currentManualType
         val itemSubtype = if (isAutoMode) selectedAutoSubtype else selectedManualSubtype
 
+        // Сброс ошибок перед проверкой
+        binding.tilAutoSubtype.error = null
+        binding.tilManualSubtype.error = null
+        binding.tilAutoQuantity.error = null
+        binding.tilManualQuantity.error = null
+
         if (itemSubtype.isNullOrEmpty()) {
             Toast.makeText(this, "Выберите подтип", Toast.LENGTH_SHORT).show()
             if (isAutoMode) {
@@ -519,9 +528,6 @@ class AddItemActivity : AppCompatActivity() {
             }
             return
         }
-
-        binding.tilAutoSubtype.error = null
-        binding.tilManualSubtype.error = null
 
         Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, hasImage=${imageBytes != null}")
 
