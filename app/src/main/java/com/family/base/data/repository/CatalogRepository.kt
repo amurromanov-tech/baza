@@ -128,6 +128,82 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
+    // 🆕 B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ (папки + предметы)
+    // ============================================================
+    /**
+     * Отвязывает всех прямых детей от предмета-родителя.
+     *
+     * Что делает:
+     *   1. Находит все дочерние папки (parentItemId = itemId).
+     *   2. Находит всех дочерних предметов (parentItemId = itemId).
+     *   3. Родителя-предмета (itemId) ещё нужно получить, чтобы понять
+     *      его parentId — туда «поднимем» детей.
+     *   4. Для папок: parentId = родитель.parentId, parentItemId = null.
+     *   5. Для предметов: parentId = родитель.parentId, parentItemId = null.
+     *   6. У папок ещё обновляем updatedAt.
+     *   7. У предметов ещё обновляем updatedDate.
+     *
+     * Возвращает: количество отвязанных детей (папки + предметы).
+     *
+     * Используется при удалении/архивации родителя, у которого есть дети.
+     */
+    suspend fun detachAllChildren(itemId: String): Int {
+        return withContext(Dispatchers.IO) {
+            val parent = db.itemDao().getItemById(itemId)
+            if (parent == null) {
+                Logger.log(TAG, "detachAllChildren: parent not found $itemId")
+                return@withContext 0
+            }
+
+            val newParentId = parent.parentId
+            val now = System.currentTimeMillis()
+
+            // 1. Отвязываем дочерние папки → к папке родителя
+            val folderChildren = db.folderDao().getFoldersByParentItem(itemId)
+            for (folder in folderChildren) {
+                val updated = folder.copy(
+                    parentId = newParentId,
+                    parentItemId = null,
+                    updatedAt = now
+                )
+                db.folderDao().updateFolder(updated)
+            }
+
+            // 2. Отвязываем дочерние предметы → к папке родителя
+            val itemChildren = db.itemDao().getItemsByParentItemRaw(itemId)
+            for (item in itemChildren) {
+                val updated = item.copy(
+                    parentId = newParentId,
+                    parentItemId = null,
+                    updatedDate = now
+                )
+                updated.computeExpiryFields()
+                db.itemDao().updateItem(updated)
+            }
+
+            val total = folderChildren.size + itemChildren.size
+            Logger.log(
+                TAG,
+                "detachAllChildren: item=$itemId, detached folders=${folderChildren.size}, " +
+                    "items=${itemChildren.size}, newParentId=$newParentId"
+            )
+            total
+        }
+    }
+
+    /**
+     * Проверяет, есть ли у предмета дети (папки или предметы).
+     * Возвращает пару (кол-во дочерних папок, кол-во дочерних предметов).
+     */
+    suspend fun countChildren(itemId: String): Pair<Int, Int> {
+        return withContext(Dispatchers.IO) {
+            val folderCount = db.folderDao().getFolderChildCount(itemId)
+            val itemCount = db.itemDao().getItemChildCount(itemId)
+            Pair(folderCount, itemCount)
+        }
+    }
+
+    // ============================================================
     // ИСТОРИЯ
     // ============================================================
 
