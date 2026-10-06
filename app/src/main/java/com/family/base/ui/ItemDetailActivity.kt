@@ -106,7 +106,7 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DETAILS = "section_details"
     private val KEY_DATES = "section_dates"
     private val KEY_DESCRIPTION = "section_description"
-    private val KEY_NESTED = "section_nested"   // 🆕 B-5
+    private val KEY_NESTED = "section_nested"
 
     // ===== РЕВИЗИЯ =====
     private val REVISION_EXPIRED_DAYS = 365L
@@ -118,9 +118,6 @@ class ItemDetailActivity : AppCompatActivity() {
         DecimalFormat("#,##0.##", symbols)
     }
 
-    /**
-     * 🆕 B-5: launcher для рекурсивного открытия вложенных предметов.
-     */
     private val nestedItemDetailLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -258,7 +255,6 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.btnReturnItem.visibility = View.GONE
 
-        // 🆕 B-5: в гостевом режиме нельзя добавлять вложенные
         binding.btnAddNested.visibility = View.GONE
 
         Logger.log(TAG, "Guest mode applied: edit buttons hidden")
@@ -327,7 +323,6 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
-        // 🆕 B-5: кнопка «Добавить вложенный»
         binding.btnAddNested.setOnClickListener {
             if (!isGuestMode()) showAddNestedDialog()
         }
@@ -503,7 +498,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 B-5: СЕКЦИЯ «📦 ВЛОЖЕННЫЕ»
+    // СЕКЦИЯ «📦 ВЛОЖЕННЫЕ»
     // ============================================================
     private fun loadNestedContent() {
         val id = itemId ?: return
@@ -881,14 +876,18 @@ class ItemDetailActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(title)
             .setItems(reasons) { _, which ->
-                viewModel.writeOffItem(id, count, reasonKeys[which], null)
-                if (count == totalQty) {
-                    Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
-                    finish()
-                } else {
-                    Toast.makeText(this, "Списано $count шт. в архив", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
+                val currentItemForBlock = item
+                viewModel.writeOffItem(
+                    id,
+                    count,
+                    reasonKeys[which],
+                    null,
+                    onBlocked = { msg ->
+                        if (currentItemForBlock != null) {
+                            showArchiveBlockedDialog(currentItemForBlock, msg)
+                        }
+                    }
+                )
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -1623,35 +1622,12 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 B-5-FIX: ПОСТРОЕНИЕ ПУТИ С УЧЁТОМ ВЛОЖЕННЫХ ПРЕДМЕТОВ
+    // ПОСТРОЕНИЕ ПУТИ С УЧЁТОМ ВЛОЖЕННЫХ ПРЕДМЕТОВ
     // ============================================================
-    /**
-     * Строит путь от корня до ПАПКИ, в которой лежит предмет.
-     *
-     * Учитывает два типа родителей:
-     *   1. Папка (parentId) — обычная иерархия папок.
-     *   2. Предмет (parentItemId) — вложенность в предмет.
-     *
-     * Формат (решение A):
-     *   📂 Корень / Дом / Комната / 📦 Стол / 📁 Полка / 📦 Мука
-     *
-     * Пример для «Мука» (лежит в папке «Полка», которая вложена в предмет «Стол»):
-     *   📂 Корень / Дом / Комната / 📦 Стол / 📁 Полка / 📦 Мука
-     *
-     * @param item предмет, для которого строим путь (сам предмет добавляется в конец).
-     * @return строка пути.
-     */
     private suspend fun buildItemPath(item: ItemEntity): String {
-        // Цепочка сегментов от корня до предмета (включая сам предмет).
-        // Собираем в обратном порядке (снизу вверх), потом разворачиваем.
         val segments = mutableListOf<String>()
 
-        // Сам предмет — последний сегмент
         segments.add("📦 ${item.name}")
-
-        // Если предмет вложен в ПАПКУ (parentId != null) — идём по папкам
-        // Если предмет вложен в ПРЕДМЕТ (parentItemId != null) — идём по предметам
-        // ИНВАРИАНТ: ровно одно из двух заполнено.
 
         var currentFolderId: String? = item.parentId
         var currentParentItemId: String? = item.parentItemId
@@ -1662,11 +1638,9 @@ class ItemDetailActivity : AppCompatActivity() {
         while (depth < maxDepth) {
             depth++
 
-            // Приоритет: если есть родитель-предмет — обрабатываем его
             if (!currentParentItemId.isNullOrEmpty()) {
                 val parentItem = db.itemDao().getItemById(currentParentItemId)
                 if (parentItem == null) {
-                    // Родитель-предмет не найден — прерываем
                     Logger.log(TAG, "buildItemPath: parent item not found: $currentParentItemId")
                     break
                 }
@@ -1676,7 +1650,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 continue
             }
 
-            // Иначе — родитель-папка
             if (!currentFolderId.isNullOrEmpty()) {
                 val folder = db.folderDao().getFolderById(currentFolderId)
                 if (folder == null) {
@@ -1684,7 +1657,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     break
                 }
 
-                // Папка может быть вложена в предмет (parentItemId != null)
                 if (!folder.parentItemId.isNullOrEmpty()) {
                     segments.add("📁 ${folder.name}")
                     currentParentItemId = folder.parentItemId
@@ -1692,14 +1664,12 @@ class ItemDetailActivity : AppCompatActivity() {
                     continue
                 }
 
-                // Обычная папка
                 segments.add("📁 ${folder.name}")
                 currentFolderId = folder.parentId
                 currentParentItemId = folder.parentItemId
                 continue
             }
 
-            // Дошли до корня
             break
         }
 
@@ -1707,7 +1677,6 @@ class ItemDetailActivity : AppCompatActivity() {
             return "📂 Корень"
         }
 
-        // Если верхний сегмент — папка или предмет, добавляем «Корень»
         val pathBody = segments.reversed().joinToString(" / ")
         return "📂 Корень / $pathBody"
     }
@@ -2037,80 +2006,62 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 B-5-FIX: АРХИВАЦИЯ С ЖЁСТКИМ ЗАПРЕТОМ
+    // B-5-FIX-2: ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
     // ============================================================
-    /**
-     * Логика (решение X + ДА):
-     *   1. Проверяем детей (getChildrenCount).
-     *   2. Если дети есть → «Нельзя архивировать, есть вложенные» +
-     *      кнопка «Отвязать всех детей» (без архивации).
-     *   3. После отвязки — пользователь сам жмёт «В архив» снова.
-     *   4. Если детей нет → стандартный диалог выбора причины.
-     */
-    private fun showArchiveDialog() {
-        val id = itemId ?: return
-
-        viewModel.getChildrenCount(id) { (foldersCount, itemsCount) ->
-            val totalChildren = foldersCount + itemsCount
-
-            if (totalChildren > 0) {
-                val childInfo = buildString {
-                    append("У предмета есть вложенные:\n")
-                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
-                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
-                    append("\nНельзя архивировать, пока есть вложенные.\n")
-                    append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
+    private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Нельзя архивировать")
+            .setMessage(message)
+            .setPositiveButton("Отвязать всех детей") { _, _ ->
+                viewModel.detachAllChildren(item.id) { count ->
+                    Toast.makeText(
+                        this,
+                        "Отвязано: $count. Теперь можно архивировать.",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
-
-                AlertDialog.Builder(this)
-                    .setTitle("⚠️ Нельзя архивировать")
-                    .setMessage(childInfo)
-                    .setPositiveButton("Отвязать всех детей") { _, _ ->
-                        viewModel.detachAllChildren(id) { count ->
-                            Toast.makeText(
-                                this,
-                                "Отвязано: $count. Теперь можно архивировать.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                    .setNegativeButton("Отмена", null)
-                    .show()
-            } else {
-                // Детей нет — стандартный диалог архивации
-                val reasons = arrayOf(
-                    "🧴 Израсходовано", "🍽 Съедено", "🔧 Сломано", "🗑 Выброшено",
-                    "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое"
-                )
-                val reasonKeys = arrayOf(
-                    "used_up", "eaten", "broken", "thrown",
-                    "gifted", "sold", "expired", "other"
-                )
-
-                AlertDialog.Builder(this)
-                    .setTitle("📦 В архив: ${binding.tvTitle.text}")
-                    .setItems(reasons) { _, which ->
-                        viewModel.archiveItem(id, reasonKeys[which], null)
-                        Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
-                        finish()
-                    }
-                    .setNegativeButton("Отмена", null)
-                    .show()
             }
-        }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     // ============================================================
-    // 🆕 B-5-FIX: УДАЛЕНИЕ С ЖЁСТКИМ ЗАПРЕТОМ
+    // АРХИВАЦИЯ С ПРОВЕРКОЙ ДЕТЕЙ
     // ============================================================
-    /**
-     * Логика (решение X):
-     *   1. Проверяем детей (getChildrenCount).
-     *   2. Если дети есть → «Нельзя удалить, есть вложенные» +
-     *      кнопка «Отвязать всех детей» (без удаления).
-     *   3. После отвязки — пользователь сам жмёт «Удалить» снова.
-     *   4. Если детей нет → стандартный диалог удаления.
-     */
+    private fun showArchiveDialog() {
+        val id = itemId ?: return
+
+        val reasons = arrayOf(
+            "🧴 Израсходовано", "🍽 Съедено", "🔧 Сломано", "🗑 Выброшено",
+            "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up", "eaten", "broken", "thrown",
+            "gifted", "sold", "expired", "other"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("📦 В архив: ${binding.tvTitle.text}")
+            .setItems(reasons) { _, which ->
+                val itemForBlock = currentItem
+                viewModel.archiveItem(
+                    id,
+                    reasonKeys[which],
+                    null,
+                    onBlocked = { msg ->
+                        if (itemForBlock != null) {
+                            showArchiveBlockedDialog(itemForBlock, msg)
+                        }
+                    }
+                )
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // УДАЛЕНИЕ С ПРОВЕРКОЙ ДЕТЕЙ
+    // ============================================================
     private fun showDeleteDialog() {
         val id = itemId ?: return
 
@@ -2141,7 +2092,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     .setNegativeButton("Отмена", null)
                     .show()
             } else {
-                // Детей нет — стандартный диалог удаления
                 AlertDialog.Builder(this)
                     .setTitle("🗑 Удалить предмет?")
                     .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
