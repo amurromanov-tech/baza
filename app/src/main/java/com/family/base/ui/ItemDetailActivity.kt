@@ -96,11 +96,9 @@ class ItemDetailActivity : AppCompatActivity() {
 
     private var currentItem: ItemEntity? = null
 
-    // ===== LONG-PRESS СТЕППЕРА =====
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
 
-    // ===== СВОРАЧИВАНИЕ СЕКЦИЙ =====
     private val PREFS_NAME = "baza_item_detail_collapse"
     private val KEY_BASIC = "section_basic"
     private val KEY_DETAILS = "section_details"
@@ -108,10 +106,8 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DESCRIPTION = "section_description"
     private val KEY_NESTED = "section_nested"
 
-    // ===== РЕВИЗИЯ =====
     private val REVISION_EXPIRED_DAYS = 365L
 
-    // ===== ФОРМАТ ЧИСЕЛ =====
     private val moneyFormat: DecimalFormat by lazy {
         val symbols = DecimalFormatSymbols(Locale.getDefault())
         symbols.groupingSeparator = ' '
@@ -876,15 +872,15 @@ class ItemDetailActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(title)
             .setItems(reasons) { _, which ->
-                val currentItemForBlock = item
+                val itemForBlock = item
                 viewModel.writeOffItem(
                     id,
                     count,
                     reasonKeys[which],
                     null,
                     onBlocked = { msg ->
-                        if (currentItemForBlock != null) {
-                            showArchiveBlockedDialog(currentItemForBlock, msg)
+                        if (itemForBlock != null) {
+                            showArchiveBlockedDialog(itemForBlock, msg)
                         }
                     }
                 )
@@ -1934,7 +1930,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
+    // B-6: ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА (полное дерево, пара id)
     // ============================================================
     private fun showMoveDialog() {
         val id = itemId ?: return
@@ -1981,19 +1977,29 @@ class ItemDetailActivity : AppCompatActivity() {
                     return@launch
                 }
 
+                Logger.log(
+                    TAG,
+                    "openMoveFolderPicker: item=${item.name}, count=$count, " +
+                        "current parentId=${item.parentId}, current parentItemId=${item.parentItemId}"
+                )
+
                 MoveDialogHelper.show(
                     context = this@ItemDetailActivity,
                     scope = lifecycleScope,
                     db = db,
                     title = "Переместить «${item.name}»",
                     startFromId = item.parentId,
+                    startFromItemId = item.parentItemId,
                     excludedIds = emptySet(),
-                    onConfirm = { newParentId ->
-                        Logger.log(TAG, "Move item to: $newParentId, count=$count")
-                        if (newParentId == item.parentId) {
-                            Toast.makeText(this@ItemDetailActivity, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
+                    onConfirm = { newParentId, newParentItemId ->
+                        Logger.log(
+                            TAG,
+                            "Move confirmed: newParentId=$newParentId, newParentItemId=$newParentItemId, count=$count"
+                        )
+                        if (newParentId == item.parentId && newParentItemId == item.parentItemId) {
+                            Toast.makeText(this@ItemDetailActivity, "Предмет уже здесь", Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.splitAndMoveItem(id, count, newParentId)
+                            viewModel.splitAndMoveItem(id, count, newParentId, newParentItemId)
                             Toast.makeText(this@ItemDetailActivity, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
                             finish()
                         }
@@ -2006,7 +2012,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-5-FIX-2: ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
+    // ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
     // ============================================================
     private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
         AlertDialog.Builder(this)
