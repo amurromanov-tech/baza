@@ -121,7 +121,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
 
-        // 🆕 B-2: РЕМОНТ ОСИРОТЕВШИХ ВЛОЖЕННЫХ (parentItemId)
         try {
             val orphanNestedItems = db.itemDao().getOrphanNestedItems()
             if (orphanNestedItems.isNotEmpty()) {
@@ -293,10 +292,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ХЕЛПЕР: ПОСТАВИТЬ В ОЧЕРЕДЬ
     // ============================================================
-    /**
-     * 🆕 B-3: добавлен параметр parentItemId.
-     * Для предметов и папок, вложенных в предмет, parentItemId != null.
-     */
     private suspend fun enqueue(
         entityType: String,
         entityId: String,
@@ -383,14 +378,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // 🆕 B-3: ДЕТИ (проверка / отвязка / безопасное удаление)
+    // ДЕТИ (проверка / отвязка / безопасное удаление)
     // ============================================================
 
-    /**
-     * Возвращает количество детей предмета: (дочерние папки, дочерние предметы).
-     * Колбэк вызывается на главном потоке (через postValue не получится — не LiveData,
-     * поэтому используем обычный callback — вызывающая сторона сама решит, куда).
-     */
     fun getChildrenCount(itemId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
@@ -403,25 +393,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Отвязывает всех детей предмета (папки + предметы) и поднимает их
-     * в ту же папку, где лежит родитель. Само родительское дерево не удаляется.
-     * Колбэк onDone вызывается на главном потоке с количеством отвязанных детей.
-     */
     fun detachAllChildren(itemId: String, onDone: (Int) -> Unit) {
         viewModelScope.launch {
             try {
                 val count = repository.detachAllChildren(itemId)
 
-                // Ставим родителя в очередь на update (у него изменились дети)
                 db.itemDao().getItemById(itemId)?.let { parent ->
                     enqueue("item", itemId, "update", parent.parentId, parent.parentItemId)
                 }
-
-                // Ставим отвязанных детей в очередь на update
-                // (мы их не знаем по id — просто сделаем полный upload при синке,
-                //  а очередь «грязная» уже помечена родителем, этого достаточно
-                //  для полного upload в ШАГ 4a).
 
                 Logger.log(TAG, "detachAllChildren: item=$itemId, count=$count")
                 withContext(Dispatchers.Main) { onDone(count) }
@@ -433,10 +412,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Отвязывает всех детей, затем удаляет родителя.
-     * Используется кнопкой «Отвязать детей и удалить».
-     */
     fun detachAllChildrenAndDelete(itemId: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
@@ -446,11 +421,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // 1. Отвязываем детей
                 val detached = repository.detachAllChildren(itemId)
                 Logger.log(TAG, "detachAllChildrenAndDelete: detached $detached children from $itemId")
 
-                // 2. Удаляем родителя
                 db.itemDao().deleteItem(item)
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
@@ -466,9 +439,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Отвязывает всех детей, затем архивирует родителя.
-     */
     fun detachAllChildrenAndArchive(itemId: String, reason: String, note: String?, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
@@ -478,16 +448,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // 1. Отвязываем детей
                 val detached = repository.detachAllChildren(itemId)
                 Logger.log(TAG, "detachAllChildrenAndArchive: detached $detached children from $itemId")
 
-                // 2. Архивируем родителя
                 val now = System.currentTimeMillis()
                 db.itemDao().archiveItem(itemId, reason, now, note)
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                // 3. История
                 db.historyDao().insertEntry(
                     HistoryEntry(
                         itemId = itemId,
@@ -504,6 +471,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Logger.log(TAG, "Error detachAllChildrenAndArchive: ${e.message}")
                 withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
+    }
+
+    // ============================================================
+    // 🆕 B-5: ВЛОЖЕННЫЕ (секция «📦 Вложенные»)
+    // ============================================================
+
+    /**
+     * Возвращает прямых детей предмета: (List<FolderEntity>, List<ItemEntity>).
+     * Колбэк вызывается на главном потоке.
+     */
+    fun getNestedContent(
+        parentItemId: String,
+        callback: (List<FolderEntity>, List<ItemEntity>) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val folders = withContext(Dispatchers.IO) {
+                    repository.getNestedFolders(parentItemId)
+                }
+                val items = withContext(Dispatchers.IO) {
+                    repository.getNestedItems(parentItemId)
+                }
+                withContext(Dispatchers.Main) { callback(folders, items) }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error getNestedContent: ${e.message}")
+                withContext(Dispatchers.Main) { callback(emptyList(), emptyList()) }
+            }
+        }
+    }
+
+    /**
+     * Создаёт папку внутри предмета.
+     * @param name имя папки
+     * @param parentItemId id предмета-родителя
+     * @param onDone колбэк на главном потоке с id созданной папки (или null при ошибке)
+     */
+    fun createFolderInItem(
+        name: String,
+        parentItemId: String,
+        onDone: (String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val parentItem = withContext(Dispatchers.IO) { db.itemDao().getItemById(parentItemId) }
+                if (parentItem == null) {
+                    Logger.log(TAG, "createFolderInItem: parent item not found $parentItemId")
+                    withContext(Dispatchers.Main) { onDone(null) }
+                    return@launch
+                }
+
+                val parentFolderId = parentItem.parentId
+                val folder = withContext(Dispatchers.IO) {
+                    repository.createFolderInItem(
+                        name = name,
+                        parentItemId = parentItemId,
+                        parentFolderId = parentFolderId,
+                        creator = currentUser
+                    )
+                }
+
+                // Ставим в очередь
+                enqueue("folder", folder.id, "create", parentFolderId, parentItemId)
+
+                // История по родителю
+                withContext(Dispatchers.IO) {
+                    db.historyDao().insertEntry(
+                        HistoryEntry(
+                            itemId = parentItemId,
+                            action = "add_nested_folder",
+                            oldValue = null,
+                            newValue = "📁 $name",
+                            changedBy = currentUser
+                        )
+                    )
+                }
+
+                Logger.log(TAG, "createFolderInItem: created folder ${folder.id} '${folder.name}' in item $parentItemId")
+                withContext(Dispatchers.Main) { onDone(folder.id) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error createFolderInItem: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(null) }
             }
         }
     }
@@ -1036,9 +1087,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // MERGE DATA (B-2): сначала FOLDERS, потом ITEMS + защита parentItemId
-    // ============================================================
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -1824,10 +1872,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ПЕРЕМЕЩЕНИЕ ПАПОК И ПРЕДМЕТОВ
     // ============================================================
 
-    /**
-     * 🆕 B-3: проверка циклов.
-     * Нельзя переместить папку в саму себя или в своего потомка.
-     */
     private suspend fun isFolderDescendantOf(folderId: String, potentialAncestorId: String): Boolean {
         if (folderId == potentialAncestorId) return true
         var currentId: String? = potentialAncestorId
@@ -1835,22 +1879,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         while (currentId != null && depth < 50) {
             if (currentId == folderId) return true
             val folder = db.folderDao().getFolderById(currentId) ?: break
-            // Идём вверх по parentId (папки)
             currentId = folder.parentId
             depth++
-            // Если наткнулись на папку, вложенную в предмет — цикл по parentItemId,
-            // но для папок предмет не может быть потомком папки (папка не может
-            // содержать предмет как родителя). Останавливаемся.
         }
         return false
     }
 
-    /**
-     * 🆕 B-3: проверка циклов для предметов.
-     * Нельзя переместить предмет в себя или в своего потомка.
-     * (Для moveItem: newParentId — это ID ПАПКИ, циклов не бывает.
-     *  Для будущего moveItemToItem: newParentItemId — ID предмета, надо проверять.)
-     */
     private suspend fun isItemDescendantOf(itemId: String, potentialAncestorItemId: String): Boolean {
         if (itemId == potentialAncestorItemId) return true
         var currentId: String? = potentialAncestorItemId
@@ -1869,7 +1903,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
                 if (folder != null) {
-                    // Проверка цикла
                     if (newParentId != null && isFolderDescendantOf(folderId, newParentId)) {
                         Logger.log(TAG, "moveFolder: CYCLE detected, aborting (folder=$folderId, newParent=$newParentId)")
                         withContext(Dispatchers.Main) {
@@ -1884,7 +1917,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     val updated = folder.copy(
                         parentId = newParentId,
-                        parentItemId = null,   // перемещение «в папку» сбрасывает parentItemId
+                        parentItemId = null,
                         updatedAt = System.currentTimeMillis()
                     )
                     db.folderDao().updateFolder(updated)
@@ -1904,7 +1937,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (item != null) {
                     val updated = item.copy(
                         parentId = newParentId,
-                        parentItemId = null,   // перемещение «в папку» сбрасывает parentItemId
+                        parentItemId = null,
                         updatedDate = System.currentTimeMillis(),
                         updatedBy = currentUser
                     )
