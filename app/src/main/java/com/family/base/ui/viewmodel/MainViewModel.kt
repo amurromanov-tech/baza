@@ -551,15 +551,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // B-5-FIX: ПРОВЕРКА ДЕТЕЙ ДЛЯ ПАПКИ
     // ============================================================
 
-    /**
-     * Проверяет, есть ли у ПАПКИ дети:
-     *   - вложенные подпапки (parentId == folderId)
-     *   - предметы в папке (parentId == folderId)
-     *   - папки/предметы, вложенные в ПАПКУ через parentItemId (не должно быть,
-     *     но на всякий случай проверяем — у папки parentItemId всегда null).
-     *
-     * Возвращает (foldersCount, itemsCount).
-     */
     fun getFolderChildrenCount(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
@@ -577,13 +568,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Отвязывает всех детей ПАПКИ: подпапки и предметы → в корень.
-     * После этого папку можно удалить (она станет пустой).
-     *
-     * ВАЖНО: не удаляем папку — только отвязываем.
-     * Пользователь потом сам жмёт «Удалить».
-     */
     fun detachAllFolderChildren(folderId: String, onDone: (Int) -> Unit) {
         viewModelScope.launch {
             try {
@@ -630,11 +614,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Безопасное удаление ПАПКИ с предварительной отвязкой детей.
-     * Оставлено на будущее (B-6). В текущем UI не вызывается —
-     * используется жёсткий запрет.
-     */
     fun detachAllFolderChildrenAndDelete(folderId: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
@@ -652,6 +631,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "Error detachAllFolderChildrenAndDelete: ${e.message}")
                 withContext(Dispatchers.Main) { onDone(false) }
             }
+        }
+    }
+
+    // ============================================================
+    // B-5-FIX-2: ПРОВЕРКА ДЕТЕЙ ДЛЯ АРХИВАЦИИ / ПОЛНОГО СПИСАНИЯ
+    // ============================================================
+
+    /**
+     * Формирует сообщение для диалога «Нельзя архивировать».
+     * Возвращает null, если детей нет.
+     */
+    private suspend fun buildArchiveBlockMessage(itemId: String): String? {
+        return try {
+            val children = repository.countChildren(itemId)
+            val foldersCount = children.first
+            val itemsCount = children.second
+            val total = foldersCount + itemsCount
+
+            if (total == 0) null
+            else buildString {
+                val item = db.itemDao().getItemById(itemId)
+                val name = item?.name ?: "предмет"
+                append("У предмета «$name» есть вложенные:\n\n")
+                if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                append("\nНельзя архивировать, пока есть вложенные.\n")
+                append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "buildArchiveBlockMessage error: ${e.message}")
+            null
         }
     }
 
@@ -1430,9 +1440,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // АРХИВАЦИЯ ПРЕДМЕТОВ
     // ============================================================
 
-    fun archiveItem(itemId: String, reason: String, note: String?) {
+    /**
+     * B-5-FIX-2: Архивирует предмет.
+     * Если у предмета есть вложенные — архивация БЛОКИРУЕТСЯ,
+     * вызывается onBlocked с готовым сообщением для диалога.
+     * Если детей нет — архивация выполняется, onBlocked не вызывается.
+     *
+     * @param onBlocked вызывается на главном потоке. Аргумент — текст сообщения.
+     */
+    fun archiveItem(
+        itemId: String,
+        reason: String,
+        note: String?,
+        onBlocked: ((String) -> Unit)? = null
+    ) {
         viewModelScope.launch {
             try {
+                val blockMsg = buildArchiveBlockMessage(itemId)
+                if (blockMsg != null) {
+                    Logger.log(TAG, "archiveItem: BLOCKED for $itemId (has children)")
+                    withContext(Dispatchers.Main) { onBlocked?.invoke(blockMsg) }
+                    return@launch
+                }
+
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
@@ -1555,7 +1585,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off → архив)
     // ============================================================
-    fun writeOffItem(itemId: String, count: Int, reason: String?, note: String?) {
+    /**
+     * B-5-FIX-2: Списывает предмет (частично или полностью).
+     *
+     * Логика:
+     *  - Частичное списание (count < quantity) → РАЗРЕШЕНО всегда.
+     *    Предмет остаётся, дети остаются.
+     *  - Полное списание (count == quantity) → это АРХИВАЦИЯ.
+     *    Если у предмета есть дети → БЛОКИРУЕТСЯ, вызывается onBlocked.
+     *
+     * @param onBlocked вызывается на главном потоке. Аргумент — текст сообщения.
+     */
+    fun writeOffItem(
+        itemId: String,
+        count: Int,
+        reason: String?,
+        note: String?,
+        onBlocked: ((String) -> Unit)? = null
+    ) {
         Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
         viewModelScope.launch {
             try {
@@ -1573,6 +1620,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (count > item.quantity) {
                     Logger.log(TAG, "writeOffItem: count ($count) > quantity (${item.quantity}), ignoring")
                     return@launch
+                }
+
+                // B-5-FIX-2: полное списание = архивация → проверяем детей
+                val isFullWriteOff = (count == item.quantity)
+                if (isFullWriteOff) {
+                    val blockMsg = buildArchiveBlockMessage(itemId)
+                    if (blockMsg != null) {
+                        Logger.log(TAG, "writeOffItem: BLOCKED for $itemId (full write-off = archive, has children)")
+                        withContext(Dispatchers.Main) { onBlocked?.invoke(blockMsg) }
+                        return@launch
+                    }
                 }
 
                 val now = System.currentTimeMillis()
@@ -2100,15 +2158,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * B-5-FIX: Безопасное удаление ПРЕДМЕТА с проверкой детей.
-     * Если дети есть — удаление НЕ выполняется, вызывается onError с сообщением.
-     * Если детей нет — удаление выполняется, вызывается onSuccess.
-     *
-     * В текущем UI используется жёсткий запрет (UI сам проверяет getChildrenCount
-     * и показывает «Нельзя удалить»). Этот метод — на будущее (B-6), когда
-     * понадобится единая точка удаления с гарантией.
-     */
     fun deleteItemSafely(itemId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
@@ -2143,11 +2192,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * B-5-FIX: Безопасное удаление ПАПКИ с проверкой детей.
-     * Если дети есть — удаление НЕ выполняется, вызывается onError.
-     * Если детей нет — удаление выполняется, вызывается onSuccess.
-     */
     fun deleteFolderSafely(folderId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
