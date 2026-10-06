@@ -64,11 +64,9 @@ class MainActivity : AppCompatActivity() {
 
     private var hideProgressJob: Job? = null
 
-    // ===== ДЛЯ LONG-PRESS СТЕППЕРА =====
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
 
-    // ===== ЗАПУСК ЭКРАНА ВЫБОРА ПОЛЬЗОВАТЕЛЯ =====
     private val selectUserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -552,12 +550,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-5-FIX-2: ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
+    // ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
     // ============================================================
-    /**
-     * Показывает диалог «Нельзя архивировать» с кнопкой «Отвязать всех детей».
-     * Используется как onBlocked-callback для viewModel.writeOffItem / archiveItem.
-     */
     private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
         AlertDialog.Builder(this)
             .setTitle("⚠️ Нельзя архивировать")
@@ -672,10 +666,6 @@ class MainActivity : AppCompatActivity() {
                     null,
                     onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
                 )
-                if (count == totalQty) {
-                    // Тост покажется только если не сработал onBlocked (т.е. детей нет)
-                    // — проверка уже внутри viewModel.
-                }
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -713,7 +703,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openMoveFolderPicker(item: ItemEntity, count: Int) {
-        Logger.log(TAG, "Show move item dialog: ${item.name}, current parentId=${item.parentId}, count=$count")
+        Logger.log(
+            TAG,
+            "Show move item dialog: ${item.name}, current parentId=${item.parentId}, " +
+                "current parentItemId=${item.parentItemId}, count=$count"
+        )
 
         MoveDialogHelper.show(
             context = this,
@@ -721,12 +715,13 @@ class MainActivity : AppCompatActivity() {
             db = db,
             title = "Переместить «${item.name}»",
             startFromId = item.parentId,
+            startFromItemId = item.parentItemId,
             excludedIds = emptySet(),
-            onConfirm = { newParentId ->
-                if (newParentId == item.parentId) {
-                    Toast.makeText(this, "Предмет уже в этой папке", Toast.LENGTH_SHORT).show()
+            onConfirm = { newParentId, newParentItemId ->
+                if (newParentId == item.parentId && newParentItemId == item.parentItemId) {
+                    Toast.makeText(this, "Предмет уже здесь", Toast.LENGTH_SHORT).show()
                 } else {
-                    viewModel.splitAndMoveItem(item.id, count, newParentId)
+                    viewModel.splitAndMoveItem(item.id, count, newParentId, newParentItemId)
                     Toast.makeText(this, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -874,13 +869,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-5-FIX-2: АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ (с проверкой детей)
+    // АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ (с проверкой детей)
     // ============================================================
-    /**
-     * Пункт «В архив» из контекстного меню каталога (отдельно от списания).
-     * Если у предмета есть дети — viewModel заблокирует архивацию
-     * и вызовет onBlocked, который покажет диалог «Нельзя архивировать».
-     */
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
             "🧴 Израсходовано",
@@ -1001,8 +991,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // B-6: ПЕРЕМЕЩЕНИЕ ПАПКИ (полное дерево, пара id)
+    // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
-        Logger.log(TAG, "Show move folder dialog: ${folder.name}, current parentId=${folder.parentId}")
+        Logger.log(
+            TAG,
+            "Show move folder dialog: ${folder.name}, " +
+                "current parentId=${folder.parentId}, current parentItemId=${folder.parentItemId}"
+        )
 
         lifecycleScope.launch {
             try {
@@ -1016,12 +1013,13 @@ class MainActivity : AppCompatActivity() {
                     db = db,
                     title = "Переместить «${folder.name}»",
                     startFromId = folder.parentId,
+                    startFromItemId = folder.parentItemId,
                     excludedIds = excluded,
-                    onConfirm = { newParentId ->
-                        if (newParentId == folder.parentId) {
+                    onConfirm = { newParentId, newParentItemId ->
+                        if (newParentId == folder.parentId && newParentItemId == folder.parentItemId) {
                             Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.moveFolder(folder.id, newParentId)
+                            viewModel.moveFolder(folder.id, newParentId, newParentItemId)
                             Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
                         }
                     }
