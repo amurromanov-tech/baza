@@ -1126,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
                 startSyncAnimation()
             }
             SyncStatus.SYNCED -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_synced)
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
                 stopSyncAnimation()
             }
             SyncStatus.PENDING -> {
