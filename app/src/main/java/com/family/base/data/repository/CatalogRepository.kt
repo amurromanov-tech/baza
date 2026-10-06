@@ -26,17 +26,11 @@ class CatalogRepository(private val db: AppDatabase) {
     private val TAG = "CatalogRepository"
     private val DEFAULT_FOLDER_NAME = "BAZA"
 
-    // 🚀 Обход троттлинга Яндекс.Диска (128 KiB/s для media_type=data).
-    // Расширение .bak НЕ подпадает под media_type=data, поэтому загрузка идёт
-    // на полной скорости интернета.
     private val ITEMS_FILENAME = "items.json.bak"
     private val FOLDERS_FILENAME = "folders.json.bak"
 
     private var folderPathCache: String? = null
 
-    // 🆕 БАЗА6 этап 2: флаг DNS-сбоя.
-    // Если хост cloud-api.yandex.net не резолвится (РКН/провайдер),
-    // нет смысла пытаться снова и снова — быстро выходим и не спамим лог.
     @Volatile
     private var dnsFailureUntil: Long = 0L
 
@@ -44,17 +38,9 @@ class CatalogRepository(private val db: AppDatabase) {
         System.currentTimeMillis() < dnsFailureUntil
 
     private fun noteDnsFailure() {
-        // Блокируем сетевые вызовы на 60 секунд
         dnsFailureUntil = System.currentTimeMillis() + 60_000L
     }
 
-    /**
-     * 🆕 БАЗА6 этап 3 (Вариант В): публичный флаг доступности сети.
-     *
-     * MainViewModel использует его для раннего выхода из фото-циклов:
-     * если DNS уже заблокирован — не идём по 98 предметам + 6 иконкам,
-     * а сразу выходим. Это убирает лишние итерации и спам в логе.
-     */
     fun isNetworkAvailable(): Boolean = !isDnsBlocked()
 
     private fun getFolderPath(): String {
@@ -96,6 +82,32 @@ class CatalogRepository(private val db: AppDatabase) {
         return folder
     }
 
+    /**
+     * 🆕 B-5: создание папки внутри предмета.
+     * @param name имя папки
+     * @param parentItemId id предмета-родителя (parentItemId новой папки)
+     * @param parentFolderId id папки, в которой лежит предмет-родитель (parentId новой папки)
+     * @param creator создатель
+     * @return созданная папка
+     */
+    suspend fun createFolderInItem(
+        name: String,
+        parentItemId: String,
+        parentFolderId: String?,
+        creator: String
+    ): FolderEntity {
+        val folder = FolderEntity(
+            name = name,
+            parentId = parentFolderId,
+            parentItemId = parentItemId,
+            createdBy = creator,
+            path = name
+        )
+        db.folderDao().insertFolder(folder)
+        Logger.log(TAG, "createFolderInItem: name=$name, parentItemId=$parentItemId, parentFolderId=$parentFolderId")
+        return folder
+    }
+
     suspend fun deleteFolder(folderId: String) {
         db.folderDao().deleteFolderById(folderId)
     }
@@ -104,8 +116,13 @@ class CatalogRepository(private val db: AppDatabase) {
     // ПРЕДМЕТЫ
     // ============================================================
 
+    /**
+     * 🆕 B-5: возвращает ТОЛЬКО «корневые» предметы папки.
+     * Вложенные предметы (parentItemId != null) в каталоге папки не видны —
+     * они отображаются в секции «📦 Вложенные» карточки родителя.
+     */
     suspend fun getItems(parentId: String?): List<ItemEntity> =
-        db.itemDao().getItemsByParent(parentId)
+        db.itemDao().getItemsByParent(parentId).filter { it.parentItemId == null }
 
     suspend fun addItem(item: ItemEntity) {
         val entity = item.copy()
@@ -130,23 +147,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ============================================================
     // 🆕 B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ (папки + предметы)
     // ============================================================
-    /**
-     * Отвязывает всех прямых детей от предмета-родителя.
-     *
-     * Что делает:
-     *   1. Находит все дочерние папки (parentItemId = itemId).
-     *   2. Находит всех дочерних предметов (parentItemId = itemId).
-     *   3. Родителя-предмета (itemId) ещё нужно получить, чтобы понять
-     *      его parentId — туда «поднимем» детей.
-     *   4. Для папок: parentId = родитель.parentId, parentItemId = null.
-     *   5. Для предметов: parentId = родитель.parentId, parentItemId = null.
-     *   6. У папок ещё обновляем updatedAt.
-     *   7. У предметов ещё обновляем updatedDate.
-     *
-     * Возвращает: количество отвязанных детей (папки + предметы).
-     *
-     * Используется при удалении/архивации родителя, у которого есть дети.
-     */
     suspend fun detachAllChildren(itemId: String): Int {
         return withContext(Dispatchers.IO) {
             val parent = db.itemDao().getItemById(itemId)
@@ -158,7 +158,6 @@ class CatalogRepository(private val db: AppDatabase) {
             val newParentId = parent.parentId
             val now = System.currentTimeMillis()
 
-            // 1. Отвязываем дочерние папки → к папке родителя
             val folderChildren = db.folderDao().getFoldersByParentItem(itemId)
             for (folder in folderChildren) {
                 val updated = folder.copy(
@@ -169,7 +168,6 @@ class CatalogRepository(private val db: AppDatabase) {
                 db.folderDao().updateFolder(updated)
             }
 
-            // 2. Отвязываем дочерние предметы → к папке родителя
             val itemChildren = db.itemDao().getItemsByParentItemRaw(itemId)
             for (item in itemChildren) {
                 val updated = item.copy(
@@ -191,10 +189,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Проверяет, есть ли у предмета дети (папки или предметы).
-     * Возвращает пару (кол-во дочерних папок, кол-во дочерних предметов).
-     */
     suspend fun countChildren(itemId: String): Pair<Int, Int> {
         return withContext(Dispatchers.IO) {
             val folderCount = db.folderDao().getFolderChildCount(itemId)
@@ -202,6 +196,22 @@ class CatalogRepository(private val db: AppDatabase) {
             Pair(folderCount, itemCount)
         }
     }
+
+    // ============================================================
+    // 🆕 B-5: ВЛОЖЕННЫЕ (для секции «📦 Вложенные»)
+    // ============================================================
+
+    /**
+     * Возвращает прямых дочерних ПРЕДМЕТОВ (неархивных) указанного предмета.
+     */
+    suspend fun getNestedItems(parentItemId: String): List<ItemEntity> =
+        db.itemDao().getItemsByParentItem(parentItemId)
+
+    /**
+     * Возвращает прямые дочерние ПАПКИ указанного предмета.
+     */
+    suspend fun getNestedFolders(parentItemId: String): List<FolderEntity> =
+        db.folderDao().getFoldersByParentItem(parentItemId)
 
     // ============================================================
     // ИСТОРИЯ
@@ -256,14 +266,9 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 ОБРАБОТКА DNS-СБОЕВ
+    // ОБРАБОТКА DNS-СБОЕВ
     // ============================================================
 
-    /**
-     * Возвращает true, если ошибка — DNS-фейл (UnknownHostException).
-     * В этом случае мы помечаем сеть как «недоступную» на 60 секунд,
-     * чтобы не спамить однотипными логами и быстрее выходить.
-     */
     private fun isDnsError(e: Exception): Boolean {
         var cause: Throwable? = e
         while (cause != null) {
@@ -429,9 +434,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return false
     }
 
-    /**
-     * 🆕 БАЗА6 этап 2: обновление .last_modified.
-     */
     private suspend fun updateLastModifiedWithToken(): Boolean {
         if (isDnsBlocked()) {
             Logger.log(TAG, "updateLastModifiedWithToken: DNS blocked")
@@ -703,16 +705,9 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ЧТЕНИЕ С ДИСКА (ПРИВАТНЫЙ API)
+    // ЧТЕНИЕ С ДИСКА
     // ============================================================
 
-    /**
-     * 🆕 Вариант A: возвращаем Long? вместо Long.
-     *
-     *   null  — сеть/DNS упали (НЕ трогать localModified).
-     *   0L    — файл .last_modified отсутствует или пуст (первый запуск).
-     *   > 0   — реальный timestamp.
-     */
     suspend fun getDiskLastModified(): Long? {
         return withContext(Dispatchers.IO) {
             try {
@@ -918,16 +913,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ИЗОБРАЖЕНИЯ ПРЕДМЕТОВ
     // ============================================================
 
-    /**
-     * 🆕 БАЗА6 этап 3 (Фикс 6): убран updateItemOnDisk.
-     *
-     * Раньше после успешной заливки фото мы вызывали updateItemOnDisk,
-     * что внутри делало uploadAllItemsToDisk() — то есть заливало весь
-     * items.json (104 предмета) из-за одного нового imageUrl.
-     *
-     * Теперь items.json обновляется ОДИН РАЗ в конце синка
-     * (final uploadAllItemsToDisk в syncWithDisk, ШАГ 4a).
-     */
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -953,8 +938,6 @@ class CatalogRepository(private val db: AppDatabase) {
                     item?.let {
                         val updated = it.copy(imageUrl = "images/$itemId.jpg")
                         db.itemDao().updateItem(updated)
-                        // 🆕 Фикс 6: НЕ вызываем updateItemOnDisk.
-                        // items.json будет обновлён финальным upload в syncWithDisk.
                     }
                     return@withContext true
                 } else {
@@ -1005,15 +988,9 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 ЗАГРУЗКА ЛОГОВ НА ЯНДЕКС.ДИСК (папка /logs/)
+    // ЗАГРУЗКА ЛОГОВ НА ЯНДЕКС.ДИСК
     // ============================================================
-    /**
-     * Заливает текстовый файл лога в папку $rootPath/logs/.
-     *
-     * @param fileName имя файла (например, "baza_log_Алексей_2026-10-02_16-30-00.txt")
-     * @param bytes    содержимое файла в UTF-8
-     * @return true, если загрузка успешна
-     */
+
     suspend fun uploadLogToDisk(fileName: String, bytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
