@@ -150,7 +150,7 @@
                     android:visibility="gone" />
             </LinearLayout>
 
-            <!-- ============ 📍 МЕСТОНАХОЖДЕНИЕ (не сворачиваем) ============ -->
+            <!-- ============ 📍 МЕСТОНАХОЖДЕНИЕ ============ -->
             <TextView
                 style="@style/SectionTitle"
                 android:layout_width="wrap_content"
@@ -189,7 +189,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============ 📦 ОСНОВНОЕ (сворачиваемая) ============ -->
+            <!-- ============ 📦 ОСНОВНОЕ ============ -->
             <LinearLayout
                 android:id="@+id/sectionBasicHeader"
                 android:layout_width="match_parent"
@@ -445,7 +445,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============ 🔖 ДЕТАЛИ (сворачиваемая) ============ -->
+            <!-- ============ 🔖 ДЕТАЛИ ============ -->
             <LinearLayout
                 android:id="@+id/sectionDetailsHeader"
                 android:layout_width="match_parent"
@@ -618,7 +618,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============ 📅 ДАТЫ (сворачиваемая) ============ -->
+            <!-- ============ 📅 ДАТЫ ============ -->
             <LinearLayout
                 android:id="@+id/sectionDatesHeader"
                 android:layout_width="match_parent"
@@ -710,7 +710,6 @@
                             android:visibility="gone"
                             tools:text="15.12.2026" />
 
-                        <!-- ===== РЕВИЗИЯ ===== -->
                         <TextView
                             android:id="@+id/tvDateRevisionLabel"
                             style="@style/DateLabel"
@@ -758,7 +757,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============ 📝 ОПИСАНИЕ (сворачиваемая) ============ -->
+            <!-- ============ 📝 ОПИСАНИЕ ============ -->
             <LinearLayout
                 android:id="@+id/sectionDescriptionHeader"
                 android:layout_width="match_parent"
@@ -831,7 +830,90 @@
                 </FrameLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ============ ЗАЙМ ============ -->
+            <!-- ============================================================ -->
+            <!-- 🆕 B-5: 📦 ВЛОЖЕННЫЕ (сворачиваемая) -->
+            <!-- ============================================================ -->
+            <LinearLayout
+                android:id="@+id/sectionNestedHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    android:id="@+id/tvNestedTitle"
+                    style="@style/SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📦 Вложенные"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/arrowNested"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▶"
+                    android:textSize="14sp"
+                    android:textColor="@color/sectionTitle"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNested"
+                style="@style/SectionCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:id="@+id/contentNestedExpandable"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+
+                    <!-- Контейнер для вложенных элементов (папки + предметы) -->
+                    <LinearLayout
+                        android:id="@+id/nestedContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+
+                    <!-- Placeholder «Нет вложенных» -->
+                    <TextView
+                        android:id="@+id/tvNestedEmpty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Нет вложенных"
+                        android:textSize="14sp"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:gravity="center"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="12dp"
+                        android:visibility="gone" />
+
+                    <!-- Кнопка «Добавить вложенный» (в режиме редактирования) -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAddNested"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="➕ Добавить вложенный"
+                        android:textColor="@color/colorPrimary"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ============ 🤝 ЗАЙМ ============ -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardLentInfo"
                 style="@style/SectionCard"
@@ -935,7 +1017,7 @@
                 android:text="📷 Добавить фото"
                 android:visibility="gone" />
 
-            <!-- ============ ⚙️ ДЕЙСТВИЯ (не сворачиваем) ============ -->
+            <!-- ============ ⚙️ ДЕЙСТВИЯ ============ -->
             <TextView
                 android:id="@+id/tvActionsTitle"
                 style="@style/SectionTitle"
