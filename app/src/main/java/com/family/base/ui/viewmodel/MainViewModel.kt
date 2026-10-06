@@ -60,11 +60,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var currentFolderId: String? = null
 
-    /**
-     * Текущий пользователь приложения (Алексей / Рима / Дима / Гость).
-     * Берётся из TokenStorage (сохранён при выборе на экране SelectUserActivity).
-     * Фолбэки: displayName → "Пользователь".
-     */
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
             ?: tokenStorage.getUserDisplayName()
@@ -126,11 +121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
 
-        // ============================================================
         // 🆕 B-2: РЕМОНТ ОСИРОТЕВШИХ ВЛОЖЕННЫХ (parentItemId)
-        // ============================================================
-        // Если родитель-предмет был удалён (например, вручную), а ребёнок
-        // остался с висячим parentItemId — отвязываем. Аналогично для папок.
         try {
             val orphanNestedItems = db.itemDao().getOrphanNestedItems()
             if (orphanNestedItems.isNotEmpty()) {
@@ -302,11 +293,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ХЕЛПЕР: ПОСТАВИТЬ В ОЧЕРЕДЬ
     // ============================================================
+    /**
+     * 🆕 B-3: добавлен параметр parentItemId.
+     * Для предметов и папок, вложенных в предмет, parentItemId != null.
+     */
     private suspend fun enqueue(
         entityType: String,
         entityId: String,
         action: String,
-        parentId: String?
+        parentId: String?,
+        parentItemId: String? = null
     ) {
         syncQueueDao.addToQueue(
             SyncQueueEntity(
@@ -314,6 +310,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 entityId = entityId,
                 action = action,
                 parentId = parentId,
+                parentItemId = parentItemId,
                 data = null,
                 timestamp = System.currentTimeMillis()
             )
@@ -334,7 +331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ImageUtils.saveImageLocally(appContext, item.id, bytes)
             }
 
-            enqueue("item", item.id, "create", item.parentId)
+            enqueue("item", item.id, "create", item.parentId, item.parentItemId)
 
             loadContents()
         }
@@ -350,7 +347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "createItemsBatch: ${items.size} items, folderId=$folderId")
 
         return try {
-            val prepared = items.map { it.copy(parentId = folderId) }
+            val prepared = items.map { it.copy(parentId = folderId, parentItemId = null) }
 
             withContext(Dispatchers.IO) {
                 db.itemDao().insertItems(prepared)
@@ -364,6 +361,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             entityId = item.id,
                             action = "create",
                             parentId = folderId,
+                            parentItemId = null,
                             data = null,
                             timestamp = System.currentTimeMillis()
                         )
@@ -385,21 +383,135 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // СИНХРОНИЗАЦИЯ (ИНКРЕМЕНТАЛЬНАЯ)
+    // 🆕 B-3: ДЕТИ (проверка / отвязка / безопасное удаление)
     // ============================================================
 
     /**
-     * Основной метод синхронизации.
-     *
-     * 🆕 БАЗА6 этап 3 (Фикс 6):
-     *   - applyItemChange больше НЕ вызывает createItemOnDisk/updateItemOnDisk
-     *     (items.json залит в ШАГ 4a и ещё раз — финально в конце ШАГ 4a).
-     *   - Добавлен финальный uploadAllItemsToDisk после processPendingChangesInternal,
-     *     чтобы сохранить новые imageUrl в JSON.
-     *   - CatalogRepository.uploadItemImage больше НЕ триггерит updateItemOnDisk.
-     *
-     * Эффект: 3 × uploadAllItemsToDisk → 2. Экономия ~8-15 сек.
+     * Возвращает количество детей предмета: (дочерние папки, дочерние предметы).
+     * Колбэк вызывается на главном потоке (через postValue не получится — не LiveData,
+     * поэтому используем обычный callback — вызывающая сторона сама решит, куда).
      */
+    fun getChildrenCount(itemId: String, callback: (Pair<Int, Int>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val result = repository.countChildren(itemId)
+                withContext(Dispatchers.Main) { callback(result) }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error getChildrenCount: ${e.message}")
+                withContext(Dispatchers.Main) { callback(Pair(0, 0)) }
+            }
+        }
+    }
+
+    /**
+     * Отвязывает всех детей предмета (папки + предметы) и поднимает их
+     * в ту же папку, где лежит родитель. Само родительское дерево не удаляется.
+     * Колбэк onDone вызывается на главном потоке с количеством отвязанных детей.
+     */
+    fun detachAllChildren(itemId: String, onDone: (Int) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val count = repository.detachAllChildren(itemId)
+
+                // Ставим родителя в очередь на update (у него изменились дети)
+                db.itemDao().getItemById(itemId)?.let { parent ->
+                    enqueue("item", itemId, "update", parent.parentId, parent.parentItemId)
+                }
+
+                // Ставим отвязанных детей в очередь на update
+                // (мы их не знаем по id — просто сделаем полный upload при синке,
+                //  а очередь «грязная» уже помечена родителем, этого достаточно
+                //  для полного upload в ШАГ 4a).
+
+                Logger.log(TAG, "detachAllChildren: item=$itemId, count=$count")
+                withContext(Dispatchers.Main) { onDone(count) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error detachAllChildren: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(0) }
+            }
+        }
+    }
+
+    /**
+     * Отвязывает всех детей, затем удаляет родителя.
+     * Используется кнопкой «Отвязать детей и удалить».
+     */
+    fun detachAllChildrenAndDelete(itemId: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    withContext(Dispatchers.Main) { onDone(false) }
+                    return@launch
+                }
+
+                // 1. Отвязываем детей
+                val detached = repository.detachAllChildren(itemId)
+                Logger.log(TAG, "detachAllChildrenAndDelete: detached $detached children from $itemId")
+
+                // 2. Удаляем родителя
+                db.itemDao().deleteItem(item)
+                val appContext = getApplication<Application>().applicationContext
+                ImageUtils.deleteLocalImage(appContext, itemId)
+                enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+
+                Logger.log(TAG, "detachAllChildrenAndDelete: parent $itemId deleted")
+                withContext(Dispatchers.Main) { onDone(true) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error detachAllChildrenAndDelete: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
+    }
+
+    /**
+     * Отвязывает всех детей, затем архивирует родителя.
+     */
+    fun detachAllChildrenAndArchive(itemId: String, reason: String, note: String?, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    withContext(Dispatchers.Main) { onDone(false) }
+                    return@launch
+                }
+
+                // 1. Отвязываем детей
+                val detached = repository.detachAllChildren(itemId)
+                Logger.log(TAG, "detachAllChildrenAndArchive: detached $detached children from $itemId")
+
+                // 2. Архивируем родителя
+                val now = System.currentTimeMillis()
+                db.itemDao().archiveItem(itemId, reason, now, note)
+                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+
+                // 3. История
+                db.historyDao().insertEntry(
+                    HistoryEntry(
+                        itemId = itemId,
+                        action = "archive",
+                        oldValue = "В базе (отвязано детей: $detached)",
+                        newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
+                        changedBy = currentUser
+                    )
+                )
+
+                Logger.log(TAG, "detachAllChildrenAndArchive: parent $itemId archived")
+                withContext(Dispatchers.Main) { onDone(true) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error detachAllChildrenAndArchive: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
+    }
+
+    // ============================================================
+    // СИНХРОНИЗАЦИЯ (ИНКРЕМЕНТАЛЬНАЯ)
+    // ============================================================
+
     fun syncWithDisk() {
         applicationScope.launch {
             if (!syncMutex.tryLock()) {
@@ -440,9 +552,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
-                // ============================================================
                 // ШАГ 2: СБОР МЕТРИК
-                // ============================================================
                 val tMetrics = System.currentTimeMillis()
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
@@ -461,9 +571,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "isFirstLaunch=$isFirstLaunch"
                 )
 
-                // ============================================================
                 // ШАГ 3: ПЕРВЫЙ ЗАПУСК — только DOWNLOAD
-                // ============================================================
                 if (isFirstLaunch) {
                     Logger.log(TAG, "syncWithDisk: FIRST LAUNCH — download only (no upload)")
 
@@ -494,9 +602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // ============================================================
                 // ШАГ 4a: ЕСТЬ ЛОКАЛЬНЫЕ ИЗМЕНЕНИЯ → ПОЛНЫЙ UPLOAD
-                // ============================================================
                 if (pendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
 
@@ -545,9 +651,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
                 }
 
-                // ============================================================
                 // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
-                // ============================================================
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
                 if (shouldDownload) {
@@ -583,9 +687,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // ============================================================
                 // ШАГ 4c: ФОТО
-                // ============================================================
                 val nothingChanged = (pendingCount == 0)
                     && (diskLastModified != null)
                     && (diskLastModified <= localLastModified)
@@ -627,9 +729,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Финализация синка.
-     */
     private suspend fun finalizeSync(
         uploadedCount: Int,
         downloadedCount: Int,
@@ -687,9 +786,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ФОТО, КОТОРЫХ НЕТ НА ДИСКЕ
-    // ============================================================
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
 
@@ -754,9 +850,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - t0}ms")
     }
 
-    // ============================================================
-    // ЗАЛИВАЕМ ВСЕ ЛОКАЛЬНЫЕ ИКОНКИ ПАПОК, КОТОРЫХ НЕТ НА ДИСКЕ
-    // ============================================================
     private suspend fun uploadUnsyncedFolderImages() {
         val t0 = System.currentTimeMillis()
 
@@ -870,9 +963,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadContents()
     }
 
-    /**
-     * 🆕 Фикс 5: синхронизация иконок папок (только с iconUrl).
-     */
     private suspend fun syncFolderImages() {
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncFolderImages: network blocked, skipping")
@@ -947,18 +1037,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // 🆕 B-2: MERGE DATA — ПОРЯДОК FOLDERS → ITEMS + ЗАЩИТА parentItemId
+    // MERGE DATA (B-2): сначала FOLDERS, потом ITEMS + защита parentItemId
     // ============================================================
-    /**
-     * Слияние данных с Яндекс.Диска.
-     *
-     * B-2 изменил порядок и добавил защиту parentItemId:
-     *   1. Сначала FOLDERS, потом ITEMS (родитель-папка должен появиться раньше).
-     *   2. Если у диска parentItemId == null, а локально != null —
-     *      сохраняем ЛОКАЛЬНЫЙ (защита от старого устройства на v7,
-     *      где поля parentItemId ещё не было в JSON).
-     *   3. Ремонт осиротевших вложенных выполняется в checkFirstLaunch().
-     */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -969,9 +1049,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
 
-            // ------------------------------------------------------------
-            // 1. FOLDERS — сначала (родители)
-            // ------------------------------------------------------------
+            // 1. FOLDERS
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
             } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
@@ -982,8 +1060,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
-                        // 🆕 B-2: сохраняем локальный parentItemId, если у диска null
-                        // (защита от старого устройства на v7 без этого поля)
                         val merged = diskFolder.copy(
                             iconUrl = diskFolder.iconUrl ?: local.iconUrl,
                             parentItemId = diskFolder.parentItemId ?: local.parentItemId
@@ -993,9 +1069,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // ------------------------------------------------------------
-            // 2. ITEMS — потом (дети)
-            // ------------------------------------------------------------
+            // 2. ITEMS
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
             } else if (diskItems.isEmpty() && localItemsCount > 0) {
@@ -1006,7 +1080,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (local == null) {
                         db.itemDao().insertItem(diskItem)
                     } else if (diskItem.updatedDate > local.updatedDate) {
-                        // 🆕 B-2: сохраняем локальный parentItemId, если у диска null
                         val merged = diskItem.copy(
                             imageUrl = diskItem.imageUrl ?: local.imageUrl,
                             parentItemId = diskItem.parentItemId ?: local.parentItemId
@@ -1093,9 +1166,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 🆕 Фикс 6: убраны createItemOnDisk / updateItemOnDisk.
-     */
     private suspend fun applyItemChange(entry: SyncQueueEntity) {
         when (entry.action) {
             "create" -> db.itemDao().getItemById(entry.entityId)?.let {
@@ -1159,7 +1229,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                     val history = HistoryEntry(
                         itemId = itemId,
@@ -1194,7 +1264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                     val history = HistoryEntry(
                         itemId = itemId,
@@ -1229,7 +1299,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                     val history = HistoryEntry(
                         itemId = itemId,
@@ -1248,9 +1318,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // ВОЗВРАТ ИЗ АРХИВА (с учётом originalId)
-    // ============================================================
     fun unarchiveItem(itemId: String) {
         viewModelScope.launch {
             try {
@@ -1264,7 +1331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (originalId == null) {
                     db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                     val history = HistoryEntry(
                         itemId = itemId,
@@ -1288,10 +1355,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         updatedOriginal.computeExpiryFields()
                         db.itemDao().updateItem(updatedOriginal)
-                        enqueue("item", originalId, "update", original.parentId)
+                        enqueue("item", originalId, "update", original.parentId, original.parentItemId)
 
                         db.itemDao().deleteItemById(itemId)
-                        enqueue("item", itemId, "delete", item.parentId)
+                        enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
 
                         val appContext = getApplication<Application>().applicationContext
                         ImageUtils.deleteLocalImage(appContext, itemId)
@@ -1318,7 +1385,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         restored.computeExpiryFields()
                         db.itemDao().updateItem(restored)
-                        enqueue("item", itemId, "update", restored.parentId)
+                        enqueue("item", itemId, "update", restored.parentId, restored.parentItemId)
 
                         val history = HistoryEntry(
                             itemId = itemId,
@@ -1377,7 +1444,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (count == item.quantity) {
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                     val history = HistoryEntry(
                         itemId = itemId,
@@ -1411,7 +1478,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.IO) {
                         db.itemDao().insertItem(archivedPart)
                     }
-                    enqueue("item", newId, "create", item.parentId)
+                    enqueue("item", newId, "create", item.parentId, item.parentItemId)
 
                     try {
                         val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -1429,7 +1496,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) {
                             db.itemDao().deleteItemById(itemId)
                         }
-                        enqueue("item", itemId, "delete", item.parentId)
+                        enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
                         val history = HistoryEntry(
@@ -1452,7 +1519,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) {
                             db.itemDao().updateItem(updatedOriginal)
                         }
-                        enqueue("item", itemId, "update", item.parentId)
+                        enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                         val historyNew = HistoryEntry(
                             itemId = newId,
@@ -1504,7 +1571,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
-                enqueue("item", itemId, "update", item.parentId)
+                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                 val history = HistoryEntry(
                     itemId = itemId,
@@ -1570,7 +1637,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     db.itemDao().insertItem(copy)
                 }
-                enqueue("item", newId, "create", newParentId)
+                enqueue("item", newId, "create", newParentId, null)
 
                 try {
                     val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -1592,7 +1659,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     db.itemDao().updateItem(updated)
                 }
-                enqueue("item", itemId, "update", item.parentId)
+                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
                 val folderName = getFolderNameById(newParentId)
 
@@ -1672,7 +1739,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ImageUtils.saveImageLocally(appContext, copy.id, bytes)
                     }
 
-                    enqueue("item", copy.id, "create", copy.parentId)
+                    enqueue("item", copy.id, "create", copy.parentId, copy.parentItemId)
 
                     loadContents()
                 }
@@ -1690,13 +1757,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val folder = FolderEntity(
             name = name,
             parentId = currentFolderId,
+            parentItemId = null,
             createdBy = currentUser,
             path = name
         )
 
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
-            enqueue("folder", folder.id, "create", currentFolderId)
+            enqueue("folder", folder.id, "create", currentFolderId, null)
             loadContents()
         }
     }
@@ -1712,7 +1780,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (folder != null) {
                     val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
                     db.folderDao().updateFolder(updated)
-                    enqueue("folder", folderId, "update", folder.parentId)
+                    enqueue("folder", folderId, "update", folder.parentId, folder.parentItemId)
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -1744,7 +1812,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
                 db.folderDao().deleteFolderById(folderId)
-                enqueue("folder", folderId, "delete", folder?.parentId)
+                enqueue("folder", folderId, "delete", folder?.parentId, folder?.parentItemId)
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleting folder: ${e.message}")
@@ -1756,14 +1824,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ПЕРЕМЕЩЕНИЕ ПАПОК И ПРЕДМЕТОВ
     // ============================================================
 
+    /**
+     * 🆕 B-3: проверка циклов.
+     * Нельзя переместить папку в саму себя или в своего потомка.
+     */
+    private suspend fun isFolderDescendantOf(folderId: String, potentialAncestorId: String): Boolean {
+        if (folderId == potentialAncestorId) return true
+        var currentId: String? = potentialAncestorId
+        var depth = 0
+        while (currentId != null && depth < 50) {
+            if (currentId == folderId) return true
+            val folder = db.folderDao().getFolderById(currentId) ?: break
+            // Идём вверх по parentId (папки)
+            currentId = folder.parentId
+            depth++
+            // Если наткнулись на папку, вложенную в предмет — цикл по parentItemId,
+            // но для папок предмет не может быть потомком папки (папка не может
+            // содержать предмет как родителя). Останавливаемся.
+        }
+        return false
+    }
+
+    /**
+     * 🆕 B-3: проверка циклов для предметов.
+     * Нельзя переместить предмет в себя или в своего потомка.
+     * (Для moveItem: newParentId — это ID ПАПКИ, циклов не бывает.
+     *  Для будущего moveItemToItem: newParentItemId — ID предмета, надо проверять.)
+     */
+    private suspend fun isItemDescendantOf(itemId: String, potentialAncestorItemId: String): Boolean {
+        if (itemId == potentialAncestorItemId) return true
+        var currentId: String? = potentialAncestorItemId
+        var depth = 0
+        while (currentId != null && depth < 50) {
+            if (currentId == itemId) return true
+            val item = db.itemDao().getItemById(currentId) ?: break
+            currentId = item.parentItemId
+            depth++
+        }
+        return false
+    }
+
     fun moveFolder(folderId: String, newParentId: String?) {
         viewModelScope.launch {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
                 if (folder != null) {
-                    val updated = folder.copy(parentId = newParentId, updatedAt = System.currentTimeMillis())
+                    // Проверка цикла
+                    if (newParentId != null && isFolderDescendantOf(folderId, newParentId)) {
+                        Logger.log(TAG, "moveFolder: CYCLE detected, aborting (folder=$folderId, newParent=$newParentId)")
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                getApplication(),
+                                "Нельзя переместить папку в себя или в свою подпапку",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@launch
+                    }
+
+                    val updated = folder.copy(
+                        parentId = newParentId,
+                        parentItemId = null,   // перемещение «в папку» сбрасывает parentItemId
+                        updatedAt = System.currentTimeMillis()
+                    )
                     db.folderDao().updateFolder(updated)
-                    enqueue("folder", folderId, "update", newParentId)
+                    enqueue("folder", folderId, "update", newParentId, null)
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -1779,12 +1904,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (item != null) {
                     val updated = item.copy(
                         parentId = newParentId,
+                        parentItemId = null,   // перемещение «в папку» сбрасывает parentItemId
                         updatedDate = System.currentTimeMillis(),
                         updatedBy = currentUser
                     )
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", newParentId)
+                    enqueue("item", itemId, "update", newParentId, null)
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -1809,7 +1935,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId)
+                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -1827,7 +1953,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
-                enqueue("item", item.id, "update", item.parentId)
+                enqueue("item", item.id, "update", item.parentId, item.parentItemId)
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error updating item: ${e.message}")
@@ -1843,7 +1969,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().deleteItem(item)
                     val appContext = getApplication<Application>().applicationContext
                     ImageUtils.deleteLocalImage(appContext, itemId)
-                    enqueue("item", itemId, "delete", item.parentId)
+                    enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                     loadContents()
                 }
             } catch (e: Exception) {
