@@ -8,15 +8,18 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.family.base.R
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.ItemEntity
+import com.family.base.ui.MoveDialogHelper
 
 class MoveFolderAdapter(
-    private val onFolderClick: (FolderEntity) -> Unit
+    private val onFolderClick: (FolderEntity) -> Unit,
+    private val onItemClick: (ItemEntity) -> Unit
 ) : RecyclerView.Adapter<MoveFolderAdapter.ViewHolder>() {
 
-    private var folders: List<FolderEntity> = emptyList()
+    private var rows: List<MoveDialogHelper.MoveRow> = emptyList()
 
-    fun submitList(newFolders: List<FolderEntity>) {
-        folders = newFolders
+    fun submitList(newRows: List<MoveDialogHelper.MoveRow>) {
+        rows = newRows
         notifyDataSetChanged()
     }
 
@@ -27,18 +30,42 @@ class MoveFolderAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val folder = folders[position]
-        holder.tvFolderName.text = folder.name
+        val row = rows[position]
 
-        // Явно разрешаем клик на корневой itemView
         holder.itemView.isClickable = true
         holder.itemView.isFocusable = true
-        holder.itemView.setOnClickListener {
-            onFolderClick(folder)
+
+        when (row) {
+            is MoveDialogHelper.MoveRow.Folder -> {
+                val folder = row.folder
+                holder.ivFolderIcon.setImageResource(R.drawable.ic_folder_default)
+                holder.tvFolderName.text = if (row.nested) "📁 ${folder.name}" else folder.name
+
+                holder.itemView.setOnClickListener { onFolderClick(folder) }
+
+                holder.ivArrow.visibility = View.VISIBLE
+            }
+
+            is MoveDialogHelper.MoveRow.Item -> {
+                val item = row.item
+                holder.ivFolderIcon.setImageResource(R.drawable.ic_item_default)
+
+                val emoji = when (item.itemType) {
+                    "food" -> "🍎"
+                    "medicine" -> "💊"
+                    "thing" -> "📦"
+                    else -> "🗂"
+                }
+                holder.tvFolderName.text = "$emoji ${item.name}"
+
+                holder.itemView.setOnClickListener { onItemClick(item) }
+
+                holder.ivArrow.visibility = View.VISIBLE
+            }
         }
     }
 
-    override fun getItemCount(): Int = folders.size
+    override fun getItemCount(): Int = rows.size
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val ivFolderIcon: ImageView = view.findViewById(R.id.ivFolderIcon)
