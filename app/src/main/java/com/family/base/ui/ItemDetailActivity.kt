@@ -216,16 +216,11 @@ class ItemDetailActivity : AppCompatActivity() {
     // ============================================================
     private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
 
-    /**
-     * Скрывает элементы редактирования в карточке, если пользователь — гость.
-     */
     private fun applyGuestModeIfNeeded() {
         if (!isGuestMode()) return
 
-        // FAB-кнопки действий
         binding.btnWriteOff.visibility = View.GONE
 
-        // Секция «⚙️ Действия» — целиком скрываем
         binding.tvActionsTitle.visibility = View.GONE
         binding.btnActionEdit.visibility = View.GONE
         binding.btnActionLend.visibility = View.GONE
@@ -234,12 +229,10 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionArchive.visibility = View.GONE
         binding.btnActionDelete.visibility = View.GONE
 
-        // Кнопки редактирования
         binding.btnSave.visibility = View.GONE
         binding.btnCancelEdit.visibility = View.GONE
         binding.btnAddPhoto.visibility = View.GONE
 
-        // Займ
         binding.btnReturnItem.visibility = View.GONE
 
         Logger.log(TAG, "Guest mode applied: edit buttons hidden")
@@ -248,23 +241,19 @@ class ItemDetailActivity : AppCompatActivity() {
     private fun setupListeners() {
         binding.toolbar.setNavigationOnClickListener { finish() }
 
-        // ===== ТАП ПО ФОТО: fullscreen (как раньше) =====
         binding.ivPhoto.setOnClickListener { openFullscreenPhoto() }
 
-        // ===== 🆕 ДОЛГИЙ ТАП ПО ФОТО: меню действий =====
         binding.ivPhoto.setOnLongClickListener {
             if (isGuestMode()) return@setOnLongClickListener true
             showPhotoActionsDialog(hasPhoto = true)
             true
         }
 
-        // ===== 🆕 ТАП ПО PLACEHOLDER (фото нет): сразу диалог выбора источника =====
         binding.ivPhotoPlaceholder.setOnClickListener {
             if (isGuestMode()) return@setOnClickListener
             showImageSourceDialog()
         }
 
-        // ===== 🆕 ДОЛГИЙ ТАП ПО PLACEHOLDER: то же меню (без «удалить») =====
         binding.ivPhotoPlaceholder.setOnLongClickListener {
             if (isGuestMode()) return@setOnLongClickListener true
             showPhotoActionsDialog(hasPhoto = false)
@@ -325,14 +314,8 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 ДЕЙСТВИЯ С ФОТО (долгий тап)
+    // ДЕЙСТВИЯ С ФОТО (долгий тап)
     // ============================================================
-    /**
-     * Показывает меню действий с фото.
-     *
-     * @param hasPhoto true — фото есть (доступны fullscreen + удалить);
-     *                 false — фото нет (только добавить).
-     */
     private fun showPhotoActionsDialog(hasPhoto: Boolean) {
         val actions = if (hasPhoto) {
             arrayOf(
@@ -369,9 +352,6 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Подтверждение удаления фото.
-     */
     private fun confirmDeletePhoto() {
         AlertDialog.Builder(this)
             .setTitle("Удалить фото?")
@@ -381,17 +361,12 @@ class ItemDetailActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Удаляет фото: локальный файл + imageUrl = null.
-     * На Яндекс.Диске файл не трогаем (по решению — вариант A).
-     */
     private fun deletePhoto() {
         val id = itemId ?: return
         val item = currentItem ?: return
 
         lifecycleScope.launch {
             try {
-                // 1. Удаляем локальный файл
                 withContext(Dispatchers.IO) {
                     val f = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
                     if (f != null && f.exists()) {
@@ -402,7 +377,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
                 }
 
-                // 2. Обнуляем imageUrl и обновляем запись
                 val updated = item.copy(
                     imageUrl = null,
                     updatedDate = System.currentTimeMillis(),
@@ -410,19 +384,16 @@ class ItemDetailActivity : AppCompatActivity() {
                 )
                 viewModel.updateItemFull(updated)
 
-                // 3. Обновляем UI
                 newImageBytes = null
                 binding.ivPhoto.setImageDrawable(null)
                 binding.ivPhoto.visibility = View.GONE
                 binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                 binding.photoOverlay.visibility = View.VISIBLE
 
-                // Если были в режиме редактирования — показать кнопку «Добавить фото»
                 if (isEditMode) {
                     binding.btnAddPhoto.visibility = View.VISIBLE
                 }
 
-                // Обновляем currentItem
                 currentItem = updated
 
                 Toast.makeText(this@ItemDetailActivity, "Фото удалено", Toast.LENGTH_SHORT).show()
@@ -1713,53 +1684,148 @@ class ItemDetailActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // 🆕 B-3: АРХИВАЦИЯ С ПРОВЕРКОЙ ДЕТЕЙ
+    // ============================================================
     private fun showArchiveDialog() {
         val id = itemId ?: return
-        val reasons = arrayOf(
-            "🧴 Израсходовано",
-            "🍽 Съедено",
-            "🔧 Сломано",
-            "🗑 Выброшено",
-            "🎁 Подарено",
-            "💰 Продано",
-            "⏰ Истёк срок",
-            "📦 Другое"
-        )
-        val reasonKeys = arrayOf(
-            "used_up",
-            "eaten",
-            "broken",
-            "thrown",
-            "gifted",
-            "sold",
-            "expired",
-            "other"
-        )
 
-        AlertDialog.Builder(this)
-            .setTitle("📦 В архив: ${binding.tvTitle.text}")
-            .setItems(reasons) { _, which ->
-                viewModel.archiveItem(id, reasonKeys[which], null)
-                Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
-                finish()
+        // Проверяем, есть ли дети
+        viewModel.getChildrenCount(id) { (foldersCount, itemsCount) ->
+            val totalChildren = foldersCount + itemsCount
+
+            if (totalChildren > 0) {
+                // Есть дети — показываем предупреждение
+                val childInfo = buildString {
+                    append("У предмета есть вложенные:\n")
+                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                    append("\nОни будут отвязаны и подняты в ту же папку, где лежит этот предмет.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Есть вложенные")
+                    .setMessage(childInfo)
+                    .setPositiveButton("Отвязать и в архив") { _, _ ->
+                        val reasons = arrayOf(
+                            "🧴 Израсходовано",
+                            "🍽 Съедено",
+                            "🔧 Сломано",
+                            "🗑 Выброшено",
+                            "🎁 Подарено",
+                            "💰 Продано",
+                            "⏰ Истёк срок",
+                            "📦 Другое"
+                        )
+                        val reasonKeys = arrayOf(
+                            "used_up", "eaten", "broken", "thrown",
+                            "gifted", "sold", "expired", "other"
+                        )
+
+                        AlertDialog.Builder(this)
+                            .setTitle("📦 В архив: ${binding.tvTitle.text}")
+                            .setItems(reasons) { _, which ->
+                                viewModel.detachAllChildrenAndArchive(id, reasonKeys[which], null) { ok ->
+                                    if (ok) {
+                                        Toast.makeText(this, "Отвязано $totalChildren, предмет в архиве", Toast.LENGTH_SHORT).show()
+                                        finish()
+                                    } else {
+                                        Toast.makeText(this, "Ошибка архивации", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                // Нет детей — обычный диалог архивации
+                val reasons = arrayOf(
+                    "🧴 Израсходовано",
+                    "🍽 Съедено",
+                    "🔧 Сломано",
+                    "🗑 Выброшено",
+                    "🎁 Подарено",
+                    "💰 Продано",
+                    "⏰ Истёк срок",
+                    "📦 Другое"
+                )
+                val reasonKeys = arrayOf(
+                    "used_up", "eaten", "broken", "thrown",
+                    "gifted", "sold", "expired", "other"
+                )
+
+                AlertDialog.Builder(this)
+                    .setTitle("📦 В архив: ${binding.tvTitle.text}")
+                    .setItems(reasons) { _, which ->
+                        viewModel.archiveItem(id, reasonKeys[which], null)
+                        Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
             }
-            .setNegativeButton("Отмена", null)
-            .show()
+        }
     }
 
+    // ============================================================
+    // 🆕 B-3: УДАЛЕНИЕ С ПРОВЕРКОЙ ДЕТЕЙ
+    // ============================================================
     private fun showDeleteDialog() {
         val id = itemId ?: return
-        AlertDialog.Builder(this)
-            .setTitle("🗑 Удалить предмет?")
-            .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
-            .setPositiveButton("Удалить") { _, _ ->
-                viewModel.deleteItem(id)
-                Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
-                finish()
+
+        // Проверяем, есть ли дети
+        viewModel.getChildrenCount(id) { (foldersCount, itemsCount) ->
+            val totalChildren = foldersCount + itemsCount
+
+            if (totalChildren > 0) {
+                // Есть дети — показываем предупреждение
+                val childInfo = buildString {
+                    append("У предмета есть вложенные:\n")
+                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                    append("\nОни будут отвязаны и подняты в ту же папку, где лежит этот предмет.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Есть вложенные")
+                    .setMessage(childInfo)
+                    .setPositiveButton("Отвязать и удалить") { _, _ ->
+                        // Ещё раз подтверждаем удаление
+                        AlertDialog.Builder(this)
+                            .setTitle("🗑 Удалить предмет?")
+                            .setMessage("Родитель будет удалён безвозвратно. Вложенные останутся (подняты в папку).")
+                            .setPositiveButton("Удалить") { _, _ ->
+                                viewModel.detachAllChildrenAndDelete(id) { ok ->
+                                    if (ok) {
+                                        Toast.makeText(this, "Отвязано $totalChildren, предмет удалён", Toast.LENGTH_SHORT).show()
+                                        finish()
+                                    } else {
+                                        Toast.makeText(this, "Ошибка удаления", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                // Нет детей — обычный диалог удаления
+                AlertDialog.Builder(this)
+                    .setTitle("🗑 Удалить предмет?")
+                    .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
+                    .setPositiveButton("Удалить") { _, _ ->
+                        viewModel.deleteItem(id)
+                        Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                    .setNeutralButton("В архив") { _, _ -> showArchiveDialog() }
+                    .setNegativeButton("Отмена", null)
+                    .show()
             }
-            .setNeutralButton("В архив") { _, _ -> showArchiveDialog() }
-            .setNegativeButton("Отмена", null)
-            .show()
+        }
     }
 
     private fun saveChanges() {
