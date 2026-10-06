@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -21,7 +22,9 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -103,6 +106,7 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DETAILS = "section_details"
     private val KEY_DATES = "section_dates"
     private val KEY_DESCRIPTION = "section_description"
+    private val KEY_NESTED = "section_nested"   // 🆕 B-5
 
     // ===== РЕВИЗИЯ =====
     private val REVISION_EXPIRED_DAYS = 365L
@@ -112,6 +116,28 @@ class ItemDetailActivity : AppCompatActivity() {
         val symbols = DecimalFormatSymbols(Locale.getDefault())
         symbols.groupingSeparator = ' '
         DecimalFormat("#,##0.##", symbols)
+    }
+
+    /**
+     * 🆕 B-5: launcher для рекурсивного открытия вложенных предметов.
+     * Используется, когда пользователь тапает на вложенный предмет.
+     */
+    private val nestedItemDetailLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        // Если вложенный предмет попросил «перейти в папку»
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                setResult(RESULT_OK, Intent().apply {
+                    putExtra("navigate_to_folder_id", folderId)
+                })
+                finish()
+            }
+        } else {
+            // Обновить секцию вложенных после возврата
+            loadNestedContent()
+        }
     }
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -235,6 +261,9 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.btnReturnItem.visibility = View.GONE
 
+        // 🆕 B-5: в гостевом режиме нельзя добавлять вложенные
+        binding.btnAddNested.visibility = View.GONE
+
         Logger.log(TAG, "Guest mode applied: edit buttons hidden")
     }
 
@@ -301,6 +330,11 @@ class ItemDetailActivity : AppCompatActivity() {
             }
         }
 
+        // 🆕 B-5: кнопка «Добавить вложенный»
+        binding.btnAddNested.setOnClickListener {
+            if (!isGuestMode()) showAddNestedDialog()
+        }
+
         binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
             currentEditType = when (checkedId) {
                 R.id.rbTypeFood -> "food"
@@ -314,7 +348,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ДЕЙСТВИЯ С ФОТО (долгий тап)
+    // ДЕЙСТВИЯ С ФОТО
     // ============================================================
     private fun showPhotoActionsDialog(hasPhoto: Boolean) {
         val actions = if (hasPhoto) {
@@ -420,6 +454,10 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.sectionDescriptionHeader.setOnClickListener {
             toggleSection(binding.contentDescriptionExpandable, binding.arrowDescription, KEY_DESCRIPTION)
         }
+        // 🆕 B-5: секция «📦 Вложенные»
+        binding.sectionNestedHeader.setOnClickListener {
+            toggleSection(binding.contentNestedExpandable, binding.arrowNested, KEY_NESTED)
+        }
     }
 
     private fun toggleSection(content: View, arrow: android.widget.TextView, prefKey: String) {
@@ -442,11 +480,13 @@ class ItemDetailActivity : AppCompatActivity() {
         val detailsExpanded = prefs.getBoolean(KEY_DETAILS, false)
         val datesExpanded = prefs.getBoolean(KEY_DATES, false)
         val descriptionExpanded = prefs.getBoolean(KEY_DESCRIPTION, false)
+        val nestedExpanded = prefs.getBoolean(KEY_NESTED, false)   // 🆕 B-5
 
         applyState(binding.contentBasicExpandable, binding.arrowBasic, basicExpanded)
         applyState(binding.contentDetailsExpandable, binding.arrowDetails, detailsExpanded)
         applyState(binding.contentDatesExpandable, binding.arrowDates, datesExpanded)
         applyState(binding.contentDescriptionExpandable, binding.arrowDescription, descriptionExpanded)
+        applyState(binding.contentNestedExpandable, binding.arrowNested, nestedExpanded)   // 🆕 B-5
     }
 
     private fun applyState(content: View, arrow: android.widget.TextView, expanded: Boolean) {
@@ -467,7 +507,282 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // РЕВИЗИЯ: ДИАЛОГ + ФОРМАТ ДАТЫ
+    // 🆕 B-5: СЕКЦИЯ «📦 ВЛОЖЕННЫЕ»
+    // ============================================================
+    /**
+     * Загружает прямых детей (папки + предметы) и отрисовывает в nestedContainer.
+     */
+    private fun loadNestedContent() {
+        val id = itemId ?: return
+
+        viewModel.getNestedContent(id) { folders, items ->
+            // Очищаем контейнер
+            binding.nestedContainer.removeAllViews()
+
+            val totalChildren = folders.size + items.size
+
+            if (totalChildren == 0) {
+                binding.tvNestedEmpty.visibility = View.VISIBLE
+            } else {
+                binding.tvNestedEmpty.visibility = View.GONE
+
+                // Сначала папки, потом предметы
+                folders.forEach { folder ->
+                    val view = bindNestedFolder(folder)
+                    binding.nestedContainer.addView(view)
+                }
+                items.forEach { item ->
+                    val view = bindNestedItem(item)
+                    binding.nestedContainer.addView(view)
+                }
+            }
+
+            Logger.log(TAG, "loadNestedContent: folders=${folders.size}, items=${items.size}")
+        }
+    }
+
+    /**
+     * Создаёт View для вложенной ПАПКИ (переиспользуем item_catalog_entry.xml).
+     */
+    private fun bindNestedFolder(folder: FolderEntity): View {
+        val view = LayoutInflater.from(this).inflate(R.layout.item_catalog_entry, binding.nestedContainer, false)
+
+        val icon = view.findViewById<ImageView>(R.id.icon)
+        val name = view.findViewById<TextView>(R.id.name)
+        val info = view.findViewById<TextView>(R.id.info)
+        val expiryInfo = view.findViewById<TextView>(R.id.expiryInfo)
+        val lentInfo = view.findViewById<TextView>(R.id.lentInfo)
+        val colorBar = view.findViewById<View>(R.id.colorBar)
+
+        // Иконка папки
+        val iconFile = ImageUtils.getLocalImageFile(this, "folder_${folder.id}")
+        if (iconFile != null && iconFile.exists()) {
+            icon.load(iconFile) {
+                crossfade(true)
+                placeholder(R.drawable.ic_folder_default)
+                error(R.drawable.ic_folder_default)
+            }
+        } else {
+            icon.load(R.drawable.ic_folder_default)
+        }
+        icon.setOnClickListener(null)
+
+        name.text = "📁 ${folder.name}"
+        info.text = ""
+        expiryInfo.visibility = View.GONE
+        lentInfo.visibility = View.GONE
+
+        colorBar.setBackgroundColor(
+            ContextCompat.getColor(this, R.color.colorNormal)
+        )
+
+        // Тап → открыть папку в MainActivity
+        view.setOnClickListener { openNestedFolder(folder) }
+
+        return view
+    }
+
+    /**
+     * Создаёт View для вложенного ПРЕДМЕТА (переиспользуем item_catalog_entry.xml).
+     */
+    private fun bindNestedItem(item: ItemEntity): View {
+        val view = LayoutInflater.from(this).inflate(R.layout.item_catalog_entry, binding.nestedContainer, false)
+
+        val icon = view.findViewById<ImageView>(R.id.icon)
+        val name = view.findViewById<TextView>(R.id.name)
+        val info = view.findViewById<TextView>(R.id.info)
+        val expiryInfo = view.findViewById<TextView>(R.id.expiryInfo)
+        val lentInfo = view.findViewById<TextView>(R.id.lentInfo)
+        val colorBar = view.findViewById<View>(R.id.colorBar)
+
+        // Иконка предмета
+        val localFile = ImageUtils.getLocalImageFile(this, item.id)
+        if (localFile != null && localFile.exists()) {
+            icon.load(localFile) {
+                crossfade(true)
+                placeholder(R.drawable.ic_item_default)
+                error(R.drawable.ic_item_default)
+            }
+            icon.setOnClickListener {
+                val intent = Intent(this, FullscreenImageActivity::class.java).apply {
+                    putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
+                    putExtra(FullscreenImageActivity.EXTRA_TITLE, item.name)
+                }
+                startActivity(intent)
+            }
+        } else {
+            icon.load(R.drawable.ic_item_default)
+            icon.setOnClickListener(null)
+        }
+
+        // Эмодзи типа
+        val typeEmoji = when (item.itemType) {
+            "food" -> "🍎"
+            "medicine" -> "💊"
+            "thing" -> "📦"
+            else -> "🗂"
+        }
+        name.text = "$typeEmoji ${item.name}"
+
+        // Инфо: количество + цена
+        val infoParts = mutableListOf<String>()
+        if (item.quantity > 1) {
+            infoParts.add("×${item.quantity}")
+        }
+        if (item.price != null && item.price != 0.0) {
+            val priceStr = if (item.price % 1.0 == 0.0) {
+                item.price.toInt().toString()
+            } else {
+                String.format("%.2f", item.price)
+            }
+            infoParts.add("${priceStr} ₽")
+        }
+        info.text = infoParts.joinToString("  •  ")
+
+        // Срок годности
+        if (item.isExpired) {
+            expiryInfo.visibility = View.VISIBLE
+            expiryInfo.text = "⚠️ Просрочен"
+            expiryInfo.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark))
+        } else if (item.daysUntilExpiry != Int.MAX_VALUE && item.daysUntilExpiry <= 7) {
+            expiryInfo.visibility = View.VISIBLE
+            expiryInfo.text = "⏰ Осталось ${item.daysUntilExpiry} дн."
+            expiryInfo.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark))
+        } else {
+            expiryInfo.visibility = View.GONE
+        }
+
+        // Займ
+        if (item.isLent && !item.lentTo.isNullOrEmpty()) {
+            lentInfo.visibility = View.VISIBLE
+            var text = "🤝 У ${item.lentTo}"
+            if (!item.lentNote.isNullOrEmpty()) {
+                text += " (${item.lentNote})"
+            }
+            lentInfo.text = text
+        } else {
+            lentInfo.visibility = View.GONE
+        }
+
+        // Цветная полоса
+        val colorRes = when {
+            item.isLent -> android.R.color.holo_orange_light
+            item.isExpired -> R.color.colorExpired
+            item.daysUntilExpiry in 0..3 -> R.color.colorWarning
+            else -> R.color.colorNormal
+        }
+        colorBar.setBackgroundColor(ContextCompat.getColor(this, colorRes))
+
+        // Тап → открыть вложенный предмет (рекурсивно)
+        view.setOnClickListener { openNestedItem(item) }
+
+        return view
+    }
+
+    /**
+     * Открывает вложенную ПАПКУ — закрывает ItemDetailActivity,
+     * возвращает результат в MainActivity с id папки.
+     */
+    private fun openNestedFolder(folder: FolderEntity) {
+        Logger.log(TAG, "openNestedFolder: ${folder.name} (id=${folder.id})")
+        val resultIntent = Intent().apply {
+            putExtra("navigate_to_folder_id", folder.id)
+        }
+        setResult(RESULT_OK, resultIntent)
+        finish()
+    }
+
+    /**
+     * Открывает вложенный ПРЕДМЕТ — запускает новый ItemDetailActivity.
+     * Использует nestedItemDetailLauncher для возможности вернуться и обновить.
+     */
+    private fun openNestedItem(item: ItemEntity) {
+        Logger.log(TAG, "openNestedItem: ${item.name} (id=${item.id})")
+        val intent = Intent(this, ItemDetailActivity::class.java).apply {
+            putExtra("item_id", item.id)
+        }
+        nestedItemDetailLauncher.launch(intent)
+    }
+
+    /**
+     * Диалог добавления вложенного: «📁 Создать папку» / «📦 Создать предмет».
+     */
+    private fun showAddNestedDialog() {
+        val id = itemId ?: return
+        val options = arrayOf("📁 Создать папку", "📦 Создать предмет")
+
+        AlertDialog.Builder(this)
+            .setTitle("Добавить вложенный")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showCreateNestedFolderDialog(id)
+                    1 -> openAddNestedItemActivity(id)
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Диалог создания вложенной папки.
+     */
+    private fun showCreateNestedFolderDialog(parentItemId: String) {
+        val editText = EditText(this).apply {
+            hint = "Название папки"
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+        container.addView(editText)
+
+        AlertDialog.Builder(this)
+            .setTitle("📁 Новая вложенная папка")
+            .setView(container)
+            .setPositiveButton("Создать") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                viewModel.createFolderInItem(name, parentItemId) { createdFolderId ->
+                    if (createdFolderId != null) {
+                        Toast.makeText(this, "Папка «$name» создана", Toast.LENGTH_SHORT).show()
+                        loadNestedContent()
+                    } else {
+                        Toast.makeText(this, "Ошибка создания папки", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Открывает AddItemActivity в режиме создания вложенного предмета.
+     */
+    private fun openAddNestedItemActivity(parentItemId: String) {
+        val intent = Intent(this, AddItemActivity::class.java).apply {
+            putExtra("parent_item_id", parentItemId)
+        }
+        // Используем nestedItemDetailLauncher — он вернёт управление,
+        // и мы обновим секцию.
+        // Но так как возвращаемся не из ItemDetailActivity, лучше использовать
+        // отдельный launcher. Используем общий startActivity + onResume-обновление.
+        startActivity(intent)
+        // loadNestedContent() вызовется в onResume()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 🆕 B-5: обновить секцию «Вложенные» при возврате (после добавления)
+        if (itemId != null) {
+            loadNestedContent()
+        }
+    }
+
+    // ============================================================
+    // РЕВИЗИЯ
     // ============================================================
     private fun showRevisionDialog() {
         val id = itemId ?: return
@@ -524,7 +839,7 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СПИСАНИЕ: ЗАГОЛОВОК ПО ТИПУ
+    // СПИСАНИЕ
     // ============================================================
     private fun getWriteOffNoun(item: ItemEntity): String {
         return when (item.itemType) {
@@ -1129,6 +1444,9 @@ class ItemDetailActivity : AppCompatActivity() {
                         } else binding.tvLentNote.visibility = View.GONE
                     } else binding.cardLentInfo.visibility = View.GONE
 
+                    // 🆕 B-5: загрузка вложенных
+                    loadNestedContent()
+
                     animateContentAppearance()
 
                     lifecycleScope.launch {
@@ -1182,6 +1500,9 @@ class ItemDetailActivity : AppCompatActivity() {
 
                     binding.cardLentInfo.visibility = View.GONE
 
+                    // 🆕 B-5: загрузка вложенных
+                    loadNestedContent()
+
                     startStatusPulse()
                 }
             } catch (e: Exception) { Logger.log(TAG, "Error showing edit mode", e) }
@@ -1193,6 +1514,7 @@ class ItemDetailActivity : AppCompatActivity() {
         applyState(binding.contentDetailsExpandable, binding.arrowDetails, true)
         applyState(binding.contentDatesExpandable, binding.arrowDates, true)
         applyState(binding.contentDescriptionExpandable, binding.arrowDescription, true)
+        applyState(binding.contentNestedExpandable, binding.arrowNested, true)
     }
 
     // ============================================================
@@ -1224,6 +1546,9 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.tilDescription.visibility = editVisibility
 
         binding.editButtonsLayout.visibility = editVisibility
+
+        // 🆕 B-5: кнопка «Добавить вложенный» — только в режиме редактирования
+        binding.btnAddNested.visibility = editVisibility
     }
 
     private fun fillViewFields(item: ItemEntity, path: String) {
@@ -1435,6 +1760,10 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.expiryProgressBlock.visibility = View.GONE
                     binding.tvDateRevisionLabel.visibility = View.GONE
                     binding.tvDateRevision.visibility = View.GONE
+
+                    // 🆕 B-5: скрываем секцию вложенных в истории
+                    binding.sectionNestedHeader.visibility = View.GONE
+                    binding.cardNested.visibility = View.GONE
 
                     val historyText = if (history.isEmpty()) "История пуста"
                     else history.joinToString("\n\n") { entry ->
@@ -1685,17 +2014,15 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 B-3: АРХИВАЦИЯ С ПРОВЕРКОЙ ДЕТЕЙ
+    // АРХИВАЦИЯ С ПРОВЕРКОЙ ДЕТЕЙ
     // ============================================================
     private fun showArchiveDialog() {
         val id = itemId ?: return
 
-        // Проверяем, есть ли дети
         viewModel.getChildrenCount(id) { (foldersCount, itemsCount) ->
             val totalChildren = foldersCount + itemsCount
 
             if (totalChildren > 0) {
-                // Есть дети — показываем предупреждение
                 val childInfo = buildString {
                     append("У предмета есть вложенные:\n")
                     if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
@@ -1708,14 +2035,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     .setMessage(childInfo)
                     .setPositiveButton("Отвязать и в архив") { _, _ ->
                         val reasons = arrayOf(
-                            "🧴 Израсходовано",
-                            "🍽 Съедено",
-                            "🔧 Сломано",
-                            "🗑 Выброшено",
-                            "🎁 Подарено",
-                            "💰 Продано",
-                            "⏰ Истёк срок",
-                            "📦 Другое"
+                            "🧴 Израсходовано", "🍽 Съедено", "🔧 Сломано", "🗑 Выброшено",
+                            "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое"
                         )
                         val reasonKeys = arrayOf(
                             "used_up", "eaten", "broken", "thrown",
@@ -1740,16 +2061,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     .setNegativeButton("Отмена", null)
                     .show()
             } else {
-                // Нет детей — обычный диалог архивации
                 val reasons = arrayOf(
-                    "🧴 Израсходовано",
-                    "🍽 Съедено",
-                    "🔧 Сломано",
-                    "🗑 Выброшено",
-                    "🎁 Подарено",
-                    "💰 Продано",
-                    "⏰ Истёк срок",
-                    "📦 Другое"
+                    "🧴 Израсходовано", "🍽 Съедено", "🔧 Сломано", "🗑 Выброшено",
+                    "🎁 Подарено", "💰 Продано", "⏰ Истёк срок", "📦 Другое"
                 )
                 val reasonKeys = arrayOf(
                     "used_up", "eaten", "broken", "thrown",
@@ -1770,17 +2084,15 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 B-3: УДАЛЕНИЕ С ПРОВЕРКОЙ ДЕТЕЙ
+    // УДАЛЕНИЕ С ПРОВЕРКОЙ ДЕТЕЙ
     // ============================================================
     private fun showDeleteDialog() {
         val id = itemId ?: return
 
-        // Проверяем, есть ли дети
         viewModel.getChildrenCount(id) { (foldersCount, itemsCount) ->
             val totalChildren = foldersCount + itemsCount
 
             if (totalChildren > 0) {
-                // Есть дети — показываем предупреждение
                 val childInfo = buildString {
                     append("У предмета есть вложенные:\n")
                     if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
@@ -1792,7 +2104,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     .setTitle("⚠️ Есть вложенные")
                     .setMessage(childInfo)
                     .setPositiveButton("Отвязать и удалить") { _, _ ->
-                        // Ещё раз подтверждаем удаление
                         AlertDialog.Builder(this)
                             .setTitle("🗑 Удалить предмет?")
                             .setMessage("Родитель будет удалён безвозвратно. Вложенные останутся (подняты в папку).")
@@ -1812,7 +2123,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     .setNegativeButton("Отмена", null)
                     .show()
             } else {
-                // Нет детей — обычный диалог удаления
                 AlertDialog.Builder(this)
                     .setTitle("🗑 Удалить предмет?")
                     .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
