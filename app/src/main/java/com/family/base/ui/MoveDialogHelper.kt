@@ -11,6 +11,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.ItemEntity
 import com.family.base.ui.adapter.MoveFolderAdapter
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -21,16 +22,29 @@ object MoveDialogHelper {
 
     private const val TAG = "MoveDialogHelper"
 
+    /**
+     * Показывает диалог перемещения с полным деревом (папки + вложенные папки + предметы).
+     *
+     * @param onConfirm колбэк с парой (newParentId, newParentItemId):
+     *   - переместить в папку:    newParentId = folderId,   newParentItemId = null
+     *   - переместить в предмет:  newParentId = parentId предмета, newParentItemId = itemId
+     *   - переместить в корень:   (null, null)
+     */
     fun show(
         context: Context,
         scope: LifecycleCoroutineScope,
         db: AppDatabase,
         title: String,
         startFromId: String?,
+        startFromItemId: String? = null,
         excludedIds: Set<String> = emptySet(),
-        onConfirm: (String?) -> Unit
+        onConfirm: (newParentId: String?, newParentItemId: String?) -> Unit
     ) {
-        Logger.log(TAG, "=== show START === title=$title, startFromId=$startFromId, excluded=${excludedIds.size}")
+        Logger.log(
+            TAG,
+            "=== show START === title=$title, startFromId=$startFromId, " +
+                "startFromItemId=$startFromItemId, excluded=${excludedIds.size}"
+        )
 
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_move, null, false)
         val tvDialogTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
@@ -43,41 +57,138 @@ object MoveDialogHelper {
 
         tvDialogTitle.text = title
 
+        // Текущий узел: либо папка (currentFolderId), либо предмет (currentItemId).
+        // Инвариант: ровно одно из них не null; оба null → корень.
         var currentFolderId: String? = startFromId
+        var currentItemId: String? = startFromItemId
 
-        // Функция загрузки содержимого — объявляем ДО адаптера
-        lateinit var loadFolder: (String?) -> Unit
-
-        // Создаём адаптер СРАЗУ с колбэком (без переприсваивания)
-        val adapter = MoveFolderAdapter { clickedFolder ->
-            Logger.log(TAG, "Folder clicked: ${clickedFolder.name} (id=${clickedFolder.id})")
-            currentFolderId = clickedFolder.id
-            loadFolder(currentFolderId)
+        // Определяем, внутри чего сейчас находимся:
+        //   "root"   — оба null
+        //   "folder" — currentFolderId != null
+        //   "item"   — currentItemId != null
+        fun currentNodeKind(): String = when {
+            currentItemId != null -> "item"
+            currentFolderId != null -> "folder"
+            else -> "root"
         }
+
+        lateinit var loadNode: () -> Unit
+
+        val adapter = MoveFolderAdapter(
+            onFolderClick = { folder ->
+                Logger.log(TAG, "Folder clicked: ${folder.name} (id=${folder.id})")
+                currentFolderId = folder.id
+                currentItemId = null
+                loadNode()
+            },
+            onItemClick = { item ->
+                Logger.log(TAG, "Item clicked: ${item.name} (id=${item.id})")
+                currentItemId = item.id
+                currentFolderId = null
+                loadNode()
+            }
+        )
 
         rvFolders.layoutManager = LinearLayoutManager(context)
         rvFolders.adapter = adapter
-        // Явно разрешаем клики
         rvFolders.isClickable = true
 
-        loadFolder = { folderId ->
+        loadNode = {
             scope.launch {
                 try {
-                    val allChildren: List<FolderEntity> = withContext(Dispatchers.IO) {
-                        val dao = db.folderDao()
-                        if (folderId == null) {
-                            dao.getRootFolders()
-                        } else {
-                            dao.getFoldersByParent(folderId)
+                    val kind = currentNodeKind()
+                    val rows: MutableList<MoveRow> = mutableListOf()
+                    val crumbs: String
+
+                    when (kind) {
+                        "root" -> {
+                            val rootFolders = withContext(Dispatchers.IO) {
+                                db.folderDao().getRootFolders()
+                            }
+                            val rootItems = withContext(Dispatchers.IO) {
+                                db.itemDao().getItemsByParent(null)
+                            }
+
+                            rootFolders
+                                .filter { it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Folder(it, nested = false)) }
+
+                            rootItems
+                                .filter { it.parentItemId == null && it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Item(it)) }
+
+                            crumbs = "📂 Корень"
+                        }
+
+                        "folder" -> {
+                            val folderId = currentFolderId!!
+                            val folder = withContext(Dispatchers.IO) {
+                                db.folderDao().getFolderById(folderId)
+                            }
+                            if (folder == null) {
+                                Logger.log(TAG, "loadNode: folder not found $folderId, falling back to root")
+                                currentFolderId = null
+                                loadNode()
+                                return@launch
+                            }
+
+                            val subFolders = withContext(Dispatchers.IO) {
+                                db.folderDao().getFoldersByParent(folderId)
+                            }
+                            val items = withContext(Dispatchers.IO) {
+                                db.itemDao().getItemsByParent(folderId)
+                            }
+
+                            subFolders
+                                .filter { it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Folder(it, nested = false)) }
+
+                            items
+                                .filter { it.parentItemId == null && it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Item(it)) }
+
+                            crumbs = buildBreadcrumbsForFolder(folderId)
+                        }
+
+                        "item" -> {
+                            val itemId = currentItemId!!
+                            val item = withContext(Dispatchers.IO) {
+                                db.itemDao().getItemById(itemId)
+                            }
+                            if (item == null) {
+                                Logger.log(TAG, "loadNode: item not found $itemId, falling back to root")
+                                currentItemId = null
+                                loadNode()
+                                return@launch
+                            }
+
+                            val nestedFolders = withContext(Dispatchers.IO) {
+                                db.folderDao().getFoldersByParentItem(itemId)
+                            }
+                            val nestedItems = withContext(Dispatchers.IO) {
+                                db.itemDao().getItemsByParentItemRaw(itemId)
+                            }
+
+                            nestedFolders
+                                .filter { it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Folder(it, nested = true)) }
+
+                            nestedItems
+                                .filter { it.id !in excludedIds }
+                                .forEach { rows.add(MoveRow.Item(it)) }
+
+                            crumbs = buildBreadcrumbsForItem(itemId)
+                        }
+
+                        else -> {
+                            crumbs = "📂 Корень"
                         }
                     }
 
-                    val visibleChildren = allChildren.filter { it.id !in excludedIds }
-
                     withContext(Dispatchers.Main) {
-                        adapter.submitList(visibleChildren)
+                        adapter.submitList(rows)
 
-                        if (visibleChildren.isEmpty()) {
+                        if (rows.isEmpty()) {
                             tvEmptyHint.visibility = View.VISIBLE
                             rvFolders.visibility = View.GONE
                         } else {
@@ -85,15 +196,13 @@ object MoveDialogHelper {
                             rvFolders.visibility = View.VISIBLE
                         }
 
-                        val crumbs = buildBreadcrumbs(folderId)
                         tvBreadcrumbs.text = crumbs
+                        btnGoUp.visibility = if (kind == "root") View.GONE else View.VISIBLE
 
-                        btnGoUp.visibility = if (folderId == null) View.GONE else View.VISIBLE
-
-                        Logger.log(TAG, "Loaded folder=$folderId, children=${visibleChildren.size}")
+                        Logger.log(TAG, "Loaded node kind=$kind, rows=${rows.size}, crumbs=$crumbs")
                     }
                 } catch (e: Exception) {
-                    Logger.log(TAG, "Error loading folder $folderId: ${e.message}", e)
+                    Logger.log(TAG, "Error loading node: ${e.message}", e)
                 }
             }
         }
@@ -101,12 +210,37 @@ object MoveDialogHelper {
         btnGoUp.setOnClickListener {
             scope.launch {
                 try {
-                    val parent = withContext(Dispatchers.IO) {
-                        currentFolderId?.let { db.folderDao().getFolderById(it)?.parentId }
+                    val kind = currentNodeKind()
+                    when (kind) {
+                        "item" -> {
+                            // Из предмета → в его папку (или корень)
+                            val itemId = currentItemId!!
+                            val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
+                            currentItemId = null
+                            currentFolderId = item?.parentId
+                            Logger.log(TAG, "Go up from item $itemId → folder ${currentFolderId ?: "ROOT"}")
+                        }
+                        "folder" -> {
+                            // Из папки → в её родителя:
+                            //   - если папка вложена в предмет (parentItemId != null) → в этот предмет
+                            //   - иначе → в parentId (или корень)
+                            val folderId = currentFolderId!!
+                            val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
+                            if (folder?.parentItemId != null) {
+                                currentItemId = folder.parentItemId
+                                currentFolderId = null
+                                Logger.log(TAG, "Go up from nested folder $folderId → item ${folder.parentItemId}")
+                            } else {
+                                currentItemId = null
+                                currentFolderId = folder?.parentId
+                                Logger.log(TAG, "Go up from folder $folderId → folder ${currentFolderId ?: "ROOT"}")
+                            }
+                        }
+                        else -> {
+                            Logger.log(TAG, "Go up from root — ignoring")
+                        }
                     }
-                    Logger.log(TAG, "Go up: $currentFolderId -> $parent")
-                    currentFolderId = parent
-                    loadFolder(currentFolderId)
+                    loadNode()
                 } catch (e: Exception) {
                     Logger.log(TAG, "Error navigating up: ${e.message}", e)
                 }
@@ -121,31 +255,140 @@ object MoveDialogHelper {
         btnCancel.setOnClickListener { dialog.dismiss() }
 
         btnMoveHere.setOnClickListener {
-            Logger.log(TAG, "Confirmed move to: $currentFolderId")
-            onConfirm(currentFolderId)
+            val kind = currentNodeKind()
+            val (targetParentId, targetParentItemId) = when (kind) {
+                "root" -> Pair(null, null)
+                "folder" -> Pair(currentFolderId, null)
+                "item" -> {
+                    // Перемещаем «в предмет» → наследуем папку родителя
+                    // (как при createFolderInItem)
+                    scope.launch {
+                        try {
+                            val itemId = currentItemId!!
+                            val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
+                            val parentFolderId = item?.parentId
+                            Logger.log(
+                                TAG,
+                                "Confirmed move INTO item: itemId=$itemId, parentFolderId=${parentFolderId ?: "ROOT"}"
+                            )
+                            withContext(Dispatchers.Main) {
+                                onConfirm(parentFolderId, itemId)
+                            }
+                            dialog.dismiss()
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Error confirming move into item: ${e.message}", e)
+                        }
+                    }
+                    return@setOnClickListener
+                }
+                else -> Pair(null, null)
+            }
+
+            Logger.log(TAG, "Confirmed move to: parentId=$targetParentId, parentItemId=$targetParentItemId")
+            onConfirm(targetParentId, targetParentItemId)
             dialog.dismiss()
         }
 
         dialog.show()
 
-        loadFolder(currentFolderId)
+        loadNode()
     }
 
-    private suspend fun buildBreadcrumbs(folderId: String?): String {
-        if (folderId == null) return "📂 Корень"
+    // ============================================================
+    // ВНУТРЕННЯЯ МОДЕЛЬ СТРОКИ
+    // ============================================================
+    sealed class MoveRow {
+        data class Folder(val folder: FolderEntity, val nested: Boolean) : MoveRow()
+        data class Item(val item: ItemEntity) : MoveRow()
+    }
 
-        val parts = mutableListOf<String>()
-        var id: String? = folderId
+    // ============================================================
+    // ХЛЕБНЫЕ КРОШКИ
+    // ============================================================
 
-        val ctx = com.family.base.BaseApplication.getAppContext()
-        val dao = AppDatabase.getInstance(ctx).folderDao()
+    /**
+     * Путь для ПАПКИ (обычной или вложенной):
+     * 📂 Корень / 📁 Дом / 📁 Комната
+     * или
+     * 📂 Корень / 📁 Дом / 📦 Стол / 📁 Полка
+     */
+    private suspend fun buildBreadcrumbsForFolder(folderId: String): String {
+        val segments = mutableListOf<String>()
+        var currentFolderId: String? = folderId
+        var currentItemId: String? = null
+        var depth = 0
+        val maxDepth = 100
 
-        while (id != null) {
-            val folder = dao.getFolderById(id) ?: break
-            parts.add(folder.name)
-            id = folder.parentId
+        while (depth < maxDepth) {
+            depth++
+
+            if (currentItemId != null) {
+                val item = db.itemDao().getItemById(currentItemId!!) ?: break
+                segments.add("📦 ${item.name}")
+                currentFolderId = item.parentId
+                currentItemId = item.parentItemId
+                continue
+            }
+
+            if (currentFolderId != null) {
+                val folder = db.folderDao().getFolderById(currentFolderId!!) ?: break
+                segments.add("📁 ${folder.name}")
+                if (folder.parentItemId != null) {
+                    currentItemId = folder.parentItemId
+                    currentFolderId = folder.parentId
+                } else {
+                    currentFolderId = folder.parentId
+                    currentItemId = null
+                }
+                continue
+            }
+
+            break
         }
 
-        return "📂 Корень / " + parts.reversed().joinToString(" / ")
+        if (segments.isEmpty()) return "📂 Корень"
+        return "📂 Корень / " + segments.reversed().joinToString(" / ")
+    }
+
+    /**
+     * Путь для ПРЕДМЕТА:
+     * 📂 Корень / 📁 Дом / 📦 Стол
+     */
+    private suspend fun buildBreadcrumbsForItem(itemId: String): String {
+        val segments = mutableListOf<String>()
+        var currentFolderId: String? = null
+        var currentItemId: String? = itemId
+        var depth = 0
+        val maxDepth = 100
+
+        while (depth < maxDepth) {
+            depth++
+
+            if (currentItemId != null) {
+                val item = db.itemDao().getItemById(currentItemId!!) ?: break
+                segments.add("📦 ${item.name}")
+                currentFolderId = item.parentId
+                currentItemId = item.parentItemId
+                continue
+            }
+
+            if (currentFolderId != null) {
+                val folder = db.folderDao().getFolderById(currentFolderId!!) ?: break
+                segments.add("📁 ${folder.name}")
+                if (folder.parentItemId != null) {
+                    currentItemId = folder.parentItemId
+                    currentFolderId = folder.parentId
+                } else {
+                    currentFolderId = folder.parentId
+                    currentItemId = null
+                }
+                continue
+            }
+
+            break
+        }
+
+        if (segments.isEmpty()) return "📂 Корень"
+        return "📂 Корень / " + segments.reversed().joinToString(" / ")
     }
 }
