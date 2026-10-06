@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 7,  // ← увеличили с 6 до 7 (lastRevisionDate для ревизии)
+    version = 8,  // ← увеличили с 7 до 8 (parentItemId — вложенные предметы)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -89,6 +89,18 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 7 НА 8 (parentItemId — ВЛОЖЕННЫЕ ПРЕДМЕТЫ)
+        // ============================================================
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // items: добавляем parentItemId (родитель-предмет)
+                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                // folders: добавляем parentItemId (родитель-предмет)
+                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
         // МИГРАЦИЯ С ВЕРСИИ 2 НА 4 (ЕСЛИ ПРОПУСТИЛИ 3)
         // ============================================================
         private val MIGRATION_2_4 = object : Migration(2, 4) {
@@ -143,6 +155,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 6 НА 8 (ЕСЛИ ПРОПУСТИЛИ 7)
+        // ============================================================
+        private val MIGRATION_6_8 = object : Migration(6, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -156,10 +179,12 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
+                        MIGRATION_7_8,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
                         MIGRATION_4_6,
-                        MIGRATION_5_7
+                        MIGRATION_5_7,
+                        MIGRATION_6_8
                     )
                     .build()
                     .also { INSTANCE = it }
