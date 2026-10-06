@@ -8,7 +8,27 @@ import java.util.UUID
 data class ItemEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
+
+    /**
+     * Родитель-ПАПКА.
+     * NULL — если предмет не лежит в папке напрямую
+     * (например, он вложен в другой предмет через parentItemId,
+     * либо является корневым).
+     */
     val parentId: String?,
+
+    /**
+     * Родитель-ПРЕДМЕТ (вложенность).
+     * NULL — если предмет не вложен в другой предмет.
+     * Если не NULL — предмет находится «внутри» предмета-родителя.
+     *
+     * ИНВАРИАНТ: ровно одно из (parentId, parentItemId) может быть не NULL.
+     *  - parentId != null, parentItemId == null → предмет лежит в папке
+     *  - parentId == null, parentItemId != null → предмет вложен в предмет
+     *  - оба null → корневой предмет (обычно не используется)
+     */
+    val parentItemId: String? = null,
+
     var quantity: Int = 1,
     val barcode: String? = null,
     val description: String? = null,
