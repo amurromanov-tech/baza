@@ -74,7 +74,6 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
         if (result.resultCode == RESULT_OK) {
-            // Пользователь выбран — применяем гостевой режим, если нужно
             applyGuestModeIfNeeded()
             viewModel.loadContents()
         } else {
@@ -165,7 +164,6 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            // После ConnectFamilyActivity (ввода пути) — сразу на выбор пользователя
             launchSelectUserIfNeeded()
             viewModel.loadContents()
         }
@@ -194,7 +192,6 @@ class MainActivity : AppCompatActivity() {
             Logger.log(TAG, "Error registering AppLifecycleObserver", e)
         }
 
-        // ===== ПРОВЕРКА: ПУБЛИЧНЫЙ КЛЮЧ =====
         val publicKey = tokenStorage.getPublicKey()
         if (publicKey == null) {
             connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
@@ -271,14 +268,12 @@ class MainActivity : AppCompatActivity() {
         viewModel.navigateToFolder(null)
         updateSearchIcon(viewModel.searchQueryLiveData.value)
 
-        // ===== ПРОВЕРКА: ВЫБРАН ЛИ ПОЛЬЗОВАТЕЛЬ =====
         if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
             launchSelectUserIfNeeded()
         } else {
             applyGuestModeIfNeeded()
         }
 
-        // ===== ЗАЩИТА ОТ СЛУЧАЙНОГО ВЫХОДА =====
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 AlertDialog.Builder(this@MainActivity)
@@ -319,11 +314,6 @@ class MainActivity : AppCompatActivity() {
         return tokenStorage.isCurrentUserGuest()
     }
 
-    /**
-     * Применяет гостевой режим:
-     * - скрывает FAB «Добавить папку», «Добавить предмет», «Сканировать чек»
-     * - отключает long-click (через лямбды в адаптере)
-     */
     private fun applyGuestModeIfNeeded() {
         val guest = isGuestMode()
         binding.btnAddFolder.visibility = if (guest) View.GONE else View.VISIBLE
@@ -530,7 +520,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showFolderContextMenu(folder: FolderEntity) {
-        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить (если пуста)", "Статистика", "Переместить")
+        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с папкой")
             .setItems(items) { _, which ->
@@ -912,41 +902,53 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ============================================================
+    // B-5-FIX: УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
+    // ============================================================
+    /**
+     * Логика (решение X для папок):
+     *   1. Проверяем детей папки (getFolderChildrenCount): подпапки + предметы.
+     *   2. Если дети есть → «Нельзя удалить, есть вложенные» +
+     *      кнопка «Отвязать всех детей» (без удаления).
+     *   3. После отвязки — пользователь сам жмёт «Удалить» снова.
+     *   4. Если детей нет → стандартный диалог удаления.
+     */
     private fun confirmDeleteFolder(folder: FolderEntity) {
-        lifecycleScope.launch {
-            viewModel.getFolderStats(folder.id) { stats ->
-                val (itemCount, folderCount) = stats
+        viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
+            val total = folderCount + itemCount
 
-                if (itemCount == 0 && folderCount == 0) {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Удалить папку «${folder.name}»?")
-                        .setPositiveButton("Да") { _, _ ->
-                            viewModel.deleteFolder(folder.id)
-                            Toast.makeText(this@MainActivity, "Папка удалена", Toast.LENGTH_SHORT).show()
-                        }
-                        .setNegativeButton("Нет", null)
-                        .show()
-                } else {
-                    val message = buildString {
-                        append("Папка «${folder.name}» не пуста:\n\n")
-                        if (itemCount > 0) append("• Предметов: $itemCount\n")
-                        if (folderCount > 0) append("• Подпапок: $folderCount\n")
-                        append("\nВсё содержимое будет перемещено в корень, после чего папка удалится.")
-                    }
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("⚠️ Удалить папку?")
-                        .setMessage(message)
-                        .setPositiveButton("Переместить и удалить") { _, _ ->
-                            viewModel.deleteFolder(folder.id)
+            if (total > 0) {
+                val message = buildString {
+                    append("Папка «${folder.name}» не пуста:\n\n")
+                    if (itemCount > 0) append("• Предметов: $itemCount\n")
+                    if (folderCount > 0) append("• Подпапок: $folderCount\n")
+                    append("\nНельзя удалить, пока есть вложенные.\n")
+                    append("Сначала отвяжите их — они поднимутся в корень.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Нельзя удалить")
+                    .setMessage(message)
+                    .setPositiveButton("Отвязать всех детей") { _, _ ->
+                        viewModel.detachAllFolderChildren(folder.id) { count ->
                             Toast.makeText(
-                                this@MainActivity,
-                                "Содержимое перемещено в корень, папка удалена",
+                                this,
+                                "Отвязано: $count. Теперь можно удалить.",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
-                        .setNegativeButton("Отмена", null)
-                        .show()
-                }
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("Удалить папку «${folder.name}»?")
+                    .setPositiveButton("Да") { _, _ ->
+                        viewModel.deleteFolder(folder.id)
+                        Toast.makeText(this, "Папка удалена", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Нет", null)
+                    .show()
             }
         }
     }
@@ -1025,14 +1027,57 @@ class MainActivity : AppCompatActivity() {
         itemDetailLauncher.launch(intent)
     }
 
+    // ============================================================
+    // B-5-FIX: УДАЛЕНИЕ ПРЕДМЕТА С ЖЁСТКИМ ЗАПРЕТОМ
+    // ============================================================
+    /**
+     * Логика (решение X):
+     *   1. Проверяем детей (getChildrenCount): вложенные папки + предметы.
+     *   2. Если дети есть → «Нельзя удалить, есть вложенные» +
+     *      кнопка «Отвязать всех детей» (без удаления).
+     *   3. После отвязки — пользователь сам жмёт «Удалить» снова.
+     *   4. Если детей нет → стандартный диалог удаления.
+     */
     private fun confirmDeleteItem(item: ItemEntity) {
-        AlertDialog.Builder(this)
-            .setTitle("Удалить предмет «${item.name}»?")
-            .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
-            .setPositiveButton("Удалить") { _, _ -> viewModel.deleteItem(item.id) }
-            .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
-            .setNeutralButton("Отмена", null)
-            .show()
+        viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
+            val totalChildren = foldersCount + itemsCount
+
+            if (totalChildren > 0) {
+                val childInfo = buildString {
+                    append("У предмета «${item.name}» есть вложенные:\n\n")
+                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                    append("\nНельзя удалить, пока есть вложенные.\n")
+                    append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Нельзя удалить")
+                    .setMessage(childInfo)
+                    .setPositiveButton("Отвязать всех детей") { _, _ ->
+                        viewModel.detachAllChildren(item.id) { count ->
+                            Toast.makeText(
+                                this,
+                                "Отвязано: $count. Теперь можно удалить.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("Удалить предмет «${item.name}»?")
+                    .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
+                    .setPositiveButton("Удалить") { _, _ ->
+                        viewModel.deleteItem(item.id)
+                        Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
+                    .setNeutralButton("Отмена", null)
+                    .show()
+            }
+        }
     }
 
     private fun showItemHistory(item: ItemEntity) {
