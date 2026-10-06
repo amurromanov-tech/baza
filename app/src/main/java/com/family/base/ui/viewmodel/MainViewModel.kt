@@ -476,13 +476,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // 🆕 B-5: ВЛОЖЕННЫЕ (секция «📦 Вложенные»)
+    // B-5: ВЛОЖЕННЫЕ (секция «📦 Вложенные»)
     // ============================================================
 
-    /**
-     * Возвращает прямых детей предмета: (List<FolderEntity>, List<ItemEntity>).
-     * Колбэк вызывается на главном потоке.
-     */
     fun getNestedContent(
         parentItemId: String,
         callback: (List<FolderEntity>, List<ItemEntity>) -> Unit
@@ -503,12 +499,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Создаёт папку внутри предмета.
-     * @param name имя папки
-     * @param parentItemId id предмета-родителя
-     * @param onDone колбэк на главном потоке с id созданной папки (или null при ошибке)
-     */
     fun createFolderInItem(
         name: String,
         parentItemId: String,
@@ -533,10 +523,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Ставим в очередь
                 enqueue("folder", folder.id, "create", parentFolderId, parentItemId)
 
-                // История по родителю
                 withContext(Dispatchers.IO) {
                     db.historyDao().insertEntry(
                         HistoryEntry(
@@ -555,6 +543,114 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Logger.log(TAG, "Error createFolderInItem: ${e.message}")
                 withContext(Dispatchers.Main) { onDone(null) }
+            }
+        }
+    }
+
+    // ============================================================
+    // B-5-FIX: ПРОВЕРКА ДЕТЕЙ ДЛЯ ПАПКИ
+    // ============================================================
+
+    /**
+     * Проверяет, есть ли у ПАПКИ дети:
+     *   - вложенные подпапки (parentId == folderId)
+     *   - предметы в папке (parentId == folderId)
+     *   - папки/предметы, вложенные в ПАПКУ через parentItemId (не должно быть,
+     *     но на всякий случай проверяем — у папки parentItemId всегда null).
+     *
+     * Возвращает (foldersCount, itemsCount).
+     */
+    fun getFolderChildrenCount(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val folderCount = withContext(Dispatchers.IO) {
+                    db.folderDao().getSubfolderCountInFolder(folderId)
+                }
+                val itemCount = withContext(Dispatchers.IO) {
+                    db.folderDao().getItemCountInFolder(folderId)
+                }
+                withContext(Dispatchers.Main) { callback(Pair(folderCount, itemCount)) }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error getFolderChildrenCount: ${e.message}")
+                withContext(Dispatchers.Main) { callback(Pair(0, 0)) }
+            }
+        }
+    }
+
+    /**
+     * Отвязывает всех детей ПАПКИ: подпапки и предметы → в корень.
+     * После этого папку можно удалить (она станет пустой).
+     *
+     * ВАЖНО: не удаляем папку — только отвязываем.
+     * Пользователь потом сам жмёт «Удалить».
+     */
+    fun detachAllFolderChildren(folderId: String, onDone: (Int) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
+                if (folder == null) {
+                    withContext(Dispatchers.Main) { onDone(0) }
+                    return@launch
+                }
+
+                val subfolders = withContext(Dispatchers.IO) {
+                    db.folderDao().getFoldersByParent(folderId)
+                }
+                val items = withContext(Dispatchers.IO) {
+                    db.itemDao().getItemsByParent(folderId)
+                }
+
+                val now = System.currentTimeMillis()
+
+                subfolders.forEach { sub ->
+                    val updated = sub.copy(parentId = null, updatedAt = now)
+                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                    enqueue("folder", sub.id, "update", null, null)
+                }
+
+                items.forEach { item ->
+                    val updated = item.copy(parentId = null, updatedDate = now, updatedBy = currentUser)
+                    updated.computeExpiryFields()
+                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                    enqueue("item", item.id, "update", null, item.parentItemId)
+                }
+
+                val total = subfolders.size + items.size
+                Logger.log(
+                    TAG,
+                    "detachAllFolderChildren: folder=$folderId, subfolders=${subfolders.size}, items=${items.size}"
+                )
+
+                withContext(Dispatchers.Main) { onDone(total) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error detachAllFolderChildren: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(0) }
+            }
+        }
+    }
+
+    /**
+     * Безопасное удаление ПАПКИ с предварительной отвязкой детей.
+     * Оставлено на будущее (B-6). В текущем UI не вызывается —
+     * используется жёсткий запрет.
+     */
+    fun detachAllFolderChildrenAndDelete(folderId: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                detachAllFolderChildren(folderId) { /* ignore count */ }
+
+                val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
+                if (folder != null) {
+                    withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
+                    enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+                }
+
+                withContext(Dispatchers.Main) { onDone(true) }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error detachAllFolderChildrenAndDelete: ${e.message}")
+                withContext(Dispatchers.Main) { onDone(false) }
             }
         }
     }
@@ -603,7 +699,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 syncStatus.postValue(SyncStatus.SYNCING)
 
-                // ШАГ 2: СБОР МЕТРИК
                 val tMetrics = System.currentTimeMillis()
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
@@ -622,7 +717,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "isFirstLaunch=$isFirstLaunch"
                 )
 
-                // ШАГ 3: ПЕРВЫЙ ЗАПУСК — только DOWNLOAD
                 if (isFirstLaunch) {
                     Logger.log(TAG, "syncWithDisk: FIRST LAUNCH — download only (no upload)")
 
@@ -653,7 +747,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // ШАГ 4a: ЕСТЬ ЛОКАЛЬНЫЕ ИЗМЕНЕНИЯ → ПОЛНЫЙ UPLOAD
                 if (pendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
 
@@ -702,7 +795,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
                 }
 
-                // ШАГ 4b: ЕСТЬ ИЗМЕНЕНИЯ НА ДИСКЕ → DOWNLOAD
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
                 if (shouldDownload) {
@@ -738,7 +830,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // ШАГ 4c: ФОТО
                 val nothingChanged = (pendingCount == 0)
                     && (diskLastModified != null)
                     && (diskLastModified <= localLastModified)
@@ -1097,7 +1188,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
 
-            // 1. FOLDERS
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
             } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
@@ -1117,7 +1207,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // 2. ITEMS
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
             } else if (diskItems.isEmpty() && localItemsCount > 0) {
@@ -2007,6 +2096,91 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleting item: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * B-5-FIX: Безопасное удаление ПРЕДМЕТА с проверкой детей.
+     * Если дети есть — удаление НЕ выполняется, вызывается onError с сообщением.
+     * Если детей нет — удаление выполняется, вызывается onSuccess.
+     *
+     * В текущем UI используется жёсткий запрет (UI сам проверяет getChildrenCount
+     * и показывает «Нельзя удалить»). Этот метод — на будущее (B-6), когда
+     * понадобится единая точка удаления с гарантией.
+     */
+    fun deleteItemSafely(itemId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val children = repository.countChildren(itemId)
+                val total = children.first + children.second
+
+                if (total > 0) {
+                    val msg = "Нельзя удалить: вложенных ${children.first} папок, ${children.second} предметов"
+                    Logger.log(TAG, "deleteItemSafely: BLOCKED for $itemId — $msg")
+                    withContext(Dispatchers.Main) { onError(msg) }
+                    return@launch
+                }
+
+                val item = db.itemDao().getItemById(itemId)
+                if (item == null) {
+                    withContext(Dispatchers.Main) { onError("Предмет не найден") }
+                    return@launch
+                }
+
+                db.itemDao().deleteItem(item)
+                val appContext = getApplication<Application>().applicationContext
+                ImageUtils.deleteLocalImage(appContext, itemId)
+                enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+
+                Logger.log(TAG, "deleteItemSafely: deleted $itemId")
+                withContext(Dispatchers.Main) { onSuccess() }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error deleteItemSafely: ${e.message}")
+                withContext(Dispatchers.Main) { onError("Ошибка удаления: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * B-5-FIX: Безопасное удаление ПАПКИ с проверкой детей.
+     * Если дети есть — удаление НЕ выполняется, вызывается onError.
+     * Если детей нет — удаление выполняется, вызывается onSuccess.
+     */
+    fun deleteFolderSafely(folderId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val folderCount = withContext(Dispatchers.IO) {
+                    db.folderDao().getSubfolderCountInFolder(folderId)
+                }
+                val itemCount = withContext(Dispatchers.IO) {
+                    db.folderDao().getItemCountInFolder(folderId)
+                }
+                val total = folderCount + itemCount
+
+                if (total > 0) {
+                    val msg = "Нельзя удалить: внутри $folderCount подпапок, $itemCount предметов"
+                    Logger.log(TAG, "deleteFolderSafely: BLOCKED for $folderId — $msg")
+                    withContext(Dispatchers.Main) { onError(msg) }
+                    return@launch
+                }
+
+                val folder = db.folderDao().getFolderById(folderId)
+                if (folder == null) {
+                    withContext(Dispatchers.Main) { onError("Папка не найдена") }
+                    return@launch
+                }
+
+                db.folderDao().deleteFolderById(folderId)
+                enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+
+                Logger.log(TAG, "deleteFolderSafely: deleted $folderId")
+                withContext(Dispatchers.Main) { onSuccess() }
+                loadContents()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error deleteFolderSafely: ${e.message}")
+                withContext(Dispatchers.Main) { onError("Ошибка удаления: ${e.message}") }
             }
         }
     }
