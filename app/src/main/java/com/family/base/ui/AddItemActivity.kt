@@ -28,7 +28,9 @@ import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -46,6 +48,15 @@ class AddItemActivity : AppCompatActivity() {
     private val CAMERA_PERMISSION_REQUEST = 100
 
     private var parentFolderId: String? = null
+
+    /**
+     * 🆕 B-5: id предмета-родителя, если создаём вложенный предмет.
+     * null — обычное создание (в папке parentFolderId).
+     * non-null — создание вложенного в предмет parentItemId.
+     * В этом случае parentFolderId будет взят из parentItem.parentId.
+     */
+    private var parentItemId: String? = null
+
     private var imageBytes: ByteArray? = null
     private var expiryDate: Long? = null
     private var barcode: String? = null
@@ -135,6 +146,33 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         parentFolderId = intent.getStringExtra("parent_id")
+        parentItemId = intent.getStringExtra("parent_item_id")
+
+        // 🆕 B-5: если создаём вложенный — берём parentId из родителя-предмета
+        if (parentItemId != null) {
+            lifecycleScope.launch {
+                try {
+                    val parentItem = withContext(Dispatchers.IO) {
+                        db.itemDao().getItemById(parentItemId!!)
+                    }
+                    if (parentItem != null) {
+                        // Родитель найден — берём его parentId в качестве папки
+                        parentFolderId = parentItem.parentId
+                        Logger.log(
+                            TAG,
+                            "Nested item mode: parentItemId=$parentItemId, " +
+                                "inherited parentFolderId=${parentItem.parentId}"
+                        )
+                    } else {
+                        Logger.log(TAG, "Nested item mode: parent not found $parentItemId, fallback to parent_id=$parentFolderId")
+                        parentItemId = null
+                    }
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Error loading parent item: ${e.message}")
+                    parentItemId = null
+                }
+            }
+        }
 
         val incomingBarcode = intent.getStringExtra("barcode")
         if (!incomingBarcode.isNullOrEmpty()) {
@@ -212,21 +250,8 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 СТЕППЕРЫ КОЛИЧЕСТВА
+    // СТЕППЕРЫ КОЛИЧЕСТВА
     // ============================================================
-    /**
-     * Навешивает обработчики на кнопки [−] и [+] для auto- и manual-режимов.
-     *
-     * Логика:
-     *   −  → max(1, current - 1)
-     *   +  → current + 1 (без лимита сверху)
-     *
-     * Ручной ввод в EditText не ограничиваем жёстко — валидация
-     * происходит при сохранении (coerceAtLeast(1)).
-     *
-     * EditText теперь находится внутри TextInputLayout (стиль как у
-     * остальных полей), но id и тип поля не изменились — код тот же.
-     */
     private fun setupQuantitySteppers() {
         setupStepper(binding.btnAutoQuantityMinus, binding.btnAutoQuantityPlus, binding.etAutoQuantity)
         setupStepper(binding.btnManualQuantityMinus, binding.btnManualQuantityPlus, binding.etManualQuantity)
@@ -247,8 +272,6 @@ class AddItemActivity : AppCompatActivity() {
             field.setSelection(field.text.length)
         }
 
-        // Защита от ввода «0» / пусто при потере фокуса.
-        // Не блокируем жёстко во время ввода — только нормализуем по blur.
         field.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) {
                 val current = field.text.toString().toIntOrNull() ?: 1
@@ -487,7 +510,6 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
-        // Количество: парсим, при пусто/0/мусоре → 1, минимум 1.
         val quantity = if (isAutoMode) {
             (binding.etAutoQuantity.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1)
         } else {
@@ -529,7 +551,11 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
-        Logger.log(TAG, "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, hasImage=${imageBytes != null}")
+        Logger.log(
+            TAG,
+            "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, " +
+                "hasImage=${imageBytes != null}, parentFolderId=$parentFolderId, parentItemId=$parentItemId"
+        )
 
         val newItemId = UUID.randomUUID().toString()
 
@@ -537,6 +563,7 @@ class AddItemActivity : AppCompatActivity() {
             id = newItemId,
             name = name,
             parentId = parentFolderId,
+            parentItemId = parentItemId,   // 🆕 B-5
             quantity = quantity,
             barcode = finalBarcode,
             description = description,
@@ -551,7 +578,8 @@ class AddItemActivity : AppCompatActivity() {
 
         viewModel.createItem(item, imageBytes)
 
-        Toast.makeText(this@AddItemActivity, "Предмет добавлен", Toast.LENGTH_SHORT).show()
+        val toastText = if (parentItemId != null) "Вложенный предмет добавлен" else "Предмет добавлен"
+        Toast.makeText(this@AddItemActivity, toastText, Toast.LENGTH_SHORT).show()
         finish()
     }
 
