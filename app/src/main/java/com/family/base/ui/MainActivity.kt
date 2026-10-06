@@ -552,6 +552,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // B-5-FIX-2: ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
+    // ============================================================
+    /**
+     * Показывает диалог «Нельзя архивировать» с кнопкой «Отвязать всех детей».
+     * Используется как onBlocked-callback для viewModel.writeOffItem / archiveItem.
+     */
+    private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Нельзя архивировать")
+            .setMessage(message)
+            .setPositiveButton("Отвязать всех детей") { _, _ ->
+                viewModel.detachAllChildren(item.id) { count ->
+                    Toast.makeText(
+                        this,
+                        "Отвязано: $count. Теперь можно архивировать.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
     // СПИСАНИЕ / АРХИВ ИЗ КОНТЕКСТНОГО МЕНЮ
     // ============================================================
 
@@ -641,11 +665,16 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(title)
             .setItems(reasons) { _, which ->
-                viewModel.writeOffItem(item.id, count, reasonKeys[which], null)
+                viewModel.writeOffItem(
+                    item.id,
+                    count,
+                    reasonKeys[which],
+                    null,
+                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+                )
                 if (count == totalQty) {
-                    Toast.makeText(this, "Предмет в архиве", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Списано $count шт. в архив", Toast.LENGTH_SHORT).show()
+                    // Тост покажется только если не сработал onBlocked (т.е. детей нет)
+                    // — проверка уже внутри viewModel.
                 }
             }
             .setNegativeButton("Отмена", null)
@@ -845,8 +874,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // АРХИВ (старый диалог — оставлен для confirmDeleteItem)
+    // B-5-FIX-2: АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ (с проверкой детей)
     // ============================================================
+    /**
+     * Пункт «В архив» из контекстного меню каталога (отдельно от списания).
+     * Если у предмета есть дети — viewModel заблокирует архивацию
+     * и вызовет onBlocked, который покажет диалог «Нельзя архивировать».
+     */
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
             "🧴 Израсходовано",
@@ -883,8 +917,12 @@ class MainActivity : AppCompatActivity() {
             .setView(editText)
             .setPositiveButton("В архив") { _, _ ->
                 val note = editText.text.toString().trim().ifEmpty { null }
-                viewModel.archiveItem(item.id, reason, note)
-                Toast.makeText(this, "В архиве", Toast.LENGTH_SHORT).show()
+                viewModel.archiveItem(
+                    item.id,
+                    reason,
+                    note,
+                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+                )
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -903,16 +941,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-5-FIX: УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
+    // УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
     // ============================================================
-    /**
-     * Логика (решение X для папок):
-     *   1. Проверяем детей папки (getFolderChildrenCount): подпапки + предметы.
-     *   2. Если дети есть → «Нельзя удалить, есть вложенные» +
-     *      кнопка «Отвязать всех детей» (без удаления).
-     *   3. После отвязки — пользователь сам жмёт «Удалить» снова.
-     *   4. Если детей нет → стандартный диалог удаления.
-     */
     private fun confirmDeleteFolder(folder: FolderEntity) {
         viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
             val total = folderCount + itemCount
@@ -1028,16 +1058,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-5-FIX: УДАЛЕНИЕ ПРЕДМЕТА С ЖЁСТКИМ ЗАПРЕТОМ
+    // УДАЛЕНИЕ ПРЕДМЕТА С ЖЁСТКИМ ЗАПРЕТОМ
     // ============================================================
-    /**
-     * Логика (решение X):
-     *   1. Проверяем детей (getChildrenCount): вложенные папки + предметы.
-     *   2. Если дети есть → «Нельзя удалить, есть вложенные» +
-     *      кнопка «Отвязать всех детей» (без удаления).
-     *   3. После отвязки — пользователь сам жмёт «Удалить» снова.
-     *   4. Если детей нет → стандартный диалог удаления.
-     */
     private fun confirmDeleteItem(item: ItemEntity) {
         viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
             val totalChildren = foldersCount + itemsCount
@@ -1104,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
                 startSyncAnimation()
             }
             SyncStatus.SYNCED -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_synced)
                 stopSyncAnimation()
             }
             SyncStatus.PENDING -> {
