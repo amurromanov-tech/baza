@@ -126,6 +126,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error fixing orphan items: ${e.message}")
         }
 
+        // ============================================================
+        // 🆕 B-2: РЕМОНТ ОСИРОТЕВШИХ ВЛОЖЕННЫХ (parentItemId)
+        // ============================================================
+        // Если родитель-предмет был удалён (например, вручную), а ребёнок
+        // остался с висячим parentItemId — отвязываем. Аналогично для папок.
+        try {
+            val orphanNestedItems = db.itemDao().getOrphanNestedItems()
+            if (orphanNestedItems.isNotEmpty()) {
+                Logger.log(TAG, "Found ${orphanNestedItems.size} orphan nested items, detaching")
+                db.itemDao().fixOrphanNestedItems()
+                Logger.log(TAG, "Orphan nested items fixed")
+            } else {
+                Logger.log(TAG, "No orphan nested items found")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error fixing orphan nested items: ${e.message}")
+        }
+
+        try {
+            val orphanNestedFolders = db.folderDao().getOrphanNestedFolders()
+            if (orphanNestedFolders.isNotEmpty()) {
+                Logger.log(TAG, "Found ${orphanNestedFolders.size} orphan nested folders, detaching")
+                db.folderDao().fixOrphanNestedFolders()
+                Logger.log(TAG, "Orphan nested folders fixed")
+            } else {
+                Logger.log(TAG, "No orphan nested folders found")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error fixing orphan nested folders: ${e.message}")
+        }
+
         try {
             fixOldImageUrls()
         } catch (e: Exception) {
@@ -465,9 +496,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // ============================================================
                 // ШАГ 4a: ЕСТЬ ЛОКАЛЬНЫЕ ИЗМЕНЕНИЯ → ПОЛНЫЙ UPLOAD
-                //
-                // 🆕 Фикс 6: здесь — uploadAllItemsToDisk #1 (до pending)
-                // и uploadAllItemsToDisk #2 (финальный, после pending + фото).
                 // ============================================================
                 if (pendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
@@ -495,10 +523,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     uploadedCount = processPendingChangesInternal()
                     Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
 
-                    // 🆕 Фикс 6: финальный upload — обновляем items.json с новыми imageUrl.
-                    // Нужен, если:
-                    //   - были pending-изменения (uploadedCount > 0) → возможно, фото залились
-                    //   - или uploadAllItemsToDisk #1 упал (uploadedItems = false), надо повторить
                     if (uploadedCount > 0 || !uploadedItems) {
                         val tFinal = System.currentTimeMillis()
                         val refreshed = repository.uploadAllItemsToDisk()
@@ -510,7 +534,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     } else {
-                        // Ничего не менялось в pending — обновляем только lastModified от #1
                         if (uploadedItems || uploadedFolders) {
                             val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
                             if (fresh != null && fresh > 0L) {
@@ -923,6 +946,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // 🆕 B-2: MERGE DATA — ПОРЯДОК FOLDERS → ITEMS + ЗАЩИТА parentItemId
+    // ============================================================
+    /**
+     * Слияние данных с Яндекс.Диска.
+     *
+     * B-2 изменил порядок и добавил защиту parentItemId:
+     *   1. Сначала FOLDERS, потом ITEMS (родитель-папка должен появиться раньше).
+     *   2. Если у диска parentItemId == null, а локально != null —
+     *      сохраняем ЛОКАЛЬНЫЙ (защита от старого устройства на v7,
+     *      где поля parentItemId ещё не было в JSON).
+     *   3. Ремонт осиротевших вложенных выполняется в checkFirstLaunch().
+     */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -933,22 +969,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
 
-            if (itemsError && localItemsCount > 0) {
-                Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
-            } else if (diskItems.isEmpty() && localItemsCount > 0) {
-                Logger.log(TAG, "mergeData: disk items empty but local has $localItemsCount — SKIP to protect data")
-            } else {
-                diskItems.forEach { diskItem ->
-                    val local = db.itemDao().getItemById(diskItem.id)
-                    if (local == null) {
-                        db.itemDao().insertItem(diskItem)
-                    } else if (diskItem.updatedDate > local.updatedDate) {
-                        val merged = diskItem.copy(imageUrl = diskItem.imageUrl ?: local.imageUrl)
-                        db.itemDao().updateItem(merged)
-                    }
-                }
-            }
-
+            // ------------------------------------------------------------
+            // 1. FOLDERS — сначала (родители)
+            // ------------------------------------------------------------
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
             } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
@@ -959,8 +982,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
-                        val merged = diskFolder.copy(iconUrl = diskFolder.iconUrl ?: local.iconUrl)
+                        // 🆕 B-2: сохраняем локальный parentItemId, если у диска null
+                        // (защита от старого устройства на v7 без этого поля)
+                        val merged = diskFolder.copy(
+                            iconUrl = diskFolder.iconUrl ?: local.iconUrl,
+                            parentItemId = diskFolder.parentItemId ?: local.parentItemId
+                        )
                         db.folderDao().updateFolder(merged)
+                    }
+                }
+            }
+
+            // ------------------------------------------------------------
+            // 2. ITEMS — потом (дети)
+            // ------------------------------------------------------------
+            if (itemsError && localItemsCount > 0) {
+                Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
+            } else if (diskItems.isEmpty() && localItemsCount > 0) {
+                Logger.log(TAG, "mergeData: disk items empty but local has $localItemsCount — SKIP to protect data")
+            } else {
+                diskItems.forEach { diskItem ->
+                    val local = db.itemDao().getItemById(diskItem.id)
+                    if (local == null) {
+                        db.itemDao().insertItem(diskItem)
+                    } else if (diskItem.updatedDate > local.updatedDate) {
+                        // 🆕 B-2: сохраняем локальный parentItemId, если у диска null
+                        val merged = diskItem.copy(
+                            imageUrl = diskItem.imageUrl ?: local.imageUrl,
+                            parentItemId = diskItem.parentItemId ?: local.parentItemId
+                        )
+                        db.itemDao().updateItem(merged)
                     }
                 }
             }
@@ -1044,18 +1095,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 🆕 Фикс 6: убраны createItemOnDisk / updateItemOnDisk.
-     *
-     * Раньше:
-     *   "create" → createItemOnDisk (uploadAllItemsToDisk) + uploadItemImageIfExists
-     *   "update" → updateItemOnDisk (uploadAllItemsToDisk) + uploadItemImageIfExists
-     *
-     * Теперь: items.json уже залит в ШАГ 4a (#1), а финальный upload (#2)
-     * в конце ШАГ 4a подхватит новые imageUrl. Здесь только фото.
      */
     private suspend fun applyItemChange(entry: SyncQueueEntity) {
         when (entry.action) {
             "create" -> db.itemDao().getItemById(entry.entityId)?.let {
-                // 🆕 Фикс 6: createItemOnDisk не нужен — предмет уже в items.json.
                 val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(it)
                 Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
@@ -1063,7 +1106,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "update" -> db.itemDao().getItemById(entry.entityId)?.let {
                 val fresh = it.copy(updatedDate = System.currentTimeMillis())
                 db.itemDao().updateItem(fresh)
-                // 🆕 Фикс 6: updateItemOnDisk не нужен — финальный upload зальёт items.json.
                 val t2 = System.currentTimeMillis()
                 uploadItemImageIfExists(fresh)
                 Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
