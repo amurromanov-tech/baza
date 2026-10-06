@@ -57,15 +57,9 @@ object MoveDialogHelper {
 
         tvDialogTitle.text = title
 
-        // Текущий узел: либо папка (currentFolderId), либо предмет (currentItemId).
-        // Инвариант: ровно одно из них не null; оба null → корень.
         var currentFolderId: String? = startFromId
         var currentItemId: String? = startFromItemId
 
-        // Определяем, внутри чего сейчас находимся:
-        //   "root"   — оба null
-        //   "folder" — currentFolderId != null
-        //   "item"   — currentItemId != null
         fun currentNodeKind(): String = when {
             currentItemId != null -> "item"
             currentFolderId != null -> "folder"
@@ -147,7 +141,7 @@ object MoveDialogHelper {
                                 .filter { it.parentItemId == null && it.id !in excludedIds }
                                 .forEach { rows.add(MoveRow.Item(it)) }
 
-                            crumbs = buildBreadcrumbsForFolder(folderId)
+                            crumbs = buildBreadcrumbsForFolder(db, folderId)
                         }
 
                         "item" -> {
@@ -177,7 +171,7 @@ object MoveDialogHelper {
                                 .filter { it.id !in excludedIds }
                                 .forEach { rows.add(MoveRow.Item(it)) }
 
-                            crumbs = buildBreadcrumbsForItem(itemId)
+                            crumbs = buildBreadcrumbsForItem(db, itemId)
                         }
 
                         else -> {
@@ -213,7 +207,6 @@ object MoveDialogHelper {
                     val kind = currentNodeKind()
                     when (kind) {
                         "item" -> {
-                            // Из предмета → в его папку (или корень)
                             val itemId = currentItemId!!
                             val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(itemId) }
                             currentItemId = null
@@ -221,9 +214,6 @@ object MoveDialogHelper {
                             Logger.log(TAG, "Go up from item $itemId → folder ${currentFolderId ?: "ROOT"}")
                         }
                         "folder" -> {
-                            // Из папки → в её родителя:
-                            //   - если папка вложена в предмет (parentItemId != null) → в этот предмет
-                            //   - иначе → в parentId (или корень)
                             val folderId = currentFolderId!!
                             val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
                             if (folder?.parentItemId != null) {
@@ -260,8 +250,6 @@ object MoveDialogHelper {
                 "root" -> Pair(null, null)
                 "folder" -> Pair(currentFolderId, null)
                 "item" -> {
-                    // Перемещаем «в предмет» → наследуем папку родителя
-                    // (как при createFolderInItem)
                     scope.launch {
                         try {
                             val itemId = currentItemId!!
@@ -306,13 +294,7 @@ object MoveDialogHelper {
     // ХЛЕБНЫЕ КРОШКИ
     // ============================================================
 
-    /**
-     * Путь для ПАПКИ (обычной или вложенной):
-     * 📂 Корень / 📁 Дом / 📁 Комната
-     * или
-     * 📂 Корень / 📁 Дом / 📦 Стол / 📁 Полка
-     */
-    private suspend fun buildBreadcrumbsForFolder(folderId: String): String {
+    private suspend fun buildBreadcrumbsForFolder(db: AppDatabase, folderId: String): String {
         val segments = mutableListOf<String>()
         var currentFolderId: String? = folderId
         var currentItemId: String? = null
@@ -350,11 +332,7 @@ object MoveDialogHelper {
         return "📂 Корень / " + segments.reversed().joinToString(" / ")
     }
 
-    /**
-     * Путь для ПРЕДМЕТА:
-     * 📂 Корень / 📁 Дом / 📦 Стол
-     */
-    private suspend fun buildBreadcrumbsForItem(itemId: String): String {
+    private suspend fun buildBreadcrumbsForItem(db: AppDatabase, itemId: String): String {
         val segments = mutableListOf<String>()
         var currentFolderId: String? = null
         var currentItemId: String? = itemId
