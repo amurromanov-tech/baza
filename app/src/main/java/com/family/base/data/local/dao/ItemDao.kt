@@ -54,6 +54,87 @@ interface ItemDao {
     suspend fun getItemsByParentRaw(parentId: String?): List<ItemEntity>
 
     // ============================================================
+    // ВЛОЖЕННОСТЬ (parentItemId) — предмет внутри предмета
+    // ============================================================
+
+    /**
+     * Прямые дети предмета (неархивные), отсортированы по имени.
+     * Используется в карточке предмета — секция «📦 Вложенные».
+     */
+    @Query("""
+        SELECT * FROM items 
+        WHERE parentItemId = :parentItemId 
+          AND isArchived = 0 
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsByParentItem(parentItemId: String): List<ItemEntity>
+
+    /**
+     * Прямые дети предмета БЕЗ фильтра архива.
+     * Используется при синхронизации и каскадных операциях.
+     */
+    @Query("""
+        SELECT * FROM items 
+        WHERE parentItemId = :parentItemId 
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsByParentItemRaw(parentItemId: String): List<ItemEntity>
+
+    /**
+     * Есть ли у предмета неархивные дети (любого уровня вложенности — только прямые).
+     * Возвращает 1, если есть хотя бы один, иначе 0.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM items 
+            WHERE parentItemId = :itemId 
+              AND isArchived = 0
+        )
+    """)
+    suspend fun hasItemChildren(itemId: String): Boolean
+
+    /**
+     * Количество неархивных прямых детей предмета.
+     */
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE parentItemId = :itemId 
+          AND isArchived = 0
+    """)
+    suspend fun getItemChildCount(itemId: String): Int
+
+    /**
+     * Отвязать всех прямых детей от предмета-родителя.
+     * Используется при «удалить родителя, отвязав детей» — дети становятся
+     * привязанными к папке родителя (parentId родителя) или корневыми.
+     *
+     * ВАЖНО: сам перенос parentId для детей делает репозиторий,
+     * здесь только очищаем parentItemId.
+     */
+    @Query("""
+        UPDATE items 
+        SET parentItemId = NULL, updatedDate = :date 
+        WHERE parentItemId = :parentItemId
+    """)
+    suspend fun clearItemParentItem(parentItemId: String, date: Long)
+
+    /**
+     * Все потомки рекурсивно (прямые + вложенные на любую глубину).
+     * Возвращает только id — для каскадных операций.
+     * SQLite поддерживает WITH RECURSIVE с версии 3.8.3 (Android API 21+).
+     */
+    @Query("""
+        WITH RECURSIVE descendants(id) AS (
+            SELECT id FROM items WHERE parentItemId = :rootId
+            UNION ALL
+            SELECT i.id FROM items i
+            INNER JOIN descendants d ON i.parentItemId = d.id
+        )
+        SELECT id FROM descendants
+    """)
+    suspend fun getAllItemDescendantIds(rootId: String): List<String>
+
+    // ============================================================
     // ОБНОВЛЕНИЕ КОЛИЧЕСТВА
     // ============================================================
 
@@ -350,6 +431,27 @@ interface ItemDao {
           AND parentId NOT IN (SELECT id FROM folders)
     """)
     suspend fun fixOrphanItems()
+
+    // ============================================================
+    // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ВЛОЖЕННЫЕ (родитель-предмет удалён)
+    // ============================================================
+
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND parentItemId IS NOT NULL 
+          AND parentItemId NOT IN (SELECT id FROM items)
+    """)
+    suspend fun getOrphanNestedItems(): List<ItemEntity>
+
+    @Query("""
+        UPDATE items 
+        SET parentItemId = NULL 
+        WHERE isArchived = 0 
+          AND parentItemId IS NOT NULL 
+          AND parentItemId NOT IN (SELECT id FROM items)
+    """)
+    suspend fun fixOrphanNestedItems()
 
     // ============================================================
     // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
