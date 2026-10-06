@@ -638,10 +638,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // B-5-FIX-2: ПРОВЕРКА ДЕТЕЙ ДЛЯ АРХИВАЦИИ / ПОЛНОГО СПИСАНИЯ
     // ============================================================
 
-    /**
-     * Формирует сообщение для диалога «Нельзя архивировать».
-     * Возвращает null, если детей нет.
-     */
     private suspend fun buildArchiveBlockMessage(itemId: String): String? {
         return try {
             val children = repository.countChildren(itemId)
@@ -1440,14 +1436,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // АРХИВАЦИЯ ПРЕДМЕТОВ
     // ============================================================
 
-    /**
-     * B-5-FIX-2: Архивирует предмет.
-     * Если у предмета есть вложенные — архивация БЛОКИРУЕТСЯ,
-     * вызывается onBlocked с готовым сообщением для диалога.
-     * Если детей нет — архивация выполняется, onBlocked не вызывается.
-     *
-     * @param onBlocked вызывается на главном потоке. Аргумент — текст сообщения.
-     */
     fun archiveItem(
         itemId: String,
         reason: String,
@@ -1585,17 +1573,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off → архив)
     // ============================================================
-    /**
-     * B-5-FIX-2: Списывает предмет (частично или полностью).
-     *
-     * Логика:
-     *  - Частичное списание (count < quantity) → РАЗРЕШЕНО всегда.
-     *    Предмет остаётся, дети остаются.
-     *  - Полное списание (count == quantity) → это АРХИВАЦИЯ.
-     *    Если у предмета есть дети → БЛОКИРУЕТСЯ, вызывается onBlocked.
-     *
-     * @param onBlocked вызывается на главном потоке. Аргумент — текст сообщения.
-     */
     fun writeOffItem(
         itemId: String,
         count: Int,
@@ -1622,7 +1599,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // B-5-FIX-2: полное списание = архивация → проверяем детей
                 val isFullWriteOff = (count == item.quantity)
                 if (isFullWriteOff) {
                     val blockMsg = buildArchiveBlockMessage(itemId)
@@ -1794,8 +1770,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ПЕРЕМЕЩЕНИЕ ЧАСТИ КОЛИЧЕСТВА (split + move)
     // ============================================================
-    fun splitAndMoveItem(itemId: String, count: Int, newParentId: String?) {
-        Logger.log(TAG, "splitAndMoveItem: itemId=$itemId, count=$count, newParentId=$newParentId")
+    /**
+     * B-6: splitAndMoveItem принимает пару (newParentId, newParentItemId).
+     *  - Если newParentItemId == null — перемещаем в папку (или корень).
+     *  - Если newParentItemId != null — перемещаем «в предмет»:
+     *      parentItemId = newParentItemId,
+     *      parentId = newParentItemId.parentId (или null).
+     */
+    fun splitAndMoveItem(
+        itemId: String,
+        count: Int,
+        newParentId: String?,
+        newParentItemId: String? = null
+    ) {
+        Logger.log(
+            TAG,
+            "splitAndMoveItem: itemId=$itemId, count=$count, " +
+                "newParentId=$newParentId, newParentItemId=$newParentItemId"
+        )
         viewModelScope.launch {
             try {
                 val item = db.itemDao().getItemById(itemId)
@@ -1811,7 +1803,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (count >= item.quantity) {
                     Logger.log(TAG, "splitAndMoveItem: count >= quantity → full move")
-                    moveItem(itemId, newParentId)
+                    moveItem(itemId, newParentId, newParentItemId)
+                    return@launch
+                }
+
+                // Резолвим фактический parentId (если перемещаем в предмет — наследуем его папку)
+                val resolvedParentId: String? = if (newParentItemId != null) {
+                    val targetItem = db.itemDao().getItemById(newParentItemId)
+                    targetItem?.parentId
+                } else {
+                    newParentId
+                }
+
+                // Проверка цикла: нельзя переместить предмет внутрь себя/потомка
+                if (newParentItemId != null && isItemDescendantOf(newParentItemId, itemId)) {
+                    Logger.log(TAG, "splitAndMoveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Нельзя переместить предмет в себя или в своего потомка",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     return@launch
                 }
 
@@ -1822,7 +1835,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val copy = item.copy(
                     id = newId,
                     quantity = count,
-                    parentId = newParentId,
+                    parentId = resolvedParentId,
+                    parentItemId = newParentItemId,
                     addedDate = now,
                     updatedDate = now,
                     updatedBy = currentUser
@@ -1832,7 +1846,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     db.itemDao().insertItem(copy)
                 }
-                enqueue("item", newId, "create", newParentId, null)
+                enqueue("item", newId, "create", resolvedParentId, newParentItemId)
 
                 try {
                     val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -1856,7 +1870,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                val folderName = getFolderNameById(newParentId)
+                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
 
                 withContext(Dispatchers.IO) {
                     db.historyDao().insertEntry(
@@ -1864,7 +1878,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             itemId = newId,
                             action = "split_in",
                             oldValue = "Отделено от «${item.name}»",
-                            newValue = "$count шт. → $folderName",
+                            newValue = "$count шт. → $placeName",
                             changedBy = currentUser
                         )
                     )
@@ -1873,7 +1887,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             itemId = itemId,
                             action = "split_out",
                             oldValue = "${item.quantity} шт.",
-                            newValue = "$newQty шт. (отделено $count → $folderName)",
+                            newValue = "$newQty шт. (отделено $count → $placeName)",
                             changedBy = currentUser
                         )
                     )
@@ -1886,6 +1900,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "Error in splitAndMoveItem: ${e.message}", e)
             }
         }
+    }
+
+    /**
+     * B-6: резолвит человекочитаемое имя места назначения.
+     * Для папки — имя папки (или «Корень»), для предмета — «📦 Имя».
+     */
+    private suspend fun resolvePlaceName(parentId: String?, parentItemId: String?): String {
+        if (parentItemId != null) {
+            val item = db.itemDao().getItemById(parentItemId)
+            return if (item != null) "📦 ${item.name}" else "предмет"
+        }
+        if (parentId == null) return "Корень"
+        return db.folderDao().getFolderById(parentId)?.name ?: "Корень"
     }
 
     private suspend fun getFolderNameById(folderId: String?): String {
@@ -2045,13 +2072,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
-    fun moveFolder(folderId: String, newParentId: String?) {
+    /**
+     * B-6: Перемещение ПАПКИ.
+     *  - newParentItemId == null → в папку (или корень): parentId = newParentId, parentItemId = null.
+     *  - newParentItemId != null → внутрь предмета: parentItemId = newParentItemId,
+     *      parentId = newParentItemId.parentId (или null).
+     *
+     * Проверки:
+     *  - нельзя папку в себя/в свою подпапку (цикл по папкам);
+     *  - нельзя папку внутрь предмета, который является её потомком (цикл по item).
+     */
+    fun moveFolder(
+        folderId: String,
+        newParentId: String?,
+        newParentItemId: String? = null
+    ) {
+        Logger.log(
+            TAG,
+            "moveFolder: folderId=$folderId, newParentId=$newParentId, newParentItemId=$newParentItemId"
+        )
         viewModelScope.launch {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
-                if (folder != null) {
-                    if (newParentId != null && isFolderDescendantOf(folderId, newParentId)) {
-                        Logger.log(TAG, "moveFolder: CYCLE detected, aborting (folder=$folderId, newParent=$newParentId)")
+                if (folder == null) {
+                    Logger.log(TAG, "moveFolder: folder not found $folderId")
+                    return@launch
+                }
+
+                // Проверка цикла по папкам
+                if (newParentItemId == null && newParentId != null) {
+                    if (isFolderDescendantOf(folderId, newParentId)) {
+                        Logger.log(TAG, "moveFolder: CYCLE (folder→folder), aborting")
                         withContext(Dispatchers.Main) {
                             android.widget.Toast.makeText(
                                 getApplication(),
@@ -2061,38 +2112,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         return@launch
                     }
-
-                    val updated = folder.copy(
-                        parentId = newParentId,
-                        parentItemId = null,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    db.folderDao().updateFolder(updated)
-                    enqueue("folder", folderId, "update", newParentId, null)
-                    loadContents()
                 }
+
+                // Проверка: не перемещаем ли папку внутрь предмета-потомка
+                if (newParentItemId != null) {
+                    // Собираем все предметы-предки данной папки и проверяем,
+                    // не является ли newParentItemId одним из них.
+                    val ancestorItems = collectAncestorItemIdsForFolder(folderId)
+                    if (newParentItemId in ancestorItems) {
+                        Logger.log(TAG, "moveFolder: CYCLE (folder→item), aborting")
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                getApplication(),
+                                "Нельзя переместить папку внутрь связанного предмета",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@launch
+                    }
+                }
+
+                val resolvedParentId: String? = if (newParentItemId != null) {
+                    db.itemDao().getItemById(newParentItemId)?.parentId
+                } else {
+                    newParentId
+                }
+
+                val updated = folder.copy(
+                    parentId = resolvedParentId,
+                    parentItemId = newParentItemId,
+                    updatedAt = System.currentTimeMillis()
+                )
+                db.folderDao().updateFolder(updated)
+                enqueue("folder", folderId, "update", resolvedParentId, newParentItemId)
+                loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error moving folder: ${e.message}")
             }
         }
     }
 
-    fun moveItem(itemId: String, newParentId: String?) {
+    /**
+     * Собирает всех предметов-предков для папки (по цепочке parentItemId / parentId).
+     * Используется для проверки циклов при перемещении папки внутрь предмета.
+     */
+    private suspend fun collectAncestorItemIdsForFolder(folderId: String): Set<String> {
+        val result = mutableSetOf<String>()
+        var currentFolderId: String? = folderId
+        var depth = 0
+
+        while (currentFolderId != null && depth < 50) {
+            depth++
+            val folder = db.folderDao().getFolderById(currentFolderId) ?: break
+
+            if (folder.parentItemId != null) {
+                result.add(folder.parentItemId)
+                // Заходим в родительский предмет и идём по его цепочке
+                var itemId: String? = folder.parentItemId
+                var itemDepth = 0
+                while (itemId != null && itemDepth < 50) {
+                    itemDepth++
+                    result.add(itemId)
+                    val item = db.itemDao().getItemById(itemId) ?: break
+                    itemId = item.parentItemId
+                }
+                currentFolderId = folder.parentId
+            } else {
+                currentFolderId = folder.parentId
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * B-6: Перемещение ПРЕДМЕТА.
+     *  - newParentItemId == null → в папку (или корень): parentId = newParentId, parentItemId = null.
+     *  - newParentItemId != null → внутрь предмета: parentItemId = newParentItemId,
+     *      parentId = newParentItemId.parentId (или null).
+     *
+     * Проверки:
+     *  - нельзя предмет в себя/в своего потомка (по цепочке parentItemId);
+     *  - при перемещении в предмет — parentId резолвится из целевого предмета.
+     */
+    fun moveItem(
+        itemId: String,
+        newParentId: String?,
+        newParentItemId: String? = null
+    ) {
+        Logger.log(
+            TAG,
+            "moveItem: itemId=$itemId, newParentId=$newParentId, newParentItemId=$newParentItemId"
+        )
         viewModelScope.launch {
             try {
                 val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val updated = item.copy(
-                        parentId = newParentId,
-                        parentItemId = null,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
-                    updated.computeExpiryFields()
-                    db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", newParentId, null)
-                    loadContents()
+                if (item == null) {
+                    Logger.log(TAG, "moveItem: item not found $itemId")
+                    return@launch
                 }
+
+                // Проверка цикла: нельзя предмет в себя/в своего потомка
+                if (newParentItemId != null) {
+                    if (isItemDescendantOf(newParentItemId, itemId)) {
+                        Logger.log(TAG, "moveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                getApplication(),
+                                "Нельзя переместить предмет в себя или в своего потомка",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@launch
+                    }
+                }
+
+                val resolvedParentId: String? = if (newParentItemId != null) {
+                    db.itemDao().getItemById(newParentItemId)?.parentId
+                } else {
+                    newParentId
+                }
+
+                val updated = item.copy(
+                    parentId = resolvedParentId,
+                    parentItemId = newParentItemId,
+                    updatedDate = System.currentTimeMillis(),
+                    updatedBy = currentUser
+                )
+                updated.computeExpiryFields()
+                db.itemDao().updateItem(updated)
+                enqueue("item", itemId, "update", resolvedParentId, newParentItemId)
+                loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error moving item: ${e.message}")
             }
