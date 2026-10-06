@@ -12,6 +12,10 @@ import java.util.Locale
  * 🆕 БАЗА7: getSubtypes() возвращает список, отсортированный по алфавиту
  *           (по тексту после эмодзи, русская локаль).
  *           Подтипы «Прочее» (*_other) ВСЕГДА идут в конце списка.
+ *
+ * 🆕 B-6: добавлены подтипы thing:
+ *           - furniture  🪑 Мебель
+ *           - aquarium   🐠 Аквариум
  */
 object SubtypeCatalog {
 
@@ -23,9 +27,6 @@ object SubtypeCatalog {
     // ============================================================
     // 🍎 ЕДА
     // ============================================================
-    // Примечание: список в исходнике в произвольном порядке —
-    // сортировка по алфавиту делается в getSubtypes(),
-    // «прочее» (food_other) — всегда в конце.
     private val FOOD = listOf(
         Subtype("dairy",         "🥛 Молочка"),
         Subtype("bakery",        "🍞 Хлебобулочные"),
@@ -83,6 +84,9 @@ object SubtypeCatalog {
         Subtype("repair",        "🛠 Ремонт / Стройка"),
         Subtype("car",           "🚗 Для авто"),
         Subtype("garden",        "🌱 Сад / Огород"),
+        // 🆕 B-6: новые подтипы
+        Subtype("furniture",     "🪑 Мебель"),
+        Subtype("aquarium",      "🐠 Аквариум"),
         Subtype("thing_other",   "📦 Прочее (предметы)")
     )
 
@@ -150,9 +154,6 @@ object SubtypeCatalog {
     /**
      * Возвращает отображаемое имя подтипа (с эмодзи).
      * Если ключ не найден — возвращает `null`.
-     *
-     * ⚠️ БАЗА7: ключ "meat_fish" удалён. Старые предметы с этим ключом
-     *          вернут null — подтип просто не отобразится.
      */
     fun getDisplayName(type: String?, subtypeKey: String?): String? {
         if (subtypeKey.isNullOrEmpty()) return null
