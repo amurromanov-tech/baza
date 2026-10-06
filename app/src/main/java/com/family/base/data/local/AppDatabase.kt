@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 8,  // ← увеличили с 7 до 8 (parentItemId — вложенные предметы)
+    version = 9,  // ← увеличили с 8 до 9 (parentItemId в sync_queue)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -101,6 +101,15 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 8 НА 9 (parentItemId в sync_queue)
+        // ============================================================
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
         // МИГРАЦИЯ С ВЕРСИИ 2 НА 4 (ЕСЛИ ПРОПУСТИЛИ 3)
         // ============================================================
         private val MIGRATION_2_4 = object : Migration(2, 4) {
@@ -166,6 +175,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 7 НА 9 (ЕСЛИ ПРОПУСТИЛИ 8)
+        // ============================================================
+        private val MIGRATION_7_9 = object : Migration(7, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -180,11 +200,13 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
+                        MIGRATION_8_9,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
                         MIGRATION_4_6,
                         MIGRATION_5_7,
-                        MIGRATION_6_8
+                        MIGRATION_6_8,
+                        MIGRATION_7_9
                     )
                     .build()
                     .also { INSTANCE = it }
