@@ -32,6 +32,7 @@ class AuditActivity : AppCompatActivity() {
     private var currentItems: List<ItemEntity> = emptyList()
 
     private val LENT_LONG_DAYS = 30L
+    private val REVISION_LONG_DAYS = 30L
 
     private enum class Filter {
         NONE,
@@ -44,7 +45,9 @@ class AuditActivity : AppCompatActivity() {
         NO_PHOTO,
         DUPLICATES,
         LENT_LONG,
-        EXPIRED
+        EXPIRED,
+        NO_REVISION,
+        OLD_REVISION
     }
 
     private enum class Sort(val label: String) {
@@ -104,6 +107,8 @@ class AuditActivity : AppCompatActivity() {
         binding.chipDuplicates.setOnClickListener { selectFilter(Filter.DUPLICATES) }
         binding.chipLentLong.setOnClickListener { selectFilter(Filter.LENT_LONG) }
         binding.chipExpired.setOnClickListener { selectFilter(Filter.EXPIRED) }
+        binding.chipNoRevision.setOnClickListener { selectFilter(Filter.NO_REVISION) }
+        binding.chipOldRevision.setOnClickListener { selectFilter(Filter.OLD_REVISION) }
     }
 
     // ============================================================
@@ -113,6 +118,7 @@ class AuditActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val thresholdDate = System.currentTimeMillis() - (LENT_LONG_DAYS * 24 * 60 * 60 * 1000)
+                val revisionThreshold = System.currentTimeMillis() - (REVISION_LONG_DAYS * 24 * 60 * 60 * 1000)
                 val now = System.currentTimeMillis()
 
                 val noPrice = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutPrice() }
@@ -122,6 +128,8 @@ class AuditActivity : AppCompatActivity() {
                 val noType = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutType() }
                 val lentLong = withContext(Dispatchers.IO) { db.itemDao().countItemsLentLongAgo(thresholdDate) }
                 val expired = withContext(Dispatchers.IO) { db.itemDao().countExpiredItems(now) }
+                val noRevision = withContext(Dispatchers.IO) { db.itemDao().countItemsWithoutRevision() }
+                val oldRevision = withContext(Dispatchers.IO) { db.itemDao().countItemsWithOldRevision(revisionThreshold) }
 
                 val duplicates = withContext(Dispatchers.IO) { loadDuplicateItems() }
                 val noPhoto = withContext(Dispatchers.IO) { loadItemsWithoutPhoto() }
@@ -141,6 +149,8 @@ class AuditActivity : AppCompatActivity() {
                     setChipText(binding.chipDuplicates, "👥 Дубликаты кода", duplicates.size)
                     setChipText(binding.chipLentLong, "🤝 Выданы давно", lentLong)
                     setChipText(binding.chipExpired, "⏰ Просрочены", expired)
+                    setChipText(binding.chipNoRevision, "🔍 Без ревизии", noRevision)
+                    setChipText(binding.chipOldRevision, "🔍 Ревизия > 30 дней", oldRevision)
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "Error loading counts", e)
@@ -186,6 +196,8 @@ class AuditActivity : AppCompatActivity() {
             Filter.DUPLICATES -> binding.chipDuplicates.isChecked = true
             Filter.LENT_LONG -> binding.chipLentLong.isChecked = true
             Filter.EXPIRED -> binding.chipExpired.isChecked = true
+            Filter.NO_REVISION -> binding.chipNoRevision.isChecked = true
+            Filter.OLD_REVISION -> binding.chipOldRevision.isChecked = true
             else -> {}
         }
     }
@@ -201,6 +213,8 @@ class AuditActivity : AppCompatActivity() {
         binding.chipDuplicates.isChecked = false
         binding.chipLentLong.isChecked = false
         binding.chipExpired.isChecked = false
+        binding.chipNoRevision.isChecked = false
+        binding.chipOldRevision.isChecked = false
     }
 
     // ============================================================
@@ -210,6 +224,7 @@ class AuditActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val thresholdDate = System.currentTimeMillis() - (LENT_LONG_DAYS * 24 * 60 * 60 * 1000)
+                val revisionThreshold = System.currentTimeMillis() - (REVISION_LONG_DAYS * 24 * 60 * 60 * 1000)
                 val now = System.currentTimeMillis()
 
                 val items: List<ItemEntity> = withContext(Dispatchers.IO) {
@@ -224,6 +239,8 @@ class AuditActivity : AppCompatActivity() {
                         Filter.DUPLICATES -> loadDuplicateItems()
                         Filter.LENT_LONG -> db.itemDao().getItemsLentLongAgo(thresholdDate)
                         Filter.EXPIRED -> db.itemDao().getExpiredItems(now)
+                        Filter.NO_REVISION -> db.itemDao().getItemsWithoutRevision()
+                        Filter.OLD_REVISION -> db.itemDao().getItemsWithOldRevision(revisionThreshold)
                         Filter.NONE -> emptyList()
                     }
                 }
@@ -280,6 +297,7 @@ class AuditActivity : AppCompatActivity() {
     // ============================================================
     private suspend fun loadAllProblemItems(): List<ItemEntity> {
         val thresholdDate = System.currentTimeMillis() - (LENT_LONG_DAYS * 24 * 60 * 60 * 1000)
+        val revisionThreshold = System.currentTimeMillis() - (REVISION_LONG_DAYS * 24 * 60 * 60 * 1000)
         val now = System.currentTimeMillis()
 
         val resultMap = mutableMapOf<String, ItemEntity>()
@@ -291,6 +309,8 @@ class AuditActivity : AppCompatActivity() {
         db.itemDao().getItemsWithoutType().forEach { resultMap[it.id] = it }
         db.itemDao().getItemsLentLongAgo(thresholdDate).forEach { resultMap[it.id] = it }
         db.itemDao().getExpiredItems(now).forEach { resultMap[it.id] = it }
+        db.itemDao().getItemsWithoutRevision().forEach { resultMap[it.id] = it }
+        db.itemDao().getItemsWithOldRevision(revisionThreshold).forEach { resultMap[it.id] = it }
         loadItemsWithoutPhoto().forEach { resultMap[it.id] = it }
         loadDuplicateItems().forEach { resultMap[it.id] = it }
 
@@ -346,6 +366,8 @@ class AuditActivity : AppCompatActivity() {
         Filter.DUPLICATES -> "👥 Дубликаты штрих-кода"
         Filter.LENT_LONG -> "🤝 Выданы давно"
         Filter.EXPIRED -> "⏰ Просрочены"
+        Filter.NO_REVISION -> "🔍 Без ревизии"
+        Filter.OLD_REVISION -> "🔍 Ревизия > 30 дней"
         Filter.NONE -> ""
     }
 
@@ -360,6 +382,8 @@ class AuditActivity : AppCompatActivity() {
         Filter.DUPLICATES -> "🎉 Дубликатов нет" to "Все штрих-коды уникальны"
         Filter.LENT_LONG -> "🎉 Нет предметов, выданных давно" to "Все займы свежие"
         Filter.EXPIRED -> "🎉 Нет просроченных предметов в базе" to "Отличная работа!"
+        Filter.NO_REVISION -> "🎉 У всех предметов была ревизия" to "Ничего не нужно проверять"
+        Filter.OLD_REVISION -> "🎉 Нет предметов с давней ревизией" to "Все проверки свежие"
         Filter.NONE -> "Выберите категорию" to "Тапните по чипу сверху, чтобы увидеть список"
     }
 
