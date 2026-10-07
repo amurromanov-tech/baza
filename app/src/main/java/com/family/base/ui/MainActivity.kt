@@ -64,6 +64,8 @@ class MainActivity : AppCompatActivity() {
 
     private var hideProgressJob: Job? = null
 
+    private var pendingRootFolderType: String? = null
+
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
 
@@ -74,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             applyGuestModeIfNeeded()
             viewModel.loadContents()
+            handlePendingRootFolder()
         } else {
             Logger.log(TAG, "User not selected, finishing")
             finish()
@@ -183,6 +186,12 @@ class MainActivity : AppCompatActivity() {
         tokenStorage = TokenStorage(this)
         viewModel = BaseApplication.mainViewModel
 
+        // 🆕 Extra для открытия корневой папки типа (Продукты/Лекарства/Вещи)
+        pendingRootFolderType = intent.getStringExtra("open_root_folder")
+        if (pendingRootFolderType != null) {
+            Logger.log(TAG, "onCreate: requested open_root_folder=$pendingRootFolderType")
+        }
+
         try {
             val appLifecycleObserver = AppLifecycleObserver(viewModel)
             ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
@@ -270,6 +279,7 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         } else {
             applyGuestModeIfNeeded()
+            // handlePendingRootFolder будет вызван в onResume
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -287,10 +297,67 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // ============================================================
+    // 🆕 onNewIntent: обработка повторного запуска (singleTop + CLEAR_TOP)
+    // ============================================================
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        Logger.log(TAG, "onNewIntent called")
+
+        setIntent(intent)
+
+        val type = intent.getStringExtra("open_root_folder")
+        if (type != null) {
+            Logger.log(TAG, "onNewIntent: open_root_folder=$type")
+            pendingRootFolderType = type
+        }
+    }
+
+    // ============================================================
+    // 🆕 ОТКРЫТИЕ КОРНЕВОЙ ПАПКИ ПО ТИПУ (Продукты/Лекарства/Вещи)
+    // ============================================================
+    private fun handlePendingRootFolder() {
+        val type = pendingRootFolderType ?: return
+        pendingRootFolderType = null
+
+        val folderName = when (type) {
+            "food" -> "Продукты"
+            "medicine" -> "Лекарства"
+            "thing" -> "Вещи"
+            else -> {
+                Logger.log(TAG, "Unknown open_root_folder type: $type")
+                return
+            }
+        }
+
+        lifecycleScope.launch {
+            try {
+                delay(300) // дать каталогу загрузиться
+                val rootFolders = withContext(Dispatchers.IO) {
+                    db.folderDao().getRootFolders()
+                }
+                val target = rootFolders.firstOrNull {
+                    it.name.equals(folderName, ignoreCase = true)
+                }
+                if (target != null) {
+                    Logger.log(TAG, "Navigating to root folder '$folderName' (id=${target.id})")
+                    viewModel.navigateToFolder(target.id)
+                } else {
+                    Logger.log(TAG, "Root folder '$folderName' not found")
+                    Toast.makeText(this@MainActivity, "Папка «$folderName» не найдена", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error navigating to root folder", e)
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         viewModel.loadContents()
         applyGuestModeIfNeeded()
+        // 🆕 Обрабатываем отложенный переход в корневую папку (после onCreate или onNewIntent)
+        handlePendingRootFolder()
     }
 
     override fun onPause() {
