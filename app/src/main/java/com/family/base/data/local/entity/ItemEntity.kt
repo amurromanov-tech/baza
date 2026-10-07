@@ -47,6 +47,16 @@ data class ItemEntity(
     val itemSubtype: String? = null,
     val price: Double? = null,
 
+    // ===== ДАТА ПОКУПКИ =====
+    /**
+     * Дата покупки (приобретения) предмета.
+     * По умолчанию при создании = addedDate (Вариант B).
+     * Может быть изменена вручную — если предмет внесён в базу
+     * позже, чем был куплен.
+     * NULL — дата не указана (для старых записей до миграции v10).
+     */
+    val purchaseDate: Long? = null,
+
     // ===== АРХИВ =====
     val isArchived: Boolean = false,
     val archivedReason: String? = null,
