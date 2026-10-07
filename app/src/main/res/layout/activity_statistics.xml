@@ -60,9 +60,13 @@
 
         <!-- Продукты -->
         <androidx.cardview.widget.CardView
+            android:id="@+id/cardFood"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             app:cardCornerRadius="8dp"
             app:cardElevation="2dp">
 
@@ -89,14 +93,26 @@
                     android:textSize="18sp"
                     android:textColor="#4CAF50"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="›"
+                    android:textSize="22sp"
+                    android:textColor="#BDBDBD" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
         <!-- Лекарства -->
         <androidx.cardview.widget.CardView
+            android:id="@+id/cardMedicine"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             app:cardCornerRadius="8dp"
             app:cardElevation="2dp">
 
@@ -123,14 +139,26 @@
                     android:textSize="18sp"
                     android:textColor="#2196F3"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="›"
+                    android:textSize="22sp"
+                    android:textColor="#BDBDBD" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
         <!-- Разное -->
         <androidx.cardview.widget.CardView
+            android:id="@+id/cardOther"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="24dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             app:cardCornerRadius="8dp"
             app:cardElevation="2dp">
 
@@ -157,6 +185,14 @@
                     android:textSize="18sp"
                     android:textColor="#FF9800"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="›"
+                    android:textSize="22sp"
+                    android:textColor="#BDBDBD" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -202,9 +238,13 @@
         <!-- ВЫДАНО (ОРАНЖЕВОЕ) -->
         <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
+            android:id="@+id/cardLent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             app:cardCornerRadius="8dp"
             app:cardElevation="2dp"
             app:cardBackgroundColor="#FFF3E0">
@@ -233,6 +273,14 @@
                     android:textSize="18sp"
                     android:textColor="#E65100"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="›"
+                    android:textSize="22sp"
+                    android:textColor="#E65100" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -240,9 +288,13 @@
         <!-- В АРХИВЕ (СЕРОЕ) -->
         <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
+            android:id="@+id/cardArchived"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             app:cardCornerRadius="8dp"
             app:cardElevation="2dp"
             app:cardBackgroundColor="#E0E0E0">
@@ -270,6 +322,14 @@
                     android:textSize="18sp"
                     android:textColor="#616161"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="›"
+                    android:textSize="22sp"
+                    android:textColor="#616161" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
