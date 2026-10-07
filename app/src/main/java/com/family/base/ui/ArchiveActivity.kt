@@ -30,8 +30,19 @@ class ArchiveActivity : AppCompatActivity() {
 
     private enum class ArchiveFolder { THINGS, MEDICINE, FOOD }
 
+    private enum class Sort(val label: String) {
+        ARCHIVED_DESC("📅 По дате архивации: новые сначала"),
+        ARCHIVED_ASC("📅 По дате архивации: старые сначала"),
+        NAME_ASC("🔤 По имени: А→Я"),
+        NAME_DESC("🔤 По имени: Я→А"),
+        PRICE_DESC("💰 По цене: дорогие сначала"),
+        PURCHASE_DESC("🛒 По дате покупки: новые сначала"),
+        PURCHASE_ASC("🛒 По дате покупки: старые сначала")
+    }
+
     private var currentFolder: ArchiveFolder = ArchiveFolder.THINGS
     private var currentReasonKey: String? = null
+    private var currentSort: Sort = Sort.ARCHIVED_DESC
 
     private var allArchivedItems: List<ItemEntity> = emptyList()
 
@@ -57,6 +68,7 @@ class ArchiveActivity : AppCompatActivity() {
         binding.rvArchive.adapter = adapter
 
         binding.btnBack.setOnClickListener { finish() }
+        binding.btnSort.setOnClickListener { showSortDialog() }
 
         setupFolderChips()
         setupReasonChips()
@@ -119,17 +131,54 @@ class ArchiveActivity : AppCompatActivity() {
 
     private fun applyFilters() {
         val byFolder = allArchivedItems.filter { matchesFolder(it, currentFolder) }
-        val result = if (currentReasonKey == null) {
+        val filtered = if (currentReasonKey == null) {
             byFolder
         } else {
             byFolder.filter { it.archivedReason == currentReasonKey }
         }
+
+        val result = applySort(filtered)
 
         adapter.submitList(result)
 
         val totalSum = result.sumOf { (it.price ?: 0.0) * it.quantity }
         binding.tvArchiveTotal.text = "Итого в архиве: ${formatMoney(totalSum)}"
         binding.tvArchiveCount.text = "Предметов: ${result.size}"
+    }
+
+    // ==================== СОРТИРОВКА ====================
+
+    private fun applySort(items: List<ItemEntity>): List<ItemEntity> {
+        return when (currentSort) {
+            Sort.ARCHIVED_DESC -> items.sortedByDescending { it.archivedDate ?: 0L }
+
+            Sort.ARCHIVED_ASC -> items.sortedBy { it.archivedDate ?: 0L }
+
+            Sort.NAME_ASC -> items.sortedBy { it.name.lowercase() }
+
+            Sort.NAME_DESC -> items.sortedByDescending { it.name.lowercase() }
+
+            Sort.PRICE_DESC -> items.sortedByDescending { (it.price ?: 0.0) * it.quantity }
+
+            Sort.PURCHASE_DESC -> items.sortedByDescending { it.purchaseDate ?: it.addedDate }
+
+            Sort.PURCHASE_ASC -> items.sortedBy { it.purchaseDate ?: it.addedDate }
+        }
+    }
+
+    private fun showSortDialog() {
+        val options = Sort.values().map { it.label }.toTypedArray()
+        val checkedItem = Sort.values().indexOf(currentSort)
+
+        AlertDialog.Builder(this)
+            .setTitle("Сортировка")
+            .setSingleChoiceItems(options, checkedItem) { dialog, which ->
+                currentSort = Sort.values()[which]
+                dialog.dismiss()
+                applyFilters()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun matchesFolder(item: ItemEntity, folder: ArchiveFolder): Boolean {
