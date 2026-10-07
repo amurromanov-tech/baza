@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 9,  // ← увеличили с 8 до 9 (parentItemId в sync_queue)
+    version = 10,  // ← увеличили с 9 до 10 (purchaseDate в items)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -106,6 +106,15 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 9 НА 10 (purchaseDate — ДАТА ПОКУПКИ)
+        // ============================================================
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
             }
         }
 
@@ -201,6 +210,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
+                        MIGRATION_9_10,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
                         MIGRATION_4_6,
