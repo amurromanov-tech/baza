@@ -192,6 +192,30 @@
                 android:checkable="true"
                 android:clickable="true"
                 android:focusable="true" />
+
+            <!-- 🔍 Без ревизии -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNoRevision"
+                style="@style/PastelChip.Other"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="🔍 Без ревизии"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- 🔍 Ревизия &gt; 30 дней -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipOldRevision"
+                style="@style/PastelChip.Soon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="🔍 Ревизия &gt; 30 дней"
+                android:checkable="true"
+                android:clickable="true"
+                android:focusable="true" />
         </LinearLayout>
     </HorizontalScrollView>
 
