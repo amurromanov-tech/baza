@@ -1,412 +1,1209 @@
-<?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:fillViewport="true">
+package com.family.base.ui
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.view.MotionEvent
+import android.view.View
+import android.view.animation.Animation
+import android.view.animation.LinearInterpolator
+import android.view.animation.RotateAnimation
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.ActionBar
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.AppUser
+import com.family.base.BaseApplication
+import com.family.base.R
+import com.family.base.data.TokenStorage
+import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.ItemEntity
+import com.family.base.databinding.ActivityMainBinding
+import com.family.base.ui.adapter.CatalogAdapter
+import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.ui.viewmodel.SyncPhase
+import com.family.base.ui.viewmodel.SyncProgress
+import com.family.base.util.AppLifecycleObserver
+import com.family.base.util.ImageUtils
+import com.family.base.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-        <!-- ============================================================ -->
-        <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
-        <!-- ============================================================ -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="16dp"
-            android:gravity="center_vertical">
+class MainActivity : AppCompatActivity() {
 
-            <Button
-                android:id="@+id/btnBack"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="← Назад"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var viewModel: MainViewModel
+    private lateinit var adapter: CatalogAdapter
+    private lateinit var tokenStorage: TokenStorage
+    private var syncRotationAnim: RotateAnimation? = null
+    private var pathTextView: TextView? = null
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="📊 Статистика"
-                android:textAppearance="?attr/textAppearanceHeadline6"
-                android:gravity="center" />
-        </LinearLayout>
+    private val TAG = "MainActivity"
+    private val db by lazy { AppDatabase.getInstance(this) }
 
-        <!-- ============================================================ -->
-        <!-- ВЫБОР ПЕРИОДА -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Период:"
-            android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
+    private var newFolderImageBytes: ByteArray? = null
+    private var currentFolderForImage: FolderEntity? = null
 
-        <Spinner
-            android:id="@+id/spinnerPeriod"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp" />
+    private var hideProgressJob: Job? = null
 
-        <!-- ============================================================ -->
-        <!-- КАТЕГОРИИ -->
-        <!-- ============================================================ -->
+    private var pendingRootFolderType: String? = null
 
-        <!-- Продукты -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardFood"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
+    private val repeatHandler = Handler(Looper.getMainLooper())
+    private var repeatRunnable: Runnable? = null
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+    private val selectUserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
+        if (result.resultCode == RESULT_OK) {
+            applyGuestModeIfNeeded()
+            viewModel.loadContents()
+            handlePendingRootFolder()
+        } else {
+            Logger.log(TAG, "User not selected, finishing")
+            finish()
+        }
+    }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="🍎 Продукты"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
+    private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            try {
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
+                val processedBytes = ImageUtils.processImage(bitmap)
+                newFolderImageBytes = processedBytes
+                Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error picking folder image", e)
+                Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
-                <TextView
-                    android:id="@+id/tvFoodSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#4CAF50"
-                    android:textStyle="bold" />
+    private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            try {
+                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
+                val processedBytes = ImageUtils.processImage(bitmap)
+                val folder = currentFolderForImage
+                if (folder != null) {
+                    lifecycleScope.launch {
+                        try {
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
+                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                            viewModel.uploadFolderImage(folder.id, processedBytes)
+                            viewModel.loadContents()
+                            Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Error updating folder image", e)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error picking folder image", e)
+            }
+        }
+    }
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="›"
-                    android:textSize="22sp"
-                    android:textColor="#BDBDBD" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+    private val barcodeSearchLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val scanned = result.data?.getStringExtra("barcode")
+            if (!scanned.isNullOrEmpty()) {
+                searchByBarcode(scanned)
+            }
+        }
+    }
 
-        <!-- Лекарства -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardMedicine"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
+    private val itemDetailLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                Logger.log(TAG, "Navigate to folder from ItemDetail: $folderId")
+                viewModel.navigateToFolder(folderId)
+            }
+        }
+    }
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+    private val checkPreviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                Logger.log(TAG, "Navigate to purchase folder: $folderId")
+                Toast.makeText(this, "Открываю папку с покупкой…", Toast.LENGTH_SHORT).show()
+                viewModel.navigateToFolder(folderId)
+            }
+        } else {
+            Logger.log(TAG, "Check preview cancelled or failed")
+        }
+    }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="💊 Лекарства"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
+    private val connectFamilyLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            launchSelectUserIfNeeded()
+            viewModel.loadContents()
+        }
+    }
 
-                <TextView
-                    android:id="@+id/tvMedicineSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#2196F3"
-                    android:textStyle="bold" />
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Logger.log(TAG, "=== MainActivity onCreate START ===")
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="›"
-                    android:textSize="22sp"
-                    android:textColor="#BDBDBD" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        try {
+            binding = ActivityMainBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+        } catch (e: Exception) {
+            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+            return
+        }
 
-        <!-- Разное -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardOther"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp">
+        Logger.init(applicationContext)
+        tokenStorage = TokenStorage(this)
+        viewModel = BaseApplication.mainViewModel
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+        // 🆕 Extra для открытия корневой папки типа (Продукты/Лекарства/Вещи)
+        pendingRootFolderType = intent.getStringExtra("open_root_folder")
+        if (pendingRootFolderType != null) {
+            Logger.log(TAG, "Requested open_root_folder=$pendingRootFolderType")
+        }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="📦 Разное"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
+        try {
+            val appLifecycleObserver = AppLifecycleObserver(viewModel)
+            ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error registering AppLifecycleObserver", e)
+        }
 
-                <TextView
-                    android:id="@+id/tvOtherSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#FF9800"
-                    android:textStyle="bold" />
+        val publicKey = tokenStorage.getPublicKey()
+        if (publicKey == null) {
+            connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
+        }
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="›"
-                    android:textSize="22sp"
-                    android:textColor="#BDBDBD" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        setSupportActionBar(binding.toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
-        <!-- ============================================================ -->
-        <!-- ИТОГО В БАЗЕ (ЯРКОЕ) -->
-        <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp"
-            app:cardBackgroundColor="#4CAF50">
+        pathTextView = TextView(this).apply {
+            text = "BAZA"
+            textSize = 18f
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+        }
+        supportActionBar?.setCustomView(pathTextView)
+        supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="20dp"
-                android:gravity="center_vertical">
+        adapter = CatalogAdapter(
+            onFolderClick = { folder -> navigateToFolder(folder) },
+            onItemClick = { item -> openItemDetail(item) },
+            onFolderLongClick = { folder ->
+                if (!isGuestMode()) showFolderContextMenu(folder)
+            },
+            onItemLongClick = { item ->
+                if (!isGuestMode()) showItemContextMenu(item)
+            }
+        )
+        binding.rvCatalog.layoutManager = LinearLayoutManager(this)
+        binding.rvCatalog.adapter = adapter
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="💰 ИТОГО В БАЗЕ:"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:textColor="@android:color/white" />
+        viewModel.currentEntries.observe(this) { entries ->
+            adapter.submitList(entries)
+            updatePathTitle()
+        }
+        viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
+        viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
 
-                <TextView
-                    android:id="@+id/tvActiveSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="22sp"
-                    android:textColor="@android:color/white"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        viewModel.syncProgress.observe(this) { progress ->
+            if (progress != null) {
+                updateSyncProgressCard(progress)
+            } else {
+                hideSyncProgressCard()
+            }
+        }
 
-        <!-- ============================================================ -->
-        <!-- ВЫДАНО (ОРАНЖЕВОЕ) -->
-        <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardLent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp"
-            app:cardBackgroundColor="#FFF3E0">
+        binding.btnAddFolder.setOnClickListener {
+            if (!isGuestMode()) showCreateFolderDialog()
+        }
+        binding.btnAddItem.setOnClickListener {
+            if (!isGuestMode()) {
+                val intent = Intent(this, AddItemActivity::class.java)
+                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                startActivity(intent)
+            }
+        }
+        binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
+        binding.btnUp.setOnClickListener { viewModel.navigateUp() }
+        binding.btnSearch.setOnClickListener { showSearchDialog() }
+        binding.btnScanSearch.setOnClickListener {
+            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+        }
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+        binding.btnScanCheck.setOnClickListener {
+            if (!isGuestMode()) {
+                Logger.log(TAG, "Scan check clicked")
+                checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
+            }
+        }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="🤝 ВЫДАНО:"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#E65100" />
+        viewModel.navigateToFolder(null)
+        updateSearchIcon(viewModel.searchQueryLiveData.value)
 
-                <TextView
-                    android:id="@+id/tvLentSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#E65100"
-                    android:textStyle="bold" />
+        if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
+            launchSelectUserIfNeeded()
+        } else {
+            applyGuestModeIfNeeded()
+            handlePendingRootFolder()
+        }
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="›"
-                    android:textSize="22sp"
-                    android:textColor="#E65100" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Выйти из приложения?")
+                    .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
+                    .setPositiveButton("Выйти") { _, _ ->
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            }
+        })
+    }
 
-        <!-- ============================================================ -->
-        <!-- В АРХИВЕ (СЕРОЕ) -->
-        <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardArchived"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp"
-            app:cardBackgroundColor="#E0E0E0">
+    // ============================================================
+    // 🆕 ОТКРЫТИЕ КОРНЕВОЙ ПАПКИ ПО ТИПУ (Продукты/Лекарства/Вещи)
+    // ============================================================
+    private fun handlePendingRootFolder() {
+        val type = pendingRootFolderType ?: return
+        pendingRootFolderType = null
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+        val folderName = when (type) {
+            "food" -> "Продукты"
+            "medicine" -> "Лекарства"
+            "thing" -> "Вещи"
+            else -> {
+                Logger.log(TAG, "Unknown open_root_folder type: $type")
+                return
+            }
+        }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="📦 В АРХИВЕ:"
-                    android:textSize="16sp"
-                    android:textColor="#616161" />
+        lifecycleScope.launch {
+            try {
+                delay(300) // дать каталогу загрузиться
+                val rootFolders = withContext(Dispatchers.IO) {
+                    db.folderDao().getRootFolders()
+                }
+                val target = rootFolders.firstOrNull {
+                    it.name.equals(folderName, ignoreCase = true)
+                }
+                if (target != null) {
+                    Logger.log(TAG, "Navigating to root folder '$folderName' (id=${target.id})")
+                    viewModel.navigateToFolder(target.id)
+                } else {
+                    Logger.log(TAG, "Root folder '$folderName' not found")
+                    Toast.makeText(this@MainActivity, "Папка «$folderName» не найдена", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error navigating to root folder", e)
+            }
+        }
+    }
 
-                <TextView
-                    android:id="@+id/tvArchivedSum"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#616161"
-                    android:textStyle="bold" />
+    override fun onResume() {
+        super.onResume()
+        viewModel.loadContents()
+        applyGuestModeIfNeeded()
+    }
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="›"
-                    android:textSize="22sp"
-                    android:textColor="#616161" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+    override fun onPause() {
+        super.onPause()
+        stopSyncAnimation()
+    }
 
-        <!-- ============================================================ -->
-        <!-- ВСЕГО ПОТРАЧЕНО -->
-        <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp"
-            app:cardBackgroundColor="#F5F5F5">
+    override fun onDestroy() {
+        super.onDestroy()
+        stopSyncAnimation()
+        hideProgressJob?.cancel()
+        stopRepeat()
+    }
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+    // ============================================================
+    // ГОСТЕВОЙ РЕЖИМ
+    // ============================================================
+    private fun isGuestMode(): Boolean {
+        return tokenStorage.isCurrentUserGuest()
+    }
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="📊 ВСЕГО ПОТРАЧЕНО:"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#212121" />
+    private fun applyGuestModeIfNeeded() {
+        val guest = isGuestMode()
+        binding.btnAddFolder.visibility = if (guest) View.GONE else View.VISIBLE
+        binding.btnAddItem.visibility = if (guest) View.GONE else View.VISIBLE
+        binding.btnScanCheck.visibility = if (guest) View.GONE else View.VISIBLE
+        Logger.log(TAG, "applyGuestModeIfNeeded: guest=$guest")
+    }
 
-                <TextView
-                    android:id="@+id/tvGrandTotal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 ₽"
-                    android:textSize="18sp"
-                    android:textColor="#212121"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+    private fun launchSelectUserIfNeeded() {
+        if (tokenStorage.getCurrentUser() == null) {
+            Logger.log(TAG, "No user selected, launching SelectUserActivity")
+            try {
+                selectUserLauncher.launch(Intent(this, SelectUserActivity::class.java))
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
+            }
+        } else {
+            applyGuestModeIfNeeded()
+        }
+    }
 
-        <!-- ============================================================ -->
-        <!-- КОЛИЧЕСТВО ПРЕДМЕТОВ -->
-        <!-- ============================================================ -->
-        <TextView
-            android:id="@+id/tvItemsCount"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Предметов в базе: 0"
-            android:textSize="14sp"
-            android:textColor="@android:color/darker_gray"
-            android:gravity="center"
-            android:layout_marginTop="16dp"
-            tools:text="Предметов в базе: 12" />
+    // ============================================================
+    // ПЛАШКА ПРОГРЕССА СИНХРОНИЗАЦИИ
+    // ============================================================
+    private fun updateSyncProgressCard(progress: SyncProgress) {
+        hideProgressJob?.cancel()
 
-        <TextView
-            android:id="@+id/tvLentCount"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Выдано предметов: 0"
-            android:textSize="14sp"
-            android:textColor="@android:color/darker_gray"
-            android:gravity="center"
-            android:layout_marginTop="4dp"
-            tools:text="Выдано предметов: 3" />
+        val icon = when (progress.phase) {
+            SyncPhase.SENDING -> "📤"
+            SyncPhase.DOWNLOADING -> "📥"
+            SyncPhase.UPLOADING_PHOTOS -> "📷"
+            SyncPhase.DOWNLOADING_PHOTOS -> "🖼️"
+            SyncPhase.DONE -> "✅"
+        }
+        binding.tvSyncPhaseIcon.text = icon
 
-        <TextView
-            android:id="@+id/tvArchivedCount"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Предметов в архиве: 0"
-            android:textSize="14sp"
-            android:textColor="@android:color/darker_gray"
-            android:gravity="center"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="16dp"
-            tools:text="Предметов в архиве: 5" />
+        binding.tvSyncPhaseText.text = progress.message
 
-    </LinearLayout>
-</ScrollView>
+        if (progress.total > 0) {
+            binding.tvSyncCounter.text = "${progress.current} / ${progress.total}"
+            binding.tvSyncCounter.visibility = View.VISIBLE
+        } else {
+            binding.tvSyncCounter.visibility = View.GONE
+        }
+
+        if (progress.total > 0) {
+            binding.syncProgressBar.max = progress.total
+            binding.syncProgressBar.setProgressCompat(progress.current, true)
+        } else {
+            binding.syncProgressBar.max = 100
+            binding.syncProgressBar.setProgressCompat(0, false)
+        }
+
+        if (binding.syncProgressCard.visibility != View.VISIBLE) {
+            binding.syncProgressCard.alpha = 0f
+            binding.syncProgressCard.translationY = 80f
+            binding.syncProgressCard.visibility = View.VISIBLE
+            binding.syncProgressCard.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(250)
+                .start()
+        }
+
+        if (progress.phase == SyncPhase.DONE) {
+            hideProgressJob = lifecycleScope.launch {
+                delay(2000)
+                hideSyncProgressCard()
+            }
+        }
+    }
+
+    private fun hideSyncProgressCard() {
+        if (binding.syncProgressCard.visibility != View.VISIBLE) return
+        binding.syncProgressCard.animate()
+            .alpha(0f)
+            .translationY(80f)
+            .setDuration(250)
+            .withEndAction {
+                binding.syncProgressCard.visibility = View.GONE
+                binding.syncProgressCard.alpha = 1f
+                binding.syncProgressCard.translationY = 0f
+            }
+            .start()
+    }
+
+    // ============================================================
+    // НАВИГАЦИЯ
+    // ============================================================
+    private fun updatePathTitle() {
+        pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
+    }
+
+    private fun navigateToFolder(folder: FolderEntity) {
+        viewModel.navigateToFolder(folder.id)
+    }
+
+    private fun openItemDetail(item: ItemEntity) {
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        itemDetailLauncher.launch(intent)
+    }
+
+    private fun showSearchDialog() {
+        val editText = EditText(this)
+        editText.hint = "Поиск по названию или штрих-коду..."
+        viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) editText.setText(it) }
+
+        AlertDialog.Builder(this)
+            .setTitle("Поиск")
+            .setView(editText)
+            .setPositiveButton("Искать") { _, _ ->
+                val q = editText.text.toString().trim()
+                if (q.isNotEmpty()) viewModel.search(q) else viewModel.clearSearch()
+            }
+            .setNegativeButton("Сбросить") { _, _ -> viewModel.clearSearch() }
+            .setNeutralButton("Отмена", null)
+            .show()
+    }
+
+    private fun searchByBarcode(barcode: String) {
+        lifecycleScope.launch {
+            try {
+                val items = withContext(Dispatchers.IO) { db.itemDao().getItemsByBarcode(barcode) }
+                when {
+                    items.isEmpty() -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Ничего не найдено")
+                            .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
+                            .setPositiveButton("Создать") { _, _ ->
+                                if (!isGuestMode()) {
+                                    val intent = Intent(this@MainActivity, AddItemActivity::class.java)
+                                    intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                                    intent.putExtra("barcode", barcode)
+                                    startActivity(intent)
+                                }
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                    items.size == 1 -> openItemDetail(items.first())
+                    else -> {
+                        val names = items.map { "${it.name}  (×${it.quantity})" }.toTypedArray()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Найдено ${items.size} предметов")
+                            .setItems(names) { _, which -> openItemDetail(items[which]) }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error searching by barcode", e)
+            }
+        }
+    }
+
+    private fun showCreateFolderDialog() {
+        val editText = EditText(this)
+        editText.hint = "Название папки"
+        AlertDialog.Builder(this)
+            .setTitle("Новая папка")
+            .setView(editText)
+            .setPositiveButton("Создать") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) createFolderWithImage(name) else Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Выбрать иконку") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    newFolderImageBytes = null
+                    pickFolderImageLauncher.launch("image/*")
+                } else Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Отмена") { _, _ -> newFolderImageBytes = null }
+            .show()
+    }
+
+    private fun createFolderWithImage(name: String) {
+        lifecycleScope.launch {
+            try {
+                viewModel.createFolder(name)
+                delay(100)
+                newFolderImageBytes?.let { bytes ->
+                    try {
+                        val folders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+                        val lastFolder = folders.maxByOrNull { it.createdAt }
+                        if (lastFolder != null) {
+                            ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
+                            val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
+                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                            viewModel.uploadFolderImage(lastFolder.id, bytes)
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "Failed to upload folder image", e)
+                    }
+                    newFolderImageBytes = null
+                }
+                viewModel.loadContents()
+                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error creating folder", e)
+            }
+        }
+    }
+
+    private fun showFolderContextMenu(folder: FolderEntity) {
+        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
+        AlertDialog.Builder(this)
+            .setTitle("Действия с папкой")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showRenameFolderDialog(folder)
+                    1 -> changeFolderImage(folder)
+                    2 -> confirmDeleteFolder(folder)
+                    3 -> showFolderStats(folder)
+                    4 -> showMoveFolderDialog(folder)
+                }
+            }
+            .show()
+    }
+
+    private fun showItemContextMenu(item: ItemEntity) {
+        val items = arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
+        AlertDialog.Builder(this)
+            .setTitle("Действия с предметом")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> editItem(item)
+                    1 -> showWriteOffOrArchiveDialog(item)
+                    2 -> confirmDeleteItem(item)
+                    3 -> showItemHistory(item)
+                    4 -> showMoveItemDialog(item)
+                }
+            }
+            .show()
+    }
+
+    // ============================================================
+    // ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
+    // ============================================================
+    private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Нельзя архивировать")
+            .setMessage(message)
+            .setPositiveButton("Отвязать всех детей") { _, _ ->
+                viewModel.detachAllChildren(item.id) { count ->
+                    Toast.makeText(
+                        this,
+                        "Отвязано: $count. Теперь можно архивировать.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // СПИСАНИЕ / АРХИВ ИЗ КОНТЕКСТНОГО МЕНЮ
+    // ============================================================
+
+    private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
+        if (item.quantity <= 1) {
+            showWriteOffReasonDialog(item, item.quantity.coerceAtLeast(1))
+        } else {
+            showWriteOffCountDialog(item)
+        }
+    }
+
+    private fun getWriteOffNoun(item: ItemEntity): String {
+        return when (item.itemType) {
+            "food" -> "продукт"
+            "medicine" -> "лекарство"
+            "thing" -> "вещь"
+            else -> "предмет"
+        }
+    }
+
+    private fun getWriteOffTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Списать $noun: $shortName"
+    }
+
+    private fun getMoveTitle(item: ItemEntity): String {
+        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+        val noun = getWriteOffNoun(item)
+        return "Переместить $noun: $shortName"
+    }
+
+    private fun showWriteOffCountDialog(item: ItemEntity) {
+        val stepper = buildStepperLayout(item.quantity, withCheckAll = false)
+
+        AlertDialog.Builder(this)
+            .setTitle(getWriteOffTitle(item))
+            .setView(stepper.container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = stepper.getValue()
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                showWriteOffReasonDialog(item, count)
+            }
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
+            .show()
+    }
+
+    private fun showWriteOffReasonDialog(item: ItemEntity, count: Int) {
+        val noun = getWriteOffNoun(item)
+        val totalQty = item.quantity
+
+        val title = if (count == totalQty) {
+            "Списываешь последнюю $noun.\nПредмет уйдёт в архив."
+        } else {
+            "Списать $count шт. — в архив.\nВыберите причину:"
+        }
+
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(reasons) { _, which ->
+                viewModel.writeOffItem(
+                    item.id,
+                    count,
+                    reasonKeys[which],
+                    null,
+                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+                )
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
+    // ============================================================
+    private fun showMoveItemDialog(item: ItemEntity) {
+        if (item.quantity <= 1) {
+            openMoveFolderPicker(item, 1)
+            return
+        }
+
+        val stepper = buildStepperLayout(item.quantity, withCheckAll = true)
+
+        AlertDialog.Builder(this)
+            .setTitle(getMoveTitle(item))
+            .setView(stepper.container)
+            .setPositiveButton("Далее") { _, _ ->
+                val count = stepper.getValue()
+                if (count <= 0) {
+                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (count > item.quantity) {
+                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                openMoveFolderPicker(item, count)
+            }
+            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+            .setOnDismissListener { stopRepeat() }
+            .show()
+    }
+
+    private fun openMoveFolderPicker(item: ItemEntity, count: Int) {
+        Logger.log(
+            TAG,
+            "Show move item dialog: ${item.name}, current parentId=${item.parentId}, " +
+                "current parentItemId=${item.parentItemId}, count=$count"
+        )
+
+        MoveDialogHelper.show(
+            context = this,
+            scope = lifecycleScope,
+            db = db,
+            title = "Переместить «${item.name}»",
+            startFromId = item.parentId,
+            startFromItemId = item.parentItemId,
+            excludedIds = emptySet(),
+            onConfirm = { newParentId, newParentItemId ->
+                if (newParentId == item.parentId && newParentItemId == item.parentItemId) {
+                    Toast.makeText(this, "Предмет уже здесь", Toast.LENGTH_SHORT).show()
+                } else {
+                    viewModel.splitAndMoveItem(item.id, count, newParentId, newParentItemId)
+                    Toast.makeText(this, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    // ============================================================
+    // СТЕППЕР
+    // ============================================================
+    private class StepperResult(
+        val container: LinearLayout,
+        val editText: EditText,
+        val checkAll: CheckBox,
+        val minusBtn: View,
+        val plusBtn: View,
+        val maxQty: Int
+    ) {
+        fun getValue(): Int = editText.text.toString().toIntOrNull() ?: 1
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildStepperLayout(maxQty: Int, withCheckAll: Boolean): StepperResult {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 8)
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val minusBtn = Button(this).apply {
+            text = "−"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        val editText = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("1")
+            gravity = android.view.Gravity.CENTER
+            textSize = 20f
+            setSelectAllOnFocus(true)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = 16
+                marginEnd = 16
+            }
+        }
+
+        val plusBtn = Button(this).apply {
+            text = "+"
+            textSize = 22f
+            minWidth = 0
+            minimumWidth = 0
+            width = 120
+            height = 120
+            setPadding(0, 0, 0, 0)
+        }
+
+        row.addView(minusBtn)
+        row.addView(editText)
+        row.addView(plusBtn)
+        container.addView(row)
+
+        val checkAll = CheckBox(this).apply {
+            text = "Переместить всё ($maxQty шт.)"
+            textSize = 15f
+            visibility = if (withCheckAll) View.VISIBLE else View.GONE
+            setPadding(0, 16, 0, 0)
+        }
+        if (withCheckAll) container.addView(checkAll)
+
+        val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
+
+        val changeBy = { delta: Int ->
+            if (!(withCheckAll && checkAll.isChecked)) {
+                val cur = result.getValue()
+                val next = (cur + delta).coerceIn(1, maxQty)
+                if (next != cur) {
+                    editText.setText(next.toString())
+                    editText.setSelection(editText.text.length)
+                }
+            }
+        }
+
+        minusBtn.setOnClickListener { changeBy(-1) }
+        plusBtn.setOnClickListener { changeBy(+1) }
+
+        setupRepeatButton(minusBtn) { changeBy(-1) }
+        setupRepeatButton(plusBtn) { changeBy(+1) }
+
+        if (withCheckAll) {
+            checkAll.setOnCheckedChangeListener { _, checked ->
+                if (checked) {
+                    editText.setText(maxQty.toString())
+                    editText.isEnabled = false
+                    minusBtn.isEnabled = false
+                    plusBtn.isEnabled = false
+                } else {
+                    editText.setText("1")
+                    editText.isEnabled = true
+                    minusBtn.isEnabled = true
+                    plusBtn.isEnabled = true
+                }
+            }
+        }
+
+        return result
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupRepeatButton(view: View, action: () -> Unit) {
+        view.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    repeatRunnable = object : Runnable {
+                        override fun run() {
+                            action()
+                            repeatHandler.postDelayed(this, 100)
+                        }
+                    }
+                    repeatHandler.postDelayed(repeatRunnable!!, 400)
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    stopRepeat()
+                    v.isPressed = false
+                    v.performClick()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun stopRepeat() {
+        repeatRunnable?.let { repeatHandler.removeCallbacks(it) }
+        repeatRunnable = null
+    }
+
+    // ============================================================
+    // АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ (с проверкой детей)
+    // ============================================================
+    private fun showArchiveDialog(item: ItemEntity) {
+        val reasons = arrayOf(
+            "🧴 Израсходовано",
+            "🍽 Съедено",
+            "🔧 Сломано",
+            "🗑 Выброшено",
+            "🎁 Подарено",
+            "💰 Продано",
+            "⏰ Истёк срок",
+            "📦 Другое"
+        )
+        val reasonKeys = arrayOf(
+            "used_up",
+            "eaten",
+            "broken",
+            "thrown",
+            "gifted",
+            "sold",
+            "expired",
+            "other"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("В архив: ${item.name}")
+            .setItems(reasons) { _, which -> showArchiveNoteDialog(item, reasonKeys[which]) }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
+        val editText = EditText(this)
+        editText.hint = "Комментарий (необязательно)"
+        AlertDialog.Builder(this)
+            .setTitle("Комментарий")
+            .setView(editText)
+            .setPositiveButton("В архив") { _, _ ->
+                val note = editText.text.toString().trim().ifEmpty { null }
+                viewModel.archiveItem(
+                    item.id,
+                    reason,
+                    note,
+                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+                )
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showRenameFolderDialog(folder: FolderEntity) {
+        val editText = EditText(this).apply { setText(folder.name) }
+        AlertDialog.Builder(this)
+            .setTitle("Переименовать папку")
+            .setView(editText)
+            .setPositiveButton("OK") { _, _ ->
+                viewModel.renameFolder(folder.id, editText.text.toString().trim())
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
+    // ============================================================
+    private fun confirmDeleteFolder(folder: FolderEntity) {
+        viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
+            val total = folderCount + itemCount
+
+            if (total > 0) {
+                val message = buildString {
+                    append("Папка «${folder.name}» не пуста:\n\n")
+                    if (itemCount > 0) append("• Предметов: $itemCount\n")
+                    if (folderCount > 0) append("• Подпапок: $folderCount\n")
+                    append("\nНельзя удалить, пока есть вложенные.\n")
+                    append("Сначала отвяжите их — они поднимутся в корень.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Нельзя удалить")
+                    .setMessage(message)
+                    .setPositiveButton("Отвязать всех детей") { _, _ ->
+                        viewModel.detachAllFolderChildren(folder.id) { count ->
+                            Toast.makeText(
+                                this,
+                                "Отвязано: $count. Теперь можно удалить.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("Удалить папку «${folder.name}»?")
+                    .setPositiveButton("Да") { _, _ ->
+                        viewModel.deleteFolder(folder.id)
+                        Toast.makeText(this, "Папка удалена", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Нет", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun changeFolderImage(folder: FolderEntity) {
+        currentFolderForImage = folder
+        pickExistingFolderImageLauncher.launch("image/*")
+    }
+
+    private fun showFolderStats(folder: FolderEntity) {
+        lifecycleScope.launch {
+            viewModel.getFolderStats(folder.id) { stats ->
+                val (itemCount, folderCount) = stats
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Статистика «${folder.name}»")
+                    .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
+    }
+
+    // ============================================================
+    // B-6: ПЕРЕМЕЩЕНИЕ ПАПКИ (полное дерево, пара id)
+    // ============================================================
+    private fun showMoveFolderDialog(folder: FolderEntity) {
+        Logger.log(
+            TAG,
+            "Show move folder dialog: ${folder.name}, " +
+                "current parentId=${folder.parentId}, current parentItemId=${folder.parentItemId}"
+        )
+
+        lifecycleScope.launch {
+            try {
+                val excluded = withContext(Dispatchers.IO) {
+                    collectDescendantIds(folder.id) + folder.id
+                }
+
+                MoveDialogHelper.show(
+                    context = this@MainActivity,
+                    scope = lifecycleScope,
+                    db = db,
+                    title = "Переместить «${folder.name}»",
+                    startFromId = folder.parentId,
+                    startFromItemId = folder.parentItemId,
+                    excludedIds = excluded,
+                    onConfirm = { newParentId, newParentItemId ->
+                        if (newParentId == folder.parentId && newParentItemId == folder.parentItemId) {
+                            Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.moveFolder(folder.id, newParentId, newParentItemId)
+                            Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error showing move folder dialog", e)
+                Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private suspend fun collectDescendantIds(folderId: String): Set<String> {
+        val result = mutableSetOf<String>()
+        val stack = ArrayDeque<String>()
+        stack.addLast(folderId)
+
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
+            val children = db.folderDao().getFoldersByParent(id)
+            for (child in children) {
+                if (result.add(child.id)) {
+                    stack.addLast(child.id)
+                }
+            }
+        }
+        return result
+    }
+
+    private fun editItem(item: ItemEntity) {
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        intent.putExtra("edit_mode", true)
+        itemDetailLauncher.launch(intent)
+    }
+
+    // ============================================================
+    // УДАЛЕНИЕ ПРЕДМЕТА С ЖЁСТКИМ ЗАПРЕТОМ
+    // ============================================================
+    private fun confirmDeleteItem(item: ItemEntity) {
+        viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
+            val totalChildren = foldersCount + itemsCount
+
+            if (totalChildren > 0) {
+                val childInfo = buildString {
+                    append("У предмета «${item.name}» есть вложенные:\n\n")
+                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                    append("\nНельзя удалить, пока есть вложенные.\n")
+                    append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ Нельзя удалить")
+                    .setMessage(childInfo)
+                    .setPositiveButton("Отвязать всех детей") { _, _ ->
+                        viewModel.detachAllChildren(item.id) { count ->
+                            Toast.makeText(
+                                this,
+                                "Отвязано: $count. Теперь можно удалить.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("Удалить предмет «${item.name}»?")
+                    .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
+                    .setPositiveButton("Удалить") { _, _ ->
+                        viewModel.deleteItem(item.id)
+                        Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
+                    .setNeutralButton("Отмена", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showItemHistory(item: ItemEntity) {
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        intent.putExtra("show_history", true)
+        itemDetailLauncher.launch(intent)
+    }
+
+    private fun updateSearchIcon(query: String?) {
+        if (query.isNullOrEmpty()) {
+            binding.btnSearch.setImageResource(R.drawable.ic_search)
+            binding.btnSearch.setOnClickListener { showSearchDialog() }
+        } else {
+            binding.btnSearch.setImageResource(R.drawable.ic_close)
+            binding.btnSearch.setOnClickListener { viewModel.clearSearch() }
+        }
+    }
+
+    private fun updateSyncStatusIcon(status: SyncStatus) {
+        when (status) {
+            SyncStatus.SYNCING -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_syncing)
+                startSyncAnimation()
+            }
+            SyncStatus.SYNCED -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
+                stopSyncAnimation()
+            }
+            SyncStatus.PENDING -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_pending)
+                stopSyncAnimation()
+            }
+            SyncStatus.OFFLINE -> {
+                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_offline)
+                stopSyncAnimation()
+            }
+        }
+    }
+
+    private fun startSyncAnimation() {
+        if (syncRotationAnim == null) {
+            syncRotationAnim = RotateAnimation(
+                0f, 360f,
+                Animation.RELATIVE_TO_SELF, 0.5f,
+                Animation.RELATIVE_TO_SELF, 0.5f
+            ).apply {
+                duration = 1000
+                interpolator = LinearInterpolator()
+                repeatCount = Animation.INFINITE
+                repeatMode = Animation.RESTART
+            }
+        }
+        binding.ivSyncStatus.startAnimation(syncRotationAnim)
+    }
+
+    private fun stopSyncAnimation() {
+        binding.ivSyncStatus.clearAnimation()
+    }
+}
