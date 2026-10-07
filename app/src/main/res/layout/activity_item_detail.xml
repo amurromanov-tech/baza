@@ -687,6 +687,40 @@
                             style="@style/DateLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:text="🛒 Дата покупки" />
+                        <TextView
+                            android:id="@+id/tvDatePurchase"
+                            style="@style/DateValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:background="?attr/selectableItemBackground"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            tools:text="01.10.2026" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilPurchaseDate"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:hint="Дата покупки (дд.мм.гггг)"
+                            app:boxBackgroundMode="outline"
+                            android:visibility="gone">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPurchaseDate"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:focusable="false"
+                                android:clickable="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <TextView
+                            style="@style/DateLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
                             android:text="Последнее изменение" />
                         <TextView
                             android:id="@+id/tvDateModified"
