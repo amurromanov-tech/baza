@@ -317,6 +317,33 @@ interface ItemDao {
     """)
     suspend fun getExpiredItems(now: Long): List<ItemEntity>
 
+    // -------- РЕВИЗИЯ --------
+
+    /**
+     * Предметы БЕЗ ревизии (lastRevisionDate IS NULL).
+     * Вариант A: не пересекается с «ревизия > 30 дней».
+     */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND lastRevisionDate IS NULL
+        ORDER BY name ASC
+    """)
+    suspend fun getItemsWithoutRevision(): List<ItemEntity>
+
+    /**
+     * Предметы, у которых ревизия была, но давно
+     * (lastRevisionDate IS NOT NULL AND lastRevisionDate < :thresholdDate).
+     */
+    @Query("""
+        SELECT * FROM items 
+        WHERE isArchived = 0 
+          AND lastRevisionDate IS NOT NULL 
+          AND lastRevisionDate < :thresholdDate
+        ORDER BY lastRevisionDate ASC
+    """)
+    suspend fun getItemsWithOldRevision(thresholdDate: Long): List<ItemEntity>
+
     // -------- ДУБЛИКАТЫ --------
 
     @Query("""
@@ -391,6 +418,21 @@ interface ItemDao {
           AND expiryDate < :now
     """)
     suspend fun countExpiredItems(now: Long): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND lastRevisionDate IS NULL
+    """)
+    suspend fun countItemsWithoutRevision(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM items 
+        WHERE isArchived = 0 
+          AND lastRevisionDate IS NOT NULL 
+          AND lastRevisionDate < :thresholdDate
+    """)
+    suspend fun countItemsWithOldRevision(thresholdDate: Long): Int
 
     @Query("""
         SELECT COUNT(*) FROM items
