@@ -73,12 +73,38 @@ class ArchiveActivity : AppCompatActivity() {
         setupFolderChips()
         setupReasonChips()
 
+        // 🆕 Extra: стартовая папка архива
+        applyStartFolderFromIntent()
+
         loadAllArchive()
 
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
     }
 
     private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
+
+    // ==================== СТАРТОВАЯ ПАПКА ИЗ INTENT ====================
+
+    private fun applyStartFolderFromIntent() {
+        val startFolder = intent.getStringExtra("start_folder") ?: return
+        Logger.log(TAG, "Requested start_folder=$startFolder")
+
+        when (startFolder) {
+            "food" -> {
+                currentFolder = ArchiveFolder.FOOD
+                binding.chipGroupFolder.check(R.id.chipFolderFood)
+            }
+            "medicine" -> {
+                currentFolder = ArchiveFolder.MEDICINE
+                binding.chipGroupFolder.check(R.id.chipFolderMedicine)
+            }
+            "things" -> {
+                currentFolder = ArchiveFolder.THINGS
+                binding.chipGroupFolder.check(R.id.chipFolderThings)
+            }
+            else -> Logger.log(TAG, "Unknown start_folder: $startFolder")
+        }
+    }
 
     // ==================== ПАПКИ ====================
 
