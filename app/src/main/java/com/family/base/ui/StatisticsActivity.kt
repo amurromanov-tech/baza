@@ -1,5 +1,6 @@
 package com.family.base.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.AdapterView
@@ -54,7 +55,50 @@ class StatisticsActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
+        setupClickListeners()
+
         Logger.log(TAG, "=== StatisticsActivity onCreate FINISHED ===")
+    }
+
+    // ============================================================
+    // 🆕 ПЕРЕХОДЫ ПО КЛИКАМ
+    // ============================================================
+    private fun setupClickListeners() {
+        // 🍎 Продукты → каталог, папка «Продукты»
+        binding.cardFood.setOnClickListener {
+            openRootFolder("food")
+        }
+
+        // 💊 Лекарства → каталог, папка «Лекарства»
+        binding.cardMedicine.setOnClickListener {
+            openRootFolder("medicine")
+        }
+
+        // 📦 Разное → каталог, папка «Вещи»
+        binding.cardOther.setOnClickListener {
+            openRootFolder("thing")
+        }
+
+        // 🤝 Выдано → LentItemsActivity
+        binding.cardLent.setOnClickListener {
+            Logger.log(TAG, "Open lent items")
+            startActivity(Intent(this, LentItemsActivity::class.java))
+        }
+
+        // 📦 В архиве → ArchiveActivity
+        binding.cardArchived.setOnClickListener {
+            Logger.log(TAG, "Open archive")
+            startActivity(Intent(this, ArchiveActivity::class.java))
+        }
+    }
+
+    private fun openRootFolder(type: String) {
+        Logger.log(TAG, "Open root folder type=$type")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("open_root_folder", type)
+        }
+        startActivity(intent)
     }
 
     private fun loadStatistics(periodIndex: Int) {
