@@ -59,6 +59,7 @@ class AddItemActivity : AppCompatActivity() {
 
     private var imageBytes: ByteArray? = null
     private var expiryDate: Long? = null
+    private var purchaseDate: Long? = null
     private var barcode: String? = null
 
     private var photoUri: Uri? = null
@@ -185,6 +186,9 @@ class AddItemActivity : AppCompatActivity() {
         updateSubtypesForAuto(currentAutoType)
         updateSubtypesForManual(currentManualType)
 
+        // 🆕 Дата покупки: по умолчанию = сегодня
+        setDefaultPurchaseDate()
+
         incomingBarcode?.let { code ->
             binding.modeSelection.visibility = View.GONE
             binding.autoModeLayout.visibility = View.VISIBLE
@@ -220,6 +224,10 @@ class AddItemActivity : AppCompatActivity() {
         binding.etManualExpiry.setOnClickListener { showDatePickerDialog(binding.etManualExpiry) }
         binding.etAutoExpiry.setOnClickListener { showDatePickerDialog(binding.etAutoExpiry) }
 
+        binding.etManualPurchaseDate.setOnClickListener {
+            showPurchaseDatePickerDialog(binding.etManualPurchaseDate)
+        }
+
         binding.btnTakePhoto.setOnClickListener { showImageSourceDialog() }
 
         binding.btnScanBarcode.setOnClickListener {
@@ -247,6 +255,35 @@ class AddItemActivity : AppCompatActivity() {
             selectedManualSubtype = null
             updateSubtypesForManual(currentManualType)
         }
+    }
+
+    // ============================================================
+    // ДАТА ПОКУПКИ
+    // ============================================================
+    private fun setDefaultPurchaseDate() {
+        purchaseDate = System.currentTimeMillis()
+        binding.etManualPurchaseDate.setText(dateFormat.format(Date(purchaseDate!!)))
+    }
+
+    private fun showPurchaseDatePickerDialog(targetEditText: com.google.android.material.textfield.TextInputEditText) {
+        val calendar = Calendar.getInstance()
+        purchaseDate?.let { calendar.timeInMillis = it }
+
+        DatePickerDialog(
+            this,
+            { _, year, month, dayOfMonth ->
+                val dateStr = String.format("%02d.%02d.%d", dayOfMonth, month + 1, year)
+                targetEditText.setText(dateStr)
+                try {
+                    purchaseDate = dateFormat.parse(dateStr)?.time
+                } catch (e: Exception) {
+                    purchaseDate = null
+                }
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
     }
 
     // ============================================================
@@ -551,10 +588,20 @@ class AddItemActivity : AppCompatActivity() {
             return
         }
 
+        val now = System.currentTimeMillis()
+        val finalPurchaseDate = if (isAutoMode) {
+            // В авто-режиме дату покупки не спрашиваем — ставим = addedDate
+            now
+        } else {
+            // В manual — берём выбранную (по умолчанию = сегодня), либо now
+            purchaseDate ?: now
+        }
+
         Logger.log(
             TAG,
             "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, " +
-                "hasImage=${imageBytes != null}, parentFolderId=$parentFolderId, parentItemId=$parentItemId"
+                "hasImage=${imageBytes != null}, parentFolderId=$parentFolderId, parentItemId=$parentItemId, " +
+                "purchaseDate=$finalPurchaseDate"
         )
 
         val newItemId = UUID.randomUUID().toString()
@@ -569,6 +616,8 @@ class AddItemActivity : AppCompatActivity() {
             description = description,
             price = price,
             expiryDate = expiryDate,
+            addedDate = now,
+            purchaseDate = finalPurchaseDate,
             addedBy = "user",
             itemType = itemType,
             itemSubtype = itemSubtype,
