@@ -333,6 +333,16 @@ class ItemDetailActivity : AppCompatActivity() {
             selectedEditSubtype = null
             updateSubtypeDropdown(currentEditType)
         }
+
+        // 🆕 Дата покупки — клик по значению открывает datepicker
+        binding.tvDatePurchase.setOnClickListener {
+            if (!isGuestMode()) {
+                itemId?.let { showEditMode(it) }
+                binding.etPurchaseDate.post { showPurchaseDatePickerDialog() }
+            }
+        }
+
+        binding.etPurchaseDate.setOnClickListener { showPurchaseDatePickerDialog() }
     }
 
     // ============================================================
@@ -780,6 +790,42 @@ class ItemDetailActivity : AppCompatActivity() {
             ContextCompat.getColor(this, R.color.dateValue)
         }
         binding.tvDateRevision.setTextColor(color)
+    }
+
+    // ============================================================
+    // 🆕 ДАТА ПОКУПКИ
+    // ============================================================
+    private fun updatePurchaseDateRow(timestamp: Long?) {
+        if (timestamp == null) {
+            binding.tvDatePurchase.text = "— не указана"
+            binding.tvDatePurchase.setTextColor(ContextCompat.getColor(this, R.color.dateLabel))
+        } else {
+            binding.tvDatePurchase.text = dateFormat.format(Date(timestamp))
+            binding.tvDatePurchase.setTextColor(ContextCompat.getColor(this, R.color.dateValue))
+        }
+    }
+
+    private fun showPurchaseDatePickerDialog() {
+        val calendar = Calendar.getInstance()
+        val current = currentItem?.purchaseDate
+        if (current != null) {
+            calendar.timeInMillis = current
+        } else {
+            binding.etPurchaseDate.text.toString().let {
+                if (it.isNotEmpty()) {
+                    try { dateFormat.parse(it)?.let { d -> calendar.time = d } } catch (e: Exception) {}
+                }
+            }
+        }
+
+        DatePickerDialog(
+            this,
+            { _, year, month, day ->
+                val dateStr = "${day.toString().padStart(2, '0')}.${(month + 1).toString().padStart(2, '0')}.$year"
+                binding.etPurchaseDate.setText(dateStr)
+            },
+            calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
     }
 
     // ============================================================
@@ -1290,7 +1336,7 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.expiryProgressBlock.visibility = View.VISIBLE
 
         val now = System.currentTimeMillis()
-        val added = item.addedDate
+        val added = item.purchaseDate ?: item.addedDate
 
         val totalSpan = (expiry - added).coerceAtLeast(1L)
         val elapsed = (now - added).coerceAtLeast(0L)
@@ -1491,6 +1537,10 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.tvDescriptionView.visibility = viewVisibility
         binding.tilDescription.visibility = editVisibility
 
+        // 🆕 Дата покупки: view — текстом, edit — полем ввода
+        binding.tvDatePurchase.visibility = viewVisibility
+        binding.tilPurchaseDate.visibility = editVisibility
+
         binding.editButtonsLayout.visibility = editVisibility
 
         binding.btnAddNested.visibility = editVisibility
@@ -1546,6 +1596,9 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
         binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+
+        updatePurchaseDateRow(item.purchaseDate)
+
         if (item.expiryDate != null) {
             binding.tvDateExpiryLabel.visibility = View.VISIBLE
             binding.tvDateExpiry.visibility = View.VISIBLE
@@ -1591,6 +1644,11 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etExpiry.isEnabled = true
         binding.etExpiry.setOnClickListener { showDatePickerDialog() }
 
+        // 🆕 Дата покупки: заполняем поле
+        item.purchaseDate?.let {
+            binding.etPurchaseDate.setText(dateFormat.format(Date(it)))
+        } ?: binding.etPurchaseDate.setText("")
+
         binding.etPrice.setText(if (item.price != null && item.price != 0.0) item.price.toString() else "")
 
         binding.etDescription.setText(item.description ?: "")
@@ -1603,6 +1661,9 @@ class ItemDetailActivity : AppCompatActivity() {
 
         binding.tvDateAdded.text = dateTimeFormat.format(Date(item.addedDate))
         binding.tvDateModified.text = dateTimeFormat.format(Date(item.updatedDate))
+
+        updatePurchaseDateRow(item.purchaseDate)
+
         if (item.expiryDate != null) {
             binding.tvDateExpiryLabel.visibility = View.VISIBLE
             binding.tvDateExpiry.visibility = View.VISIBLE
@@ -1737,6 +1798,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     binding.tilExpiry.visibility = View.GONE
                     binding.tilPrice.visibility = View.GONE
                     binding.priceRow.visibility = View.GONE
+                    binding.tilPurchaseDate.visibility = View.GONE
+                    binding.tvDatePurchase.visibility = View.GONE
                     binding.btnSave.visibility = View.GONE
                     binding.editButtonsLayout.visibility = View.GONE
                     binding.btnAddPhoto.visibility = View.GONE
@@ -2129,6 +2192,10 @@ class ItemDetailActivity : AppCompatActivity() {
                 val price = binding.etPrice.text.toString().toDoubleOrNull()
                 val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
 
+                // 🆕 Дата покупки: парсим из поля (пустое → null)
+                val purchaseDateText = binding.etPurchaseDate.text.toString().trim()
+                val purchaseDate = if (purchaseDateText.isEmpty()) null else parseDate(purchaseDateText)
+
                 val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
                     R.id.rbTypeFood -> "food"
                     R.id.rbTypeMedicine -> "medicine"
@@ -2145,7 +2212,11 @@ class ItemDetailActivity : AppCompatActivity() {
                 }
                 binding.tilSubtypeEdit.error = null
 
-                Logger.log(TAG, "Save: type=$newItemType, subtype=$newItemSubtype, hasNewImage=${newImageBytes != null}")
+                Logger.log(
+                    TAG,
+                    "Save: type=$newItemType, subtype=$newItemSubtype, hasNewImage=${newImageBytes != null}, " +
+                        "purchaseDate=$purchaseDate"
+                )
 
                 val newImageUrl = if (newImageBytes != null) null else item.imageUrl
 
@@ -2156,6 +2227,7 @@ class ItemDetailActivity : AppCompatActivity() {
                     description = description,
                     expiryDate = expiryDate,
                     price = price,
+                    purchaseDate = purchaseDate,
                     itemType = newItemType,
                     itemSubtype = newItemSubtype,
                     imageUrl = newImageUrl,
