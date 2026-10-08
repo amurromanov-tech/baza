@@ -32,6 +32,9 @@ class CatalogRepository(private val db: AppDatabase) {
     private val ITEMS_FILENAME = "items.json"
     private val FOLDERS_FILENAME = "folders.json"
 
+    // 🆕 v13.2.0 (B-8): синхронизация истории изменений
+    private val HISTORY_FILENAME = "history.json"
+
     private var folderPathCache: String? = null
 
     @Volatile
@@ -87,11 +90,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
     /**
      * 🆕 B-5: создание папки внутри предмета.
-     * @param name имя папки
-     * @param parentItemId id предмета-родителя (parentItemId новой папки)
-     * @param parentFolderId id папки, в которой лежит предмет-родитель (parentId новой папки)
-     * @param creator создатель
-     * @return созданная папка
      */
     suspend fun createFolderInItem(
         name: String,
@@ -119,11 +117,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ПРЕДМЕТЫ
     // ============================================================
 
-    /**
-     * 🆕 B-5: возвращает ТОЛЬКО «корневые» предметы папки.
-     * Вложенные предметы (parentItemId != null) в каталоге папки не видны —
-     * они отображаются в секции «📦 Вложенные» карточки родителя.
-     */
     suspend fun getItems(parentId: String?): List<ItemEntity> =
         db.itemDao().getItemsByParent(parentId).filter { it.parentItemId == null }
 
@@ -148,7 +141,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ (папки + предметы)
+    // 🆕 B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ
     // ============================================================
     suspend fun detachAllChildren(itemId: String): Int {
         return withContext(Dispatchers.IO) {
@@ -200,19 +193,9 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    // ============================================================
-    // 🆕 B-5: ВЛОЖЕННЫЕ (для секции «📦 Вложенные»)
-    // ============================================================
-
-    /**
-     * Возвращает прямых дочерних ПРЕДМЕТОВ (неархивных) указанного предмета.
-     */
     suspend fun getNestedItems(parentItemId: String): List<ItemEntity> =
         db.itemDao().getItemsByParentItem(parentItemId)
 
-    /**
-     * Возвращает прямые дочерние ПАПКИ указанного предмета.
-     */
     suspend fun getNestedFolders(parentItemId: String): List<FolderEntity> =
         db.folderDao().getFoldersByParentItem(parentItemId)
 
@@ -241,17 +224,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
     // ============================================================
 
-    private fun getPublicKey(): String? {
-        return try {
-            val context = BaseApplication.getAppContext()
-            val tokenStorage = TokenStorage(context)
-            tokenStorage.getPublicKey()
-        } catch (e: Exception) {
-            Logger.log(TAG, "getPublicKey error: ${e.message}")
-            null
-        }
-    }
-
     private fun getAccessToken(): String? {
         return try {
             val context = BaseApplication.getAppContext()
@@ -268,10 +240,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return if (token != null) "OAuth $token" else null
     }
 
-    // ============================================================
-    // ОБРАБОТКА DNS-СБОЕВ
-    // ============================================================
-
     private fun isDnsError(e: Exception): Boolean {
         var cause: Throwable? = e
         while (cause != null) {
@@ -283,7 +251,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ЗАПИСЬ НА ДИСК (ПРИВАТНЫЙ API)
+    // ЗАПИСЬ НА ДИСК
     // ============================================================
 
     private suspend fun createFolderIfNotExists(folderPath: String) {
@@ -488,7 +456,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ПОЛЬЗОВАТЕЛИ (users.json на Яндекс.Диске)
+    // ПОЛЬЗОВАТЕЛИ
     // ============================================================
 
     suspend fun downloadUsersJson(): UsersFile? {
@@ -610,6 +578,31 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
+    /**
+     * 🆕 v13.2.0 (B-8): выгрузка всей истории на Диск.
+     */
+    suspend fun uploadAllHistoryToDisk(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val allHistory = db.historyDao().getAllEntries()
+                Logger.log(TAG, "uploadAllHistoryToDisk: uploading ${allHistory.size} history entries")
+                val json = gson.toJson(allHistory)
+                val success = uploadJsonWithToken("data/$HISTORY_FILENAME", json)
+                if (!success) {
+                    Logger.log(TAG, "uploadAllHistoryToDisk: failed (json upload)")
+                    return@withContext false
+                }
+                // ⚠️ НЕ обновляем last_modified — он обновляется при заливке items/folders.
+                // Иначе history будет триггерить лишний download.
+                Logger.log(TAG, "uploadAllHistoryToDisk: success")
+                true
+            } catch (e: Exception) {
+                Logger.log(TAG, "uploadAllHistoryToDisk error: ${e.message}")
+                false
+            }
+        }
+    }
+
     suspend fun createFolderOnDisk(folder: FolderEntity): Boolean =
         withContext(Dispatchers.IO) { uploadAllFoldersToDisk() }
 
@@ -618,10 +611,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
     suspend fun deleteFolderOnDisk(folderId: String): Boolean =
         withContext(Dispatchers.IO) { uploadAllFoldersToDisk() }
-
-    // ============================================================
-    // ОПЕРАЦИИ С ПРЕДМЕТАМИ НА ДИСКЕ
-    // ============================================================
 
     suspend fun createItemOnDisk(item: ItemEntity): Boolean =
         withContext(Dispatchers.IO) { uploadAllItemsToDisk() }
@@ -633,7 +622,7 @@ class CatalogRepository(private val db: AppDatabase) {
         withContext(Dispatchers.IO) { uploadAllItemsToDisk() }
 
     // ============================================================
-    // ЗАГРУЗКА ФОТО ПАПКИ НА ДИСК
+    // ФОТО ПАПОК
     // ============================================================
 
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
@@ -672,9 +661,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    // ============================================================
-    // СКАЧИВАНИЕ ИКОНКИ ПАПКИ С ДИСКА
-    // ============================================================
     suspend fun downloadFolderImage(folderId: String): Bitmap? {
         return withContext(Dispatchers.IO) {
             try {
@@ -774,13 +760,18 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
+    /**
+     * 🆕 v13.2.0 (B-8): расширенный DownloadResult с полем history.
+     */
     data class DownloadResult(
         val folders: List<FolderEntity>,
         val items: List<ItemEntity>,
+        val history: List<HistoryEntry>,
         val foldersError: Boolean,
-        val itemsError: Boolean
+        val itemsError: Boolean,
+        val historyError: Boolean
     ) {
-        val hasAnyError: Boolean get() = foldersError || itemsError
+        val hasAnyError: Boolean get() = foldersError || itemsError || historyError
     }
 
     suspend fun downloadDataFromDisk(): DownloadResult {
@@ -788,11 +779,11 @@ class CatalogRepository(private val db: AppDatabase) {
             try {
                 if (isDnsBlocked()) {
                     Logger.log(TAG, "downloadDataFromDisk: DNS blocked")
-                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
+                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
                 }
                 val auth = getAuthHeader()
                 if (auth == null) {
-                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
+                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
                 }
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -803,20 +794,26 @@ class CatalogRepository(private val db: AppDatabase) {
                 val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/$ITEMS_FILENAME")
                 Logger.log(TAG, "Downloaded ${itemsResult.data.size} items (error=${itemsResult.error})")
 
+                // 🆕 v13.2.0 (B-8): история
+                val historyResult = downloadJsonFileSafe<HistoryEntry>(api, auth, "$rootPath/data/$HISTORY_FILENAME")
+                Logger.log(TAG, "Downloaded ${historyResult.data.size} history entries (error=${historyResult.error})")
+
                 DownloadResult(
                     folders = foldersResult.data,
                     items = itemsResult.data,
+                    history = historyResult.data,
                     foldersError = foldersResult.error,
-                    itemsError = itemsResult.error
+                    itemsError = itemsResult.error,
+                    historyError = historyResult.error
                 )
             } catch (e: Exception) {
                 if (isDnsError(e)) {
                     noteDnsFailure()
                     Logger.log(TAG, "DNS failure in downloadDataFromDisk: ${e.message}")
-                    return@withContext DownloadResult(emptyList(), emptyList(), true, true)
+                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
                 }
                 Logger.log(TAG, "Error downloadDataFromDisk: ${e.message}")
-                DownloadResult(emptyList(), emptyList(), true, true)
+                DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
             }
         }
     }
@@ -843,10 +840,11 @@ class CatalogRepository(private val db: AppDatabase) {
             val json = downloadResponse.body()?.string()
             if (json.isNullOrEmpty()) return JsonDownloadResult(emptyList(), false)
 
-            val type = if (path.contains("folders")) {
-                object : TypeToken<List<FolderEntity>>() {}.type
-            } else {
-                object : TypeToken<List<ItemEntity>>() {}.type
+            // 🆕 v13.2.0: определяем тип по имени файла
+            val type = when {
+                path.contains("folders") -> object : TypeToken<List<FolderEntity>>() {}.type
+                path.contains("history") -> object : TypeToken<List<HistoryEntry>>() {}.type
+                else -> object : TypeToken<List<ItemEntity>>() {}.type
             }
             val parsed: List<T> = gson.fromJson(json, type) ?: emptyList()
             JsonDownloadResult(parsed, false)
@@ -861,7 +859,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ПРОВЕРКА: ЕСТЬ ЛИ ФОТО ПРЕДМЕТА НА ДИСКЕ
+    // ФОТО ПРЕДМЕТОВ
     // ============================================================
 
     suspend fun itemImageExistsOnDisk(itemId: String): Boolean? {
@@ -911,10 +909,6 @@ class CatalogRepository(private val db: AppDatabase) {
             }
         }
     }
-
-    // ============================================================
-    // ИЗОБРАЖЕНИЯ ПРЕДМЕТОВ
-    // ============================================================
 
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
@@ -991,7 +985,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ЗАГРУЗКА ЛОГОВ НА ЯНДЕКС.ДИСК
+    // ЛОГИ
     // ============================================================
 
     suspend fun uploadLogToDisk(fileName: String, bytes: ByteArray): Boolean {
