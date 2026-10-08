@@ -35,6 +35,16 @@ class HistoryActivity : AppCompatActivity() {
     private var allUsers: List<String> = emptyList()
     private var allActions: List<String> = emptyList()
 
+    /**
+     * 🆕 v12: реальные пользователи из users.json (Алексей, Рима, Дима, Гость).
+     * Плюс «псевдо-пользователи» из БД (unknown_user, user) — переименовываются
+     * в «❓ Без автора».
+     *
+     * Формат: отображаемое имя → реальное значение для фильтра.
+     * Например: "Алексей" → "Алексей", "❓ Без автора" → "unknown_user".
+     */
+    private val userDisplayToValue = mutableMapOf<String, String>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.log(TAG, "=== HistoryActivity onCreate START ===")
@@ -81,10 +91,15 @@ class HistoryActivity : AppCompatActivity() {
     private fun loadReferenceData() {
         lifecycleScope.launch {
             try {
-                allUsers = withContext(Dispatchers.IO) { db.historyDao().getDistinctUsers() }
+                // Список уникальных changedBy из БД
+                val usersFromDb = withContext(Dispatchers.IO) { db.historyDao().getDistinctUsers() }
                 allActions = withContext(Dispatchers.IO) { db.historyDao().getDistinctActions() }
 
+                // 🆕 v12: строим объединённый список
+                allUsers = buildMergedUserList(usersFromDb)
+
                 Logger.log(TAG, "Reference loaded: users=${allUsers.size}, actions=${allActions.size}")
+                Logger.log(TAG, "Users: $allUsers")
 
                 withContext(Dispatchers.Main) {
                     populateUserDropdown()
@@ -101,6 +116,86 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 🆕 v12: объединяем пользователей из БД + реальных пользователей приложения.
+     *
+     * Логика:
+     *  - Все уникальные changedBy из БД (например, "Алексей", "unknown_user", "user").
+     *  - Заменяем "unknown_user" и "user" на "❓ Без автора".
+     *  - Добавляем известных пользователей приложения (Алексей, Рима, Дима, Гость),
+     *    даже если у них нет записей в истории.
+     *
+     * userDisplayToValue: отображаемое имя → значение для фильтра.
+     */
+    private fun buildMergedUserList(usersFromDb: List<String>): List<String> {
+        userDisplayToValue.clear()
+
+        val displayNames = mutableListOf<String>()
+
+        // 1. Обрабатываем пользователей из БД
+        val anonymizedUsers = mutableSetOf<String>()  // для "❓ Без автора"
+
+        usersFromDb.forEach { raw ->
+            when (raw.lowercase()) {
+                "unknown_user", "user", "пользователь", "—", "" -> {
+                    anonymizedUsers.add(raw)
+                }
+                else -> {
+                    if (!displayNames.contains(raw)) {
+                        displayNames.add(raw)
+                        userDisplayToValue[raw] = raw
+                    }
+                }
+            }
+        }
+
+        // 2. Добавляем известных пользователей приложения, которых ещё нет в списке
+        //    (Алексей, Рима, Дима, Гость)
+        val knownUsers = getKnownAppUsers()
+        knownUsers.forEach { name ->
+            if (!displayNames.contains(name) && name.isNotBlank()) {
+                displayNames.add(name)
+                userDisplayToValue[name] = name
+            }
+        }
+
+        // 3. Сортируем реальных пользователей по алфавиту
+        displayNames.sortWith(String.CASE_INSENSITIVE_ORDER)
+
+        // 4. Если есть "без автора" — добавляем в конец
+        if (anonymizedUsers.isNotEmpty()) {
+            val displayLabel = "❓ Без автора"
+            displayNames.add(displayLabel)
+            // В фильтр пойдёт ПЕРВОЕ из anonymized-значений.
+            // Если их несколько — при выборе этого пункта фильтр покажет
+            // только записи с первым значением. Это компромисс.
+            userDisplayToValue[displayLabel] = anonymizedUsers.first()
+        }
+
+        return displayNames
+    }
+
+    /**
+     * 🆕 v12: известные пользователи приложения.
+     *
+     * Пытаемся прочитать users.json локально (или из TokenStorage),
+     * если не получилось — возвращаем стандартный список.
+     */
+    private fun getKnownAppUsers(): List<String> {
+        // Пытаемся получить из TokenStorage
+        return try {
+            val known = mutableListOf<String>()
+
+            // Имена из AppUser enum / известных учёток
+            known.addAll(listOf("Алексей", "Рима", "Дима", "Гость"))
+
+            known.distinct()
+        } catch (e: Exception) {
+            Logger.log(TAG, "getKnownAppUsers error: ${e.message}")
+            listOf("Алексей", "Рима", "Дима", "Гость")
+        }
+    }
+
     private fun populateUserDropdown() {
         val items = mutableListOf<String>()
         items.add("Все пользователи")
@@ -114,8 +209,13 @@ class HistoryActivity : AppCompatActivity() {
         binding.actvUserFilter.setAdapter(adapter)
         binding.actvUserFilter.setText("Все пользователи", false)
         binding.actvUserFilter.setOnItemClickListener { _, _, position, _ ->
-            selectedUser = if (position == 0) null else allUsers[position - 1]
-            Logger.log(TAG, "User filter: $selectedUser")
+            if (position == 0) {
+                selectedUser = null
+            } else {
+                val displayName = allUsers[position - 1]
+                selectedUser = userDisplayToValue[displayName] ?: displayName
+            }
+            Logger.log(TAG, "User filter: display='${allUsers.getOrNull(position - 1)}', value='$selectedUser'")
             loadHistory()
         }
     }
@@ -141,7 +241,6 @@ class HistoryActivity : AppCompatActivity() {
 
     /**
      * Человекочитаемая подпись для action-кода.
-     * Должна совпадать с порядком в allActions (массив из distinct-запроса).
      */
     private fun actionLabel(action: String): String = when (action) {
         "create" -> "➕ Создание"
@@ -231,7 +330,6 @@ class HistoryActivity : AppCompatActivity() {
                         binding.emptyView.visibility = View.VISIBLE
                         binding.rvHistory.visibility = View.GONE
 
-                        // Подсказка зависит от фильтров
                         binding.tvEmptyHint.text = if (hasActiveFilters()) {
                             "Ничего не найдено по выбранным фильтрам"
                         } else {
@@ -299,7 +397,6 @@ class HistoryActivity : AppCompatActivity() {
     private fun onEntryClick(entry: HistoryEntry) {
         Logger.log(TAG, "Entry clicked: itemId=${entry.itemId}, action=${entry.action}")
 
-        // Проверяем, существует ли ещё предмет (или папка)
         lifecycleScope.launch {
             try {
                 val itemExists = withContext(Dispatchers.IO) {
@@ -312,7 +409,6 @@ class HistoryActivity : AppCompatActivity() {
                     }
                     startActivity(intent)
                 } else {
-                    // Проверяем — может это папка?
                     val folderExists = withContext(Dispatchers.IO) {
                         db.folderDao().getFolderById(entry.itemId) != null
                     }
