@@ -38,118 +38,98 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- СИНХРОНИЗАЦИЯ -->
+        <!-- ГЛАВНОЕ ДЕЙСТВИЕ: СИНХРОНИЗАЦИЯ -->
         <!-- ============================================================ -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSyncNow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="🔄 Синхронизировать сейчас"
-            android:layout_marginBottom="8dp" />
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="16dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnShareLink"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        <!-- ============================================================ -->
+        <!-- РАЗДЕЛИТЕЛЬ -->
+        <!-- ============================================================ -->
+        <View
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🔗 Поделиться ссылкой на папку"
+            android:layout_height="1dp"
+            android:background="?android:attr/listDivider"
             android:layout_marginBottom="16dp" />
 
         <!-- ============================================================ -->
         <!-- РАЗДЕЛЫ -->
         <!-- ============================================================ -->
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnShareLink"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔗 Поделиться ссылкой на папку"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStatsAndAccounting"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="📊 Статистика и учёт"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnBackup"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="💾 Резервное копирование"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDiagnostics"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="🔍 Диагностика"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAppSettings"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="⚙️ Настройки приложения"
-            android:layout_marginBottom="16dp" />
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="8dp" />
 
-        <!-- ============================================================ -->
-        <!-- ℹ️ О ПРОГРАММЕ (кликабельная строка) -->
-        <!-- ============================================================ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardAbout"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAbout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="2dp"
-            android:layout_marginBottom="16dp">
+            android:text="ℹ️ О программе"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="4dp" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="ℹ️"
-                    android:textSize="22sp"
-                    android:layout_marginEnd="12dp" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="О программе"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="?android:attr/textColorPrimary" />
-
-                    <TextView
-                        android:id="@+id/tvAboutSubtitle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Версия, разработчик, обновление"
-                        android:textSize="12sp"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:layout_marginTop="2dp" />
-                </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="›"
-                    android:textSize="24sp"
-                    android:textColor="#BDBDBD" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        <!-- Подсказка под кнопкой «О программе» -->
+        <TextView
+            android:id="@+id/tvAboutSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Версия, разработчик, обновление"
+            android:textSize="12sp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:gravity="center"
+            android:layout_marginBottom="16dp" />
 
         <!-- ============================================================ -->
         <!-- НИЖНИЙ ОТСТУП -->
