@@ -12,180 +12,148 @@
         android:padding="16dp">
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 1: СИНХРОНИЗАЦИЯ -->
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
         <!-- ============================================================ -->
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="СИНХРОНИЗАЦИЯ"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp" />
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp"
+            android:gravity="center_vertical">
 
-        <Button
+            <Button
+                android:id="@+id/btnBack"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="← Назад"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="⚙️ Настройки"
+                android:textAppearance="?attr/textAppearanceHeadline6"
+                android:gravity="center" />
+        </LinearLayout>
+
+        <!-- ============================================================ -->
+        <!-- СИНХРОНИЗАЦИЯ -->
+        <!-- ============================================================ -->
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSyncNow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔄 Синхронизировать сейчас" />
+            android:text="🔄 Синхронизировать сейчас"
+            android:layout_marginBottom="8dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShareLink"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔗 Поделиться ссылкой" />
+            android:text="🔗 Поделиться ссылкой на папку"
+            android:layout_marginBottom="16dp" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 2: РАЗДЕЛЫ -->
+        <!-- РАЗДЕЛЫ -->
         <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="РАЗДЕЛЫ"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="8dp" />
-
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStatsAndAccounting"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="📊 Статистика и учёт" />
-
-        <Button
-            android:id="@+id/btnBackup"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="💾 Резервное копирование" />
-
-        <Button
-            android:id="@+id/btnDiagnostics"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🔍 Диагностика" />
-
-        <Button
-            android:id="@+id/btnAppSettings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="⚙️ Настройки приложения" />
-
-        <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 3: ОБНОВЛЕНИЯ -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ОБНОВЛЕНИЯ"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="24dp"
+            android:text="📊 Статистика и учёт"
             android:layout_marginBottom="8dp" />
 
-        <Button
-            android:id="@+id/btnCheckUpdate"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBackup"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔍 Проверить обновления" />
+            android:text="💾 Резервное копирование"
+            android:layout_marginBottom="8dp" />
 
-        <TextView
-            android:id="@+id/tvVersion"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDiagnostics"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Версия 1.0.0"
-            android:textSize="14sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
-            android:gravity="center" />
+            android:text="🔍 Диагностика"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAppSettings"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚙️ Настройки приложения"
+            android:layout_marginBottom="16dp" />
 
         <!-- ============================================================ -->
-        <!-- СЕКЦИЯ 4: ОПАСНАЯ ЗОНА (СВЁРНУТА) -->
+        <!-- ℹ️ О ПРОГРАММЕ (кликабельная строка) -->
         <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardAbout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            app:cardCornerRadius="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
+            app:cardCornerRadius="12dp"
             app:cardElevation="2dp"
-            app:cardBackgroundColor="#FFEBEE">
+            android:layout_marginBottom="16dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:gravity="center_vertical">
 
-                <!-- Заголовок (кликабельный) -->
-                <LinearLayout
-                    android:id="@+id/dangerZoneHeader"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:padding="16dp"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackground">
+                    android:text="ℹ️"
+                    android:textSize="22sp"
+                    android:layout_marginEnd="12dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="⚠️ ОПАСНАЯ ЗОНА"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:textColor="#D32F2F" />
-
-                    <TextView
-                        android:id="@+id/dangerZoneArrow"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="▼"
-                        android:textSize="18sp"
-                        android:textColor="#D32F2F" />
+                        android:text="О программе"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="?android:attr/textColorPrimary" />
+
+                    <TextView
+                        android:id="@+id/tvAboutSubtitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Версия, разработчик, обновление"
+                        android:textSize="12sp"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:layout_marginTop="2dp" />
                 </LinearLayout>
 
-                <!-- Содержимое (скрыто по умолчанию) -->
-                <LinearLayout
-                    android:id="@+id/dangerZoneContent"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp"
-                    android:paddingTop="0dp"
-                    android:visibility="gone">
-
-                    <Button
-                        android:id="@+id/btnClearCache"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="🧹 Очистить кэш" />
-
-                    <Button
-                        android:id="@+id/btnClearAllData"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="⚠️ Полная очистка данных"
-                        android:backgroundTint="#D32F2F"
-                        android:textColor="@android:color/white" />
-
-                    <Button
-                        android:id="@+id/btnLogout"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="🚪 Выход"
-                        android:layout_marginTop="8dp"
-                        android:backgroundTint="#D32F2F"
-                        android:textColor="@android:color/white" />
-                </LinearLayout>
+                    android:text="›"
+                    android:textSize="24sp"
+                    android:textColor="#BDBDBD" />
             </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
-        <!-- Отступ снизу -->
+        <!-- ============================================================ -->
+        <!-- НИЖНИЙ ОТСТУП -->
+        <!-- ============================================================ -->
         <View
             android:layout_width="match_parent"
             android:layout_height="16dp" />
