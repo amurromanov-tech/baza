@@ -38,24 +38,17 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- ГЛАВНОЕ ДЕЙСТВИЕ: СИНХРОНИЗАЦИЯ -->
+        <!-- СИНХРОНИЗАЦИЯ -->
         <!-- ============================================================ -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSyncNow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="🔄 Синхронизировать сейчас"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
             app:cornerRadius="12dp"
-            android:layout_marginBottom="16dp" />
-
-        <!-- ============================================================ -->
-        <!-- РАЗДЕЛИТЕЛЬ -->
-        <!-- ============================================================ -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?android:attr/listDivider"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="8dp" />
 
         <!-- ============================================================ -->
         <!-- РАЗДЕЛЫ -->
