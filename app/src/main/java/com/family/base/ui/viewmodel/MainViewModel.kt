@@ -89,6 +89,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun getCurrentFolderId(): String? = currentFolderId
 
     // ============================================================
+    // ХЕЛПЕР: ЗАПИСЬ В ИСТОРИЮ
+    // ============================================================
+    /**
+     * Единая точка записи в историю.
+     * @param itemId — id предмета (или папки)
+     * @param itemName — имя на момент записи (для отображения после удаления)
+     * @param action — тип действия (см. HistoryEntry)
+     * @param oldValue — что было
+     * @param newValue — что стало
+     */
+    private suspend fun writeHistory(
+        itemId: String,
+        itemName: String?,
+        action: String,
+        oldValue: String?,
+        newValue: String?
+    ) {
+        try {
+            db.historyDao().insertEntry(
+                HistoryEntry(
+                    itemId = itemId,
+                    itemName = itemName,
+                    action = action,
+                    oldValue = oldValue,
+                    newValue = newValue,
+                    changedBy = currentUser
+                )
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "writeHistory error: action=$action, itemId=$itemId, ${e.message}")
+        }
+    }
+
+    // ============================================================
     // ПРОВЕРКА ПЕРВОГО ЗАПУСКА + РЕМОНТ БАЗЫ
     // ============================================================
 
@@ -328,6 +362,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             enqueue("item", item.id, "create", item.parentId, item.parentItemId)
 
+            writeHistory(
+                itemId = item.id,
+                itemName = item.name,
+                action = "create",
+                oldValue = null,
+                newValue = "${item.quantity} шт."
+            )
+
             loadContents()
         }
     }
@@ -362,6 +404,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
+            }
+
+            // История по каждому предмету из чека
+            prepared.forEach { item ->
+                writeHistory(
+                    itemId = item.id,
+                    itemName = item.name,
+                    action = "create",
+                    oldValue = "Импорт из чека",
+                    newValue = "${item.quantity} шт."
+                )
             }
 
             Logger.log(TAG, "createItemsBatch: inserted ${prepared.size} items")
@@ -400,6 +453,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.itemDao().getItemById(itemId)?.let { parent ->
                     enqueue("item", itemId, "update", parent.parentId, parent.parentItemId)
+                    writeHistory(
+                        itemId = itemId,
+                        itemName = parent.name,
+                        action = "detach_children",
+                        oldValue = null,
+                        newValue = "Отвязано детей: $count"
+                    )
                 }
 
                 Logger.log(TAG, "detachAllChildren: item=$itemId, count=$count")
@@ -429,6 +489,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ImageUtils.deleteLocalImage(appContext, itemId)
                 enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
 
+                writeHistory(
+                    itemId = itemId,
+                    itemName = item.name,
+                    action = "delete",
+                    oldValue = "Было детей: $detached",
+                    newValue = null
+                )
+
                 Logger.log(TAG, "detachAllChildrenAndDelete: parent $itemId deleted")
                 withContext(Dispatchers.Main) { onDone(true) }
                 loadContents()
@@ -455,14 +523,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 db.itemDao().archiveItem(itemId, reason, now, note)
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                db.historyDao().insertEntry(
-                    HistoryEntry(
-                        itemId = itemId,
-                        action = "archive",
-                        oldValue = "В базе (отвязано детей: $detached)",
-                        newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
-                        changedBy = currentUser
-                    )
+                writeHistory(
+                    itemId = itemId,
+                    itemName = item.name,
+                    action = "archive",
+                    oldValue = "В базе (отвязано детей: $detached)",
+                    newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
                 )
 
                 Logger.log(TAG, "detachAllChildrenAndArchive: parent $itemId archived")
@@ -525,17 +591,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 enqueue("folder", folder.id, "create", parentFolderId, parentItemId)
 
-                withContext(Dispatchers.IO) {
-                    db.historyDao().insertEntry(
-                        HistoryEntry(
-                            itemId = parentItemId,
-                            action = "add_nested_folder",
-                            oldValue = null,
-                            newValue = "📁 $name",
-                            changedBy = currentUser
-                        )
-                    )
-                }
+                writeHistory(
+                    itemId = parentItemId,
+                    itemName = parentItem.name,
+                    action = "add_nested_folder",
+                    oldValue = null,
+                    newValue = "📁 $name"
+                )
 
                 Logger.log(TAG, "createFolderInItem: created folder ${folder.id} '${folder.name}' in item $parentItemId")
                 withContext(Dispatchers.Main) { onDone(folder.id) }
@@ -623,6 +685,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (folder != null) {
                     withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
                     enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+
+                    writeHistory(
+                        itemId = folderId,
+                        itemName = folder.name,
+                        action = "delete_folder",
+                        oldValue = "Папка",
+                        newValue = null
+                    )
                 }
 
                 withContext(Dispatchers.Main) { onDone(true) }
@@ -1374,14 +1444,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                    val history = HistoryEntry(
+                    writeHistory(
                         itemId = itemId,
+                        itemName = item.name,
                         action = "lend",
                         oldValue = "В базе",
-                        newValue = "Выдан: $personName${if (!note.isNullOrEmpty()) " ($note)" else ""}",
-                        changedBy = currentUser
+                        newValue = "Выдан: $personName${if (!note.isNullOrEmpty()) " ($note)" else ""}"
                     )
-                    db.historyDao().insertEntry(history)
 
                     loadContents()
                 }
@@ -1409,14 +1478,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                    val history = HistoryEntry(
+                    writeHistory(
                         itemId = itemId,
+                        itemName = item.name,
                         action = "return",
                         oldValue = "Выдан: ${item.lentTo}",
-                        newValue = "Возвращён в базу",
-                        changedBy = currentUser
+                        newValue = "Возвращён в базу"
                     )
-                    db.historyDao().insertEntry(history)
 
                     loadContents()
                 }
@@ -1456,14 +1524,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                    val history = HistoryEntry(
+                    writeHistory(
                         itemId = itemId,
+                        itemName = item.name,
                         action = "archive",
                         oldValue = "В базе",
-                        newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
-                        changedBy = currentUser
+                        newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
                     )
-                    db.historyDao().insertEntry(history)
 
                     loadContents()
                 }
@@ -1488,14 +1555,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                    val history = HistoryEntry(
+                    writeHistory(
                         itemId = itemId,
+                        itemName = item.name,
                         action = "unarchive",
                         oldValue = "В архиве",
-                        newValue = "Вернули в базу",
-                        changedBy = currentUser
+                        newValue = "Вернули в базу"
                     )
-                    db.historyDao().insertEntry(history)
 
                     Logger.log(TAG, "unarchiveItem: обычный возврат $itemId")
                 } else {
@@ -1518,14 +1584,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val appContext = getApplication<Application>().applicationContext
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
-                        val history = HistoryEntry(
+                        writeHistory(
                             itemId = originalId,
+                            itemName = original.name,
                             action = "unarchive_part",
                             oldValue = "${original.quantity} шт.",
-                            newValue = "$newQty шт. (возвращено ${item.quantity})",
-                            changedBy = currentUser
+                            newValue = "$newQty шт. (возвращено ${item.quantity})"
                         )
-                        db.historyDao().insertEntry(history)
 
                         Logger.log(TAG, "unarchiveItem: часть возвращена в оригинал $originalId, qty=$newQty")
                     } else {
@@ -1542,14 +1607,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         db.itemDao().updateItem(restored)
                         enqueue("item", itemId, "update", restored.parentId, restored.parentItemId)
 
-                        val history = HistoryEntry(
+                        writeHistory(
                             itemId = itemId,
+                            itemName = item.name,
                             action = "unarchive",
                             oldValue = "В архиве",
-                            newValue = "Вернули в базу (оригинал не найден)",
-                            changedBy = currentUser
+                            newValue = "Вернули в базу (оригинал не найден)"
                         )
-                        db.historyDao().insertEntry(history)
 
                         Logger.log(TAG, "unarchiveItem: оригинал не найден, часть становится активной $itemId")
                     }
@@ -1617,14 +1681,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                    val history = HistoryEntry(
+                    writeHistory(
                         itemId = itemId,
+                        itemName = item.name,
                         action = "write_off",
                         oldValue = "${item.quantity} шт.",
-                        newValue = "Списано всё → в архиве (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
-                        changedBy = currentUser
+                        newValue = "Списано всё → в архиве (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
                     )
-                    db.historyDao().insertEntry(history)
 
                     Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
 
@@ -1670,14 +1733,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
-                        val history = HistoryEntry(
+                        writeHistory(
                             itemId = newId,
+                            itemName = item.name,
                             action = "write_off",
                             oldValue = "Отделено от «${item.name}»",
-                            newValue = "Списано $count шт. (оригинал удалён, ${getArchiveReasonText(reasonKey)})",
-                            changedBy = currentUser
+                            newValue = "Списано $count шт. (оригинал удалён, ${getArchiveReasonText(reasonKey)})"
                         )
-                        db.historyDao().insertEntry(history)
 
                         Logger.log(TAG, "writeOffItem: partial → original deleted (qty was $count)")
                     } else {
@@ -1692,23 +1754,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                        val historyNew = HistoryEntry(
+                        writeHistory(
                             itemId = newId,
+                            itemName = item.name,
                             action = "write_off",
                             oldValue = "Отделено от «${item.name}»",
-                            newValue = "Списано $count шт. (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})",
-                            changedBy = currentUser
+                            newValue = "Списано $count шт. (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
                         )
-                        db.historyDao().insertEntry(historyNew)
 
-                        val historyOld = HistoryEntry(
+                        writeHistory(
                             itemId = itemId,
+                            itemName = item.name,
                             action = "write_off_part",
                             oldValue = "${item.quantity} шт.",
-                            newValue = "$newQty шт. (списано $count)",
-                            changedBy = currentUser
+                            newValue = "$newQty шт. (списано $count)"
                         )
-                        db.historyDao().insertEntry(historyOld)
 
                         Logger.log(TAG, "writeOffItem: partial → new archive entry $newId ($count шт.), original=$newQty шт.")
                     }
@@ -1744,14 +1804,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 db.itemDao().updateItem(updated)
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
 
-                val history = HistoryEntry(
+                writeHistory(
                     itemId = itemId,
+                    itemName = item.name,
                     action = "revision",
                     oldValue = item.lastRevisionDate?.let { formatDateShort(it) } ?: "не проводилась",
-                    newValue = formatDateShort(now),
-                    changedBy = currentUser
+                    newValue = formatDateShort(now)
                 )
-                db.historyDao().insertEntry(history)
 
                 Logger.log(TAG, "markRevision: done for $itemId")
 
@@ -1770,13 +1829,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ПЕРЕМЕЩЕНИЕ ЧАСТИ КОЛИЧЕСТВА (split + move)
     // ============================================================
-    /**
-     * B-6: splitAndMoveItem принимает пару (newParentId, newParentItemId).
-     *  - Если newParentItemId == null — перемещаем в папку (или корень).
-     *  - Если newParentItemId != null — перемещаем «в предмет»:
-     *      parentItemId = newParentItemId,
-     *      parentId = newParentItemId.parentId (или null).
-     */
     fun splitAndMoveItem(
         itemId: String,
         count: Int,
@@ -1807,7 +1859,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // Резолвим фактический parentId (если перемещаем в предмет — наследуем его папку)
                 val resolvedParentId: String? = if (newParentItemId != null) {
                     val targetItem = db.itemDao().getItemById(newParentItemId)
                     targetItem?.parentId
@@ -1815,7 +1866,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     newParentId
                 }
 
-                // Проверка цикла: нельзя переместить предмет внутрь себя/потомка
                 if (newParentItemId != null && isItemDescendantOf(newParentItemId, itemId)) {
                     Logger.log(TAG, "splitAndMoveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
                     withContext(Dispatchers.Main) {
@@ -1872,26 +1922,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
 
-                withContext(Dispatchers.IO) {
-                    db.historyDao().insertEntry(
-                        HistoryEntry(
-                            itemId = newId,
-                            action = "split_in",
-                            oldValue = "Отделено от «${item.name}»",
-                            newValue = "$count шт. → $placeName",
-                            changedBy = currentUser
-                        )
-                    )
-                    db.historyDao().insertEntry(
-                        HistoryEntry(
-                            itemId = itemId,
-                            action = "split_out",
-                            oldValue = "${item.quantity} шт.",
-                            newValue = "$newQty шт. (отделено $count → $placeName)",
-                            changedBy = currentUser
-                        )
-                    )
-                }
+                writeHistory(
+                    itemId = newId,
+                    itemName = item.name,
+                    action = "split_in",
+                    oldValue = "Отделено от «${item.name}»",
+                    newValue = "$count шт. → $placeName"
+                )
+
+                writeHistory(
+                    itemId = itemId,
+                    itemName = item.name,
+                    action = "split_out",
+                    oldValue = "${item.quantity} шт.",
+                    newValue = "$newQty шт. (отделено $count → $placeName)"
+                )
 
                 Logger.log(TAG, "splitAndMoveItem: done. new=$newId ($count шт.), original=$newQty шт.")
 
@@ -1902,10 +1947,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * B-6: резолвит человекочитаемое имя места назначения.
-     * Для папки — имя папки (или «Корень»), для предмета — «📦 Имя».
-     */
     private suspend fun resolvePlaceName(parentId: String?, parentItemId: String?): String {
         if (parentItemId != null) {
             val item = db.itemDao().getItemById(parentItemId)
@@ -1963,6 +2004,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     enqueue("item", copy.id, "create", copy.parentId, copy.parentItemId)
 
+                    writeHistory(
+                        itemId = copy.id,
+                        itemName = copy.name,
+                        action = "create",
+                        oldValue = "Копия «${item.name}»",
+                        newValue = "${copy.quantity} шт."
+                    )
+
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -1987,6 +2036,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
             enqueue("folder", folder.id, "create", currentFolderId, null)
+
+            writeHistory(
+                itemId = folder.id,
+                itemName = folder.name,
+                action = "create_folder",
+                oldValue = null,
+                newValue = "📁 $name"
+            )
+
             loadContents()
         }
     }
@@ -2000,9 +2058,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
                 if (folder != null) {
+                    val oldName = folder.name
                     val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
                     db.folderDao().updateFolder(updated)
                     enqueue("folder", folderId, "update", folder.parentId, folder.parentItemId)
+
+                    writeHistory(
+                        itemId = folderId,
+                        itemName = newName,
+                        action = "rename_folder",
+                        oldValue = oldName,
+                        newValue = newName
+                    )
+
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -2035,6 +2103,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder?.parentId, folder?.parentItemId)
+
+                writeHistory(
+                    itemId = folderId,
+                    itemName = folder?.name,
+                    action = "delete_folder",
+                    oldValue = "Папка (содержимое поднято в корень)",
+                    newValue = null
+                )
+
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error deleting folder: ${e.message}")
@@ -2072,16 +2149,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
-    /**
-     * B-6: Перемещение ПАПКИ.
-     *  - newParentItemId == null → в папку (или корень): parentId = newParentId, parentItemId = null.
-     *  - newParentItemId != null → внутрь предмета: parentItemId = newParentItemId,
-     *      parentId = newParentItemId.parentId (или null).
-     *
-     * Проверки:
-     *  - нельзя папку в себя/в свою подпапку (цикл по папкам);
-     *  - нельзя папку внутрь предмета, который является её потомком (цикл по item).
-     */
     fun moveFolder(
         folderId: String,
         newParentId: String?,
@@ -2099,7 +2166,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // Проверка цикла по папкам
                 if (newParentItemId == null && newParentId != null) {
                     if (isFolderDescendantOf(folderId, newParentId)) {
                         Logger.log(TAG, "moveFolder: CYCLE (folder→folder), aborting")
@@ -2114,10 +2180,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // Проверка: не перемещаем ли папку внутрь предмета-потомка
                 if (newParentItemId != null) {
-                    // Собираем все предметы-предки данной папки и проверяем,
-                    // не является ли newParentItemId одним из них.
                     val ancestorItems = collectAncestorItemIdsForFolder(folderId)
                     if (newParentItemId in ancestorItems) {
                         Logger.log(TAG, "moveFolder: CYCLE (folder→item), aborting")
@@ -2145,6 +2208,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 db.folderDao().updateFolder(updated)
                 enqueue("folder", folderId, "update", resolvedParentId, newParentItemId)
+
+                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
+                writeHistory(
+                    itemId = folderId,
+                    itemName = folder.name,
+                    action = "move_folder",
+                    oldValue = null,
+                    newValue = "📁 ${folder.name} → $placeName"
+                )
+
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error moving folder: ${e.message}")
@@ -2152,10 +2225,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Собирает всех предметов-предков для папки (по цепочке parentItemId / parentId).
-     * Используется для проверки циклов при перемещении папки внутрь предмета.
-     */
     private suspend fun collectAncestorItemIdsForFolder(folderId: String): Set<String> {
         val result = mutableSetOf<String>()
         var currentFolderId: String? = folderId
@@ -2167,7 +2236,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (folder.parentItemId != null) {
                 result.add(folder.parentItemId)
-                // Заходим в родительский предмет и идём по его цепочке
                 var itemId: String? = folder.parentItemId
                 var itemDepth = 0
                 while (itemId != null && itemDepth < 50) {
@@ -2185,16 +2253,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return result
     }
 
-    /**
-     * B-6: Перемещение ПРЕДМЕТА.
-     *  - newParentItemId == null → в папку (или корень): parentId = newParentId, parentItemId = null.
-     *  - newParentItemId != null → внутрь предмета: parentItemId = newParentItemId,
-     *      parentId = newParentItemId.parentId (или null).
-     *
-     * Проверки:
-     *  - нельзя предмет в себя/в своего потомка (по цепочке parentItemId);
-     *  - при перемещении в предмет — parentId резолвится из целевого предмета.
-     */
     fun moveItem(
         itemId: String,
         newParentId: String?,
@@ -2212,7 +2270,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // Проверка цикла: нельзя предмет в себя/в своего потомка
                 if (newParentItemId != null) {
                     if (isItemDescendantOf(newParentItemId, itemId)) {
                         Logger.log(TAG, "moveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
@@ -2242,6 +2299,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
                 enqueue("item", itemId, "update", resolvedParentId, newParentItemId)
+
+                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
+                writeHistory(
+                    itemId = itemId,
+                    itemName = item.name,
+                    action = "move",
+                    oldValue = "Из предыдущего места",
+                    newValue = "$placeName"
+                )
+
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error moving item: ${e.message}")
@@ -2258,6 +2325,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
+                    val oldQty = item.quantity
+                    if (oldQty == newQty) return@launch
+
                     val updated = item.copy(
                         quantity = newQty,
                         updatedDate = System.currentTimeMillis(),
@@ -2266,6 +2336,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+
+                    writeHistory(
+                        itemId = itemId,
+                        itemName = item.name,
+                        action = "quantity_change",
+                        oldValue = "$oldQty шт.",
+                        newValue = "$newQty шт."
+                    )
+
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -2274,9 +2353,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Сохранение предмета из карточки (ItemDetailActivity → saveChanges).
+     *
+     * Сравнивает старое и новое состояние и пишет в историю ПОЛНЫЙ ДИФФ
+     * по всем изменённым полям: name, quantity, price, expiryDate,
+     * purchaseDate, itemType, itemSubtype, barcode, description.
+     *
+     * Если ни одно поле не изменилось — история не пишется.
+     */
     fun updateItemFull(item: ItemEntity) {
         viewModelScope.launch {
             try {
+                val old = db.itemDao().getItemById(item.id)
+                if (old == null) {
+                    Logger.log(TAG, "updateItemFull: item not found ${item.id}")
+                    return@launch
+                }
+
                 val updated = item.copy(
                     updatedDate = System.currentTimeMillis(),
                     updatedBy = currentUser
@@ -2284,12 +2378,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
                 enqueue("item", item.id, "update", item.parentId, item.parentItemId)
+
+                val diffs = buildDiff(old, updated)
+                if (diffs.isNotEmpty()) {
+                    writeHistory(
+                        itemId = item.id,
+                        itemName = updated.name,
+                        action = "update",
+                        oldValue = null,
+                        newValue = diffs.joinToString("\n")
+                    )
+                }
+
                 loadContents()
             } catch (e: Exception) {
                 Logger.log(TAG, "Error updating item: ${e.message}")
             }
         }
     }
+
+    /**
+     * Собирает список изменений между старой и новой версией предмета.
+     * Каждая строка: «Поле: старое → новое».
+     */
+    private fun buildDiff(old: ItemEntity, new: ItemEntity): List<String> {
+        val diffs = mutableListOf<String>()
+
+        if (old.name != new.name) {
+            diffs.add("Название: «${old.name}» → «${new.name}»")
+        }
+        if (old.quantity != new.quantity) {
+            diffs.add("Количество: ${old.quantity} → ${new.quantity}")
+        }
+        if (old.price != new.price) {
+            diffs.add("Цена: ${formatPrice(old.price)} → ${formatPrice(new.price)}")
+        }
+        if (old.expiryDate != new.expiryDate) {
+            diffs.add("Срок годности: ${formatDateOrDash(old.expiryDate)} → ${formatDateOrDash(new.expiryDate)}")
+        }
+        if (old.purchaseDate != new.purchaseDate) {
+            diffs.add("Дата покупки: ${formatDateOrDash(old.purchaseDate)} → ${formatDateOrDash(new.purchaseDate)}")
+        }
+        if (old.itemType != new.itemType) {
+            diffs.add("Тип: ${typeName(old.itemType)} → ${typeName(new.itemType)}")
+        }
+        if (old.itemSubtype != new.itemSubtype) {
+            diffs.add("Подтип: ${subtypeName(old.itemSubtype)} → ${subtypeName(new.itemSubtype)}")
+        }
+        if (old.barcode != new.barcode) {
+            diffs.add("Штрих-код: ${old.barcode ?: "—"} → ${new.barcode ?: "—"}")
+        }
+        if (old.description != new.description) {
+            val oldDesc = if (old.description.isNullOrEmpty()) "—" else "«${truncate(old.description!!, 60)}»"
+            val newDesc = if (new.description.isNullOrEmpty()) "—" else "«${truncate(new.description!!, 60)}»"
+            diffs.add("Описание: $oldDesc → $newDesc")
+        }
+
+        return diffs
+    }
+
+    private fun formatPrice(p: Double?): String =
+        if (p == null || p == 0.0) "—" else "$p ₽"
+
+    private fun formatDateOrDash(ts: Long?): String =
+        if (ts == null) "—" else formatDateShort(ts)
+
+    private fun typeName(t: String?): String = when (t) {
+        "food" -> "🍎 Еда"
+        "medicine" -> "💊 Лекарство"
+        "thing" -> "📦 Предмет"
+        "other" -> "🗂 Другое"
+        else -> "—"
+    }
+
+    private fun subtypeName(s: String?): String =
+        if (s.isNullOrEmpty()) "—" else s
+
+    private fun truncate(text: String, max: Int): String =
+        if (text.length <= max) text else text.take(max) + "…"
 
     fun deleteItem(itemId: String) {
         viewModelScope.launch {
@@ -2300,6 +2466,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val appContext = getApplication<Application>().applicationContext
                     ImageUtils.deleteLocalImage(appContext, itemId)
                     enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+
+                    writeHistory(
+                        itemId = itemId,
+                        itemName = item.name,
+                        action = "delete",
+                        oldValue = "${item.quantity} шт.",
+                        newValue = null
+                    )
+
                     loadContents()
                 }
             } catch (e: Exception) {
@@ -2331,6 +2506,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
                 enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+
+                writeHistory(
+                    itemId = itemId,
+                    itemName = item.name,
+                    action = "delete",
+                    oldValue = "${item.quantity} шт.",
+                    newValue = null
+                )
 
                 Logger.log(TAG, "deleteItemSafely: deleted $itemId")
                 withContext(Dispatchers.Main) { onSuccess() }
@@ -2368,6 +2551,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+
+                writeHistory(
+                    itemId = folderId,
+                    itemName = folder.name,
+                    action = "delete_folder",
+                    oldValue = "Папка",
+                    newValue = null
+                )
 
                 Logger.log(TAG, "deleteFolderSafely: deleted $folderId")
                 withContext(Dispatchers.Main) { onSuccess() }
