@@ -57,8 +57,6 @@ class HistoryActivity : AppCompatActivity() {
 
         binding.btnBack.setOnClickListener { finish() }
 
-        setupUserFilter()
-        setupActionFilter()
         setupPeriodChips()
 
         binding.progressBar.visibility = View.VISIBLE
