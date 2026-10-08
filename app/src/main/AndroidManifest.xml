@@ -25,6 +25,10 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
     </queries>
 
     <application
@@ -124,6 +128,11 @@
 
         <activity
             android:name=".ui.AppSettingsActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- 🆕 О программе -->
+        <activity
+            android:name=".ui.AboutActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <!-- ============================================================ -->
