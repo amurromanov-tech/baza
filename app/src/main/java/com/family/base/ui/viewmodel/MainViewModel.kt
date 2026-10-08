@@ -22,9 +22,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.LiveData
 
-// ============================================================
-// МОДЕЛЬ ПРОГРЕССА СИНХРОНИЗАЦИИ
-// ============================================================
 enum class SyncPhase {
     SENDING,
     DOWNLOADING,
@@ -89,9 +86,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getCurrentFolderId(): String? = currentFolderId
 
-    // ============================================================
-    // ХЕЛПЕР: ЗАПИСЬ В ИСТОРИЮ
-    // ============================================================
     private suspend fun writeHistory(
         itemId: String,
         itemName: String?,
@@ -114,10 +108,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "writeHistory error: action=$action, itemId=$itemId, ${e.message}")
         }
     }
-
-    // ============================================================
-    // ПРОВЕРКА ПЕРВОГО ЗАПУСКА + РЕМОНТ БАЗЫ
-    // ============================================================
 
     private suspend fun checkFirstLaunch() {
         try {
@@ -186,17 +176,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error fixing old folder iconUrls: ${e.message}")
         }
 
-        // 🆕 v12: разовая миграция истории изменений
         try {
             migrateOldHistoryEntries()
         } catch (e: Exception) {
             Logger.log(TAG, "Error migrating old history entries: ${e.message}", e)
         }
 
-        // 🆕 v13.1.3: разовый сброс фейкового last_modified (9999999999999),
-        // который ставился как костыль для докачки фото. Из-за него
-        // diskModified (реальный timestamp) всегда < localModified, и download
-        // не запускался — новые предметы с других устройств не подтягивались.
         try {
             val lm = syncInfoDao.getLastModified()
             if (lm >= 9999999999999L) {
@@ -210,19 +195,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // 🆕 v12: МИГРАЦИЯ СТАРЫХ ЗАПИСЕЙ ИСТОРИИ
-    // ============================================================
-    /**
-     * Разовая обработка старых записей:
-     *  - заполнить itemName из items (для неудалённых предметов)
-     *  - заменить сырые коды типов («thing», «food», «medicine», «other»)
-     *    на человекочитаемые названия
-     *  - заменить сырые коды подтипов («furniture», «aquarium», и т.д.)
-     *    на человекочитаемые названия через SubtypeCatalog
-     *
-     * Запускается один раз — по флагу settings.historyMigratedV12.
-     */
     private suspend fun migrateOldHistoryEntries() {
         val settings = settingsDao.getSettings()
         if (settings?.historyMigratedV12 == true) {
@@ -232,13 +204,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         Logger.log(TAG, "migrateOldHistoryEntries: START")
 
-        // ---------- 1. Заполняем itemName там, где NULL ----------
         val entriesWithoutName = db.historyDao().getEntriesWithoutItemName()
         Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithoutName.size} entries without itemName")
 
         var nameFilledCount = 0
         for (entry in entriesWithoutName) {
-            // Пробуем найти предмет
             val item = db.itemDao().getItemById(entry.itemId)
             if (item != null) {
                 try {
@@ -250,7 +220,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 continue
             }
 
-            // Может, это папка?
             val folder = db.folderDao().getFolderById(entry.itemId)
             if (folder != null) {
                 try {
@@ -261,12 +230,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 continue
             }
-
-            // Ничего не найдено — оставляем NULL, адаптер покажет «—»
         }
         Logger.log(TAG, "migrateOldHistoryEntries: filled itemName for $nameFilledCount entries")
 
-        // ---------- 2. Заменяем сырые коды типов/подтипов ----------
         val entriesWithRawCodes = db.historyDao().getEntriesWithRawTypeCodes()
         Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithRawCodes.size} entries with raw type codes")
 
@@ -291,7 +257,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         Logger.log(TAG, "migrateOldHistoryEntries: fixed raw codes in $rawFixedCount entries")
 
-        // ---------- 3. Ставим флаг ----------
         try {
             val current = settingsDao.getSettings() ?: SettingsEntity()
             settingsDao.insertOrUpdateSettings(current.copy(historyMigratedV12 = true))
@@ -301,19 +266,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Заменяет в строке сырые коды типов и подтипов на человекочитаемые.
-     * Работает через пары «код → название», ищет целые слова.
-     *
-     * Пример:
-     *   "Тип: thing, подтип: furniture"
-     *   →
-     *   "Тип: 📦 Предмет, подтип: 🪑 Мебель"
-     */
     private fun replaceRawCodes(text: String): String {
         var result = text
 
-        // --- Типы предметов ---
         val typeMap = mapOf(
             "thing" to "📦 Предмет",
             "food" to "🍎 Еда",
@@ -324,9 +279,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             result = replaceWholeWord(result, code, display)
         }
 
-        // --- Подтипы через SubtypeCatalog ---
-        // SubtypeCatalog хранит по типам: key → displayName
-        // Пройдёмся по всем типам и всем подтипам
         try {
             for (type in listOf("food", "medicine", "thing", "other")) {
                 val subtypes = SubtypeCatalog.getSubtypes(type)
@@ -343,10 +295,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return result
     }
 
-    /**
-     * Заменяет целое слово (не часть другого слова).
-     * Использует regex с границами слов: \bcode\b
-     */
     private fun replaceWholeWord(text: String, word: String, replacement: String): String {
         if (word.isEmpty()) return text
         return try {
@@ -401,10 +349,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Logger.log(TAG, "Fixed $fixedCount bad folder iconUrls")
     }
 
-    // ============================================================
-    // НАВИГАЦИЯ
-    // ============================================================
-
     fun navigateToFolder(folderId: String?) {
         currentFolderId = folderId
         loadContents()
@@ -431,10 +375,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ============================================================
-    // ЗАГРУЗКА ДАННЫХ (БЕЗ АРХИВА)
-    // ============================================================
 
     fun loadContents() {
         viewModelScope.launch {
@@ -485,9 +425,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // ХЕЛПЕР: ПОСТАВИТЬ В ОЧЕРЕДЬ
-    // ============================================================
     private suspend fun enqueue(
         entityType: String,
         entityId: String,
@@ -508,10 +445,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         syncStatus.postValue(SyncStatus.PENDING)
     }
-
-    // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ (одиночное)
-    // ============================================================
 
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
         viewModelScope.launch {
@@ -535,10 +468,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loadContents()
         }
     }
-
-    // ============================================================
-    // СОЗДАНИЕ ПРЕДМЕТОВ (массовое — для чеков)
-    // ============================================================
 
     suspend fun createItemsBatch(items: List<ItemEntity>, folderId: String?): Int {
         if (items.isEmpty()) return 0
@@ -590,10 +519,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             0
         }
     }
-
-    // ============================================================
-    // ДЕТИ (проверка / отвязка / безопасное удаление)
-    // ============================================================
 
     fun getChildrenCount(itemId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
@@ -702,10 +627,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // B-5: ВЛОЖЕННЫЕ (секция «📦 Вложенные»)
-    // ============================================================
-
     fun getNestedContent(
         parentItemId: String,
         callback: (List<FolderEntity>, List<ItemEntity>) -> Unit
@@ -769,10 +690,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ============================================================
-    // B-5-FIX: ПРОВЕРКА ДЕТЕЙ ДЛЯ ПАПКИ
-    // ============================================================
 
     fun getFolderChildrenCount(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
@@ -865,10 +782,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // B-5-FIX-2: ПРОВЕРКА ДЕТЕЙ ДЛЯ АРХИВАЦИИ / ПОЛНОГО СПИСАНИЯ
-    // ============================================================
-
     private suspend fun buildArchiveBlockMessage(itemId: String): String? {
         return try {
             val children = repository.countChildren(itemId)
@@ -891,10 +804,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             null
         }
     }
-
-    // ============================================================
-    // СИНХРОНИЗАЦИЯ (ИНКРЕМЕНТАЛЬНАЯ)
-    // ============================================================
 
     fun syncWithDisk() {
         applicationScope.launch {
@@ -966,10 +875,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mergeData(
                         downloadResult.folders,
                         downloadResult.items,
+                        downloadResult.history,
                         downloadResult.foldersError,
-                        downloadResult.itemsError
+                        downloadResult.itemsError,
+                        downloadResult.historyError
                     )
-                    downloadedCount = downloadResult.folders.size + downloadResult.items.size
+                    downloadedCount = downloadResult.folders.size + downloadResult.items.size + downloadResult.history.size
 
                     val tPhotoBlock = System.currentTimeMillis()
                     syncImages()
@@ -996,11 +907,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
 
-                    // 🆕 v13.0.3 (B-7): УБРАН первый uploadAllItemsToDisk (#1).
-                    // Раньше было 3 полных заливки: #1 (до pending), pending, #2 (финальная).
-                    // #1 был лишним — pending и так заливает изменения. Оставлены только
-                    // папки (1 раз) и финальный items (после pending).
-
                     val tUploadFolders = System.currentTimeMillis()
                     val uploadedFolders = repository.uploadAllFoldersToDisk()
                     Logger.log(TAG, "TIMING: uploadAllFoldersToDisk took ${System.currentTimeMillis() - tUploadFolders}ms")
@@ -1011,8 +917,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     uploadedCount = processPendingChangesInternal()
                     Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
 
-                    // Финальный upload items — 1 раз, после pending.
-                    // Нужен, потому что applyItemChange заливает фото, но не сам JSON.
                     val tFinal = System.currentTimeMillis()
                     val refreshed = repository.uploadAllItemsToDisk()
                     Logger.log(TAG, "TIMING: uploadAllItemsToDisk (final) took ${System.currentTimeMillis() - tFinal}ms, success=$refreshed")
@@ -1022,6 +926,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
                         }
                     }
+
+                    // 🆕 v13.2.0 (B-8): выгрузка истории после items
+                    val tHistory = System.currentTimeMillis()
+                    val uploadedHistory = repository.uploadAllHistoryToDisk()
+                    Logger.log(TAG, "TIMING: uploadAllHistoryToDisk took ${System.currentTimeMillis() - tHistory}ms, success=$uploadedHistory")
                 } else {
                     Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
                 }
@@ -1043,12 +952,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mergeData(
                         downloadResult.folders,
                         downloadResult.items,
+                        downloadResult.history,
                         downloadResult.foldersError,
-                        downloadResult.itemsError
+                        downloadResult.itemsError,
+                        downloadResult.historyError
                     )
                     Logger.log(TAG, "TIMING: mergeData took ${System.currentTimeMillis() - tMerge}ms")
 
-                    downloadedCount = downloadResult.folders.size + downloadResult.items.size
+                    downloadedCount = downloadResult.folders.size + downloadResult.items.size + downloadResult.history.size
 
                     if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
@@ -1061,9 +972,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // 🆕 v13.0.3: фото-блок теперь ВСЕГДА проверяет недокачанные фото,
-                // даже если данные не менялись. Раньше при nothingChanged=true
-                // syncImages() пропускался, и фото не докачивались.
                 val tPhotoBlock = System.currentTimeMillis()
                 if (pendingCount > 0) {
                     val tUploadImages = System.currentTimeMillis()
@@ -1074,8 +982,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     uploadUnsyncedFolderImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
                 }
-                // syncImages() и syncFolderImages() вызываются ВСЕГДА — они сами
-                // проверяют, что нужно скачать (только недокачанные фото/иконки).
                 val tSyncImages = System.currentTimeMillis()
                 syncImages()
                 Logger.log(TAG, "TIMING: syncImages took ${System.currentTimeMillis() - tSyncImages}ms")
@@ -1408,24 +1314,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 🆕 v13.0.3: теперь mergeData удаляет локальные записи, которых нет на Диске.
-     *
-     * Логика:
-     *  1. Сливаем скачанные данные (добавляем/обновляем) — как раньше.
-     *  2. Дополнительно: если на Диске новее, чем локально (diskLastModified > localLastModified),
-     *     то записи, которых нет на Диске, считаются удалёнными — удаляем их локально.
-     *     Это исправляет баг, когда удалённый на одном устройстве предмет
-     *     оставался на других устройствах навсегда.
-     *
-     * ВАЖНО: удаляем только если НЕ было ошибки скачивания (foldersError/itemsError == false)
-     *        и диск реально новее локального состояния.
-     */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
+        diskHistory: List<HistoryEntry>,
         foldersError: Boolean,
-        itemsError: Boolean
+        itemsError: Boolean,
+        historyError: Boolean
     ) {
         withContext(Dispatchers.IO) {
             val localFoldersCount = db.folderDao().getAllFolders().size
@@ -1454,7 +1349,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // 🆕 Удаляем локальные папки, которых нет на Диске (если диск новее)
                 if (diskIsNewer) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders().filter { it.id !in diskFolderIds }
@@ -1486,7 +1380,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // 🆕 Удаляем локальные предметы, которых нет на Диске (если диск новее)
                 if (diskIsNewer) {
                     val appContext = getApplication<Application>().applicationContext
                     val diskItemIds = diskItems.map { it.id }.toSet()
@@ -1501,22 +1394,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Обновляем last_modified, если диск новее
+            // ---------- ИСТОРИЯ (🆕 v13.2.0 B-8) ----------
+            // История — журнал, union по id. Ничего не удаляем.
+            if (historyError && diskHistory.isEmpty()) {
+                Logger.log(TAG, "mergeData: history download error — SKIP")
+            } else if (diskHistory.isEmpty()) {
+                Logger.log(TAG, "mergeData: disk history empty — nothing to merge")
+            } else {
+                val localIds = db.historyDao().getAllIds().toSet()
+                val toInsert = diskHistory.filter { it.id !in localIds }
+                if (toInsert.isNotEmpty()) {
+                    Logger.log(TAG, "mergeData: inserting ${toInsert.size} new history entries (local=${localIds.size}, disk=${diskHistory.size})")
+                    db.historyDao().insertAll(toInsert)
+                } else {
+                    Logger.log(TAG, "mergeData: history already up to date (local=${localIds.size}, disk=${diskHistory.size})")
+                }
+            }
+
             if (diskIsNewer) {
                 syncInfoDao.setLastModified(diskLastModified)
             }
         }
     }
 
-    /**
-     * 🆕 v13.0.3: processPendingChangesInternal теперь проверяет результат
-     * applyItemChange / applyFolderChange. Если операция НЕ удалась —
-     * запись НЕ удаляется из очереди, а остаётся для следующей попытки.
-     *
-     * Раньше: запись удалялась всегда, даже при ошибке. Это приводило
-     * к молчаливой потере изменений (например, фото не залилось, но
-     * pending очистился).
-     */
     private suspend fun processPendingChangesInternal(): Int {
         val pending = syncQueueDao.getAllPending()
         if (pending.isEmpty()) return 0
@@ -1563,10 +1463,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return successCount
     }
 
-    /**
-     * 🆕 v13.0.3: возвращает Boolean — успех операции.
-     * Раньше возвращала Unit, и результат игнорировался.
-     */
     private suspend fun applyFolderChange(entry: SyncQueueEntity): Boolean {
         return try {
             when (entry.action) {
@@ -1604,9 +1500,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 🆕 v13.0.3: возвращает Boolean — успех операции.
-     */
     private suspend fun applyItemChange(entry: SyncQueueEntity): Boolean {
         return try {
             when (entry.action) {
@@ -1660,10 +1553,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncStatus.postValue(SyncStatus.SYNCED)
         }
     }
-
-    // ============================================================
-    // ЗАЙМ (ВЫДАЧА) ПРЕДМЕТА
-    // ============================================================
 
     fun lendItem(itemId: String, personName: String, note: String? = null) {
         Logger.log(TAG, "lendItem: $itemId to $personName")
@@ -1737,10 +1626,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             db.itemDao().getLentItems()
         }
     }
-
-    // ============================================================
-    // АРХИВАЦИЯ ПРЕДМЕТОВ
-    // ============================================================
 
     fun archiveItem(
         itemId: String,
@@ -1872,9 +1757,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
     }
 
-    // ============================================================
-    // СПИСАНИЕ ЧАСТИ КОЛИЧЕСТВА (write-off → архив)
-    // ============================================================
     fun writeOffItem(
         itemId: String,
         count: Int,
@@ -2019,9 +1901,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // РЕВИЗИЯ ПРЕДМЕТА
-    // ============================================================
     fun markRevision(itemId: String) {
         Logger.log(TAG, "markRevision: itemId=$itemId")
         viewModelScope.launch {
@@ -2064,9 +1943,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return sdf.format(java.util.Date(timestamp))
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ЧАСТИ КОЛИЧЕСТВА (split + move)
-    // ============================================================
     fun splitAndMoveItem(
         itemId: String,
         count: Int,
@@ -2216,10 +2092,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // КОПИРОВАНИЕ ПРЕДМЕТА
-    // ============================================================
-
     fun copyItem(itemId: String) {
         viewModelScope.launch {
             try {
@@ -2258,10 +2130,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // СОЗДАНИЕ ПАПОК
-    // ============================================================
-
     fun createFolder(name: String) {
         val folder = FolderEntity(
             name = name,
@@ -2286,10 +2154,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loadContents()
         }
     }
-
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ ПАПОК
-    // ============================================================
 
     fun renameFolder(folderId: String, newName: String) {
         viewModelScope.launch {
@@ -2356,10 +2220,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПОК И ПРЕДМЕТОВ
-    // ============================================================
 
     private suspend fun isFolderDescendantOf(folderId: String, potentialAncestorId: String): Boolean {
         if (folderId == potentialAncestorId) return true
@@ -2554,10 +2414,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ ПРЕДМЕТОВ
-    // ============================================================
-
     fun updateItemQuantity(itemId: String, newQty: Int) {
         viewModelScope.launch {
             try {
@@ -2591,15 +2447,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Сохранение предмета из карточки (ItemDetailActivity → saveChanges).
-     *
-     * Сравнивает старое и новое состояние и пишет в историю ПОЛНЫЙ ДИФФ
-     * по всем изменённым полям: name, quantity, price, expiryDate,
-     * purchaseDate, itemType, itemSubtype, barcode, description.
-     *
-     * Если ни одно поле не изменилось — история не пишется.
-     */
     fun updateItemFull(item: ItemEntity) {
         viewModelScope.launch {
             try {
@@ -2635,13 +2482,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Собирает список изменений между старой и новой версией предмета.
-     * Каждая строка: «Поле: старое → новое».
-     *
-     * 🆕 v12: для цены null приводится к 0.0, чтобы не было ложного
-     * «Цена: — → 0.0 ₽» при сохранении предмета без изменений.
-     */
     private fun buildDiff(old: ItemEntity, new: ItemEntity): List<String> {
         val diffs = mutableListOf<String>()
 
@@ -2651,7 +2491,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (old.quantity != new.quantity) {
             diffs.add("Количество: ${old.quantity} → ${new.quantity}")
         }
-        // 🆕 null и 0.0 приравниваем
         if ((old.price ?: 0.0) != (new.price ?: 0.0)) {
             diffs.add("Цена: ${formatPrice(old.price)} → ${formatPrice(new.price)}")
         }
@@ -2693,9 +2532,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else -> "—"
     }
 
-    /**
-     * 🆕 v12: подтип через SubtypeCatalog — показываем человекочитаемое название.
-     */
     private fun subtypeName(type: String?, subtype: String?): String {
         if (subtype.isNullOrEmpty()) return "—"
         return try {
@@ -2821,10 +2657,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============================================================
-    // ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ
-    // ============================================================
-
     fun forceSync() {
         if (forceSyncJob?.isActive == true) {
             Logger.log(TAG, "forceSync: already running, skipping")
@@ -2834,10 +2666,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         syncResultMessage.postValue("⏳ Синхронизация…")
         forceSyncJob = applicationScope.launch { syncWithDisk() }
     }
-
-    // ============================================================
-    // ПОИСК
-    // ============================================================
 
     fun search(query: String) {
         searchQuery = query
@@ -2852,10 +2680,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getSearchQuery(): String? = searchQuery
-
-    // ============================================================
-    // ВСПОМОГАТЕЛЬНЫЕ
-    // ============================================================
 
     private fun isInternetAvailable(): Boolean {
         val connectivityManager = getApplication<Application>()
