@@ -6,10 +6,6 @@ import com.family.base.data.local.entity.HistoryEntry
 @Dao
 interface HistoryDao {
 
-    // ============================================================
-    // БАЗОВЫЕ ОПЕРАЦИИ
-    // ============================================================
-
     @Insert
     suspend fun insertEntry(entry: HistoryEntry)
 
@@ -19,150 +15,48 @@ interface HistoryDao {
     @Query("DELETE FROM history")
     suspend fun deleteAllEntries()
 
-    // ============================================================
-    // ВЫБОРКИ ДЛЯ КАРТОЧКИ ПРЕДМЕТА
-    // ============================================================
-
     @Query("SELECT * FROM history WHERE itemId = :itemId ORDER BY changedAt DESC")
     suspend fun getHistoryForItem(itemId: String): List<HistoryEntry>
 
-    // ============================================================
-    // ВЫБОРКИ ДЛЯ ЭКРАНА «ИСТОРИЯ ИЗМЕНЕНИЙ»
-    // ============================================================
-
-    /**
-     * Вся история, новые сверху. Без лимита.
-     */
     @Query("SELECT * FROM history ORDER BY changedAt DESC")
     suspend fun getAllEntries(): List<HistoryEntry>
 
-    /**
-     * Фильтр по пользователю.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE changedBy = :user 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE changedBy = :user ORDER BY changedAt DESC")
     suspend fun getEntriesByUser(user: String): List<HistoryEntry>
 
-    /**
-     * Фильтр по действию.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE action = :action 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE action = :action ORDER BY changedAt DESC")
     suspend fun getEntriesByAction(action: String): List<HistoryEntry>
 
-    /**
-     * Фильтр по пользователю + действию.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE changedBy = :user AND action = :action 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE changedBy = :user AND action = :action ORDER BY changedAt DESC")
     suspend fun getEntriesByUserAndAction(user: String, action: String): List<HistoryEntry>
 
-    /**
-     * Фильтр по дате (changedAt >= since).
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE changedAt >= :since 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE changedAt >= :since ORDER BY changedAt DESC")
     suspend fun getEntriesSince(since: Long): List<HistoryEntry>
 
-    /**
-     * Фильтр по пользователю + дате.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE changedBy = :user AND changedAt >= :since 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE changedBy = :user AND changedAt >= :since ORDER BY changedAt DESC")
     suspend fun getEntriesByUserSince(user: String, since: Long): List<HistoryEntry>
 
-    /**
-     * Фильтр по действию + дате.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE action = :action AND changedAt >= :since 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE action = :action AND changedAt >= :since ORDER BY changedAt DESC")
     suspend fun getEntriesByActionSince(action: String, since: Long): List<HistoryEntry>
 
-    /**
-     * Фильтр по пользователю + действию + дате.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE changedBy = :user AND action = :action AND changedAt >= :since 
-        ORDER BY changedAt DESC
-    """)
-    suspend fun getEntriesByUserAndActionSince(
-        user: String,
-        action: String,
-        since: Long
-    ): List<HistoryEntry>
+    @Query("SELECT * FROM history WHERE changedBy = :user AND action = :action AND changedAt >= :since ORDER BY changedAt DESC")
+    suspend fun getEntriesByUserAndActionSince(user: String, action: String, since: Long): List<HistoryEntry>
 
-    // ============================================================
-    // СПРАВОЧНЫЕ ЗАПРОСЫ
-    // ============================================================
-
-    /**
-     * Список всех пользователей, которые когда-либо делали изменения.
-     * Для dropdown «Пользователь».
-     */
     @Query("SELECT DISTINCT changedBy FROM history ORDER BY changedBy ASC")
     suspend fun getDistinctUsers(): List<String>
 
-    /**
-     * Список всех action, которые встречаются в истории.
-     * Для dropdown «Действие».
-     */
     @Query("SELECT DISTINCT action FROM history ORDER BY action ASC")
     suspend fun getDistinctActions(): List<String>
 
-    /**
-     * Общее количество записей.
-     */
     @Query("SELECT COUNT(*) FROM history")
     suspend fun getTotalCount(): Int
 
-    /**
-     * Записи по конкретному предмету (с учётом фильтров) — для будущего.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE itemId = :itemId 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE itemId = :itemId ORDER BY changedAt DESC")
     suspend fun getEntriesForItem(itemId: String): List<HistoryEntry>
 
-    // ============================================================
-    // 🆕 МИГРАЦИЯ СТАРЫХ ЗАПИСЕЙ (v12)
-    // ============================================================
-
-    /**
-     * Найти все записи, у которых itemName = NULL — их надо заполнить.
-     * Возвращает id + itemId, чтобы в Kotlin-коде найти имя из items.
-     */
-    @Query("""
-        SELECT * FROM history 
-        WHERE itemName IS NULL 
-        ORDER BY changedAt DESC
-    """)
+    @Query("SELECT * FROM history WHERE itemName IS NULL ORDER BY changedAt DESC")
     suspend fun getEntriesWithoutItemName(): List<HistoryEntry>
 
-    /**
-     * Найти записи, где action содержит сырые коды типов в oldValue/newValue.
-     * Например: "Тип: thing, подтип: furniture".
-     */
     @Query("""
         SELECT * FROM history 
         WHERE (oldValue LIKE '%Тип: %' OR newValue LIKE '%Тип: %')
@@ -172,10 +66,6 @@ interface HistoryDao {
     """)
     suspend fun getEntriesWithRawTypeCodes(): List<HistoryEntry>
 
-    /**
-     * Обновить одну запись — itemName, oldValue, newValue.
-     * Не трогает action/changedBy/changedAt.
-     */
     @Query("""
         UPDATE history 
         SET itemName = :itemName, 
@@ -190,15 +80,27 @@ interface HistoryDao {
         newValue: String?
     )
 
-    /**
-     * Установить itemName для одной записи (когда остальное трогать не надо).
-     */
     @Query("UPDATE history SET itemName = :itemName WHERE id = :entryId")
     suspend fun updateItemName(entryId: String, itemName: String)
 
-    /**
-     * Сколько записей ещё без itemName (для прогресса миграции).
-     */
     @Query("SELECT COUNT(*) FROM history WHERE itemName IS NULL")
     suspend fun countEntriesWithoutItemName(): Int
+
+    // ============================================================
+    // 🆕 v13.2.0 (B-8): синхронизация истории
+    // ============================================================
+
+    /**
+     * Пакетная вставка с игнорированием дубликатов по id.
+     * Используется при синхронизации — добавляем только новые записи,
+     * существующие не перезаписываем.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(entries: List<HistoryEntry>): List<Long>
+
+    /**
+     * Получить все id — для быстрой проверки «есть ли уже такая запись».
+     */
+    @Query("SELECT id FROM history")
+    suspend fun getAllIds(): List<String>
 }
