@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 10,  // ← увеличили с 9 до 10 (purchaseDate в items)
+    version = 11,  // ← увеличили с 10 до 11 (itemName в history)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -93,9 +93,7 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // items: добавляем parentItemId (родитель-предмет)
                 db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
-                // folders: добавляем parentItemId (родитель-предмет)
                 db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
             }
         }
@@ -115,6 +113,15 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
+            }
+        }
+
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 10 НА 11 (itemName в history)
+        // ============================================================
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
             }
         }
 
@@ -195,6 +202,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ============================================================
+        // МИГРАЦИЯ С ВЕРСИИ 9 НА 11 (ЕСЛИ ПРОПУСТИЛИ 10)
+        // ============================================================
+        private val MIGRATION_9_11 = object : Migration(9, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -211,12 +228,14 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_7_8,
                         MIGRATION_8_9,
                         MIGRATION_9_10,
+                        MIGRATION_10_11,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
                         MIGRATION_4_6,
                         MIGRATION_5_7,
                         MIGRATION_6_8,
-                        MIGRATION_7_9
+                        MIGRATION_7_9,
+                        MIGRATION_9_11
                     )
                     .build()
                     .also { INSTANCE = it }
