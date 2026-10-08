@@ -8,10 +8,14 @@ data class SettingsEntity(
     @PrimaryKey val id: Int = 1,
     val isFirstLaunch: Boolean = true,
 
+    // ===== Поля, которые УЖЕ есть в БД (восстановлены) =====
+    val notificationDaysBefore: Int = 3,
+    val notificationHour: Int = 10,
+    val enableNotifications: Boolean = true,
+
     /**
      * 🆕 v12: флаг разовой миграции истории изменений.
-     * После первого прогона migrateOldHistoryEntries() ставится в true.
-     * Защищает от повторной обработки записей.
+     * NOT NULL с дефолтом 0 — так его создала миграция MIGRATION_11_12.
      */
     val historyMigratedV12: Boolean = false
 )
