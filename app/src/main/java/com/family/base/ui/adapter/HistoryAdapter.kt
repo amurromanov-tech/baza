@@ -1,0 +1,278 @@
+package com.family.base.ui.adapter
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+import com.family.base.R
+import com.family.base.data.local.entity.HistoryEntry
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Адаптер истории изменений.
+ *
+ * Поддерживает два типа строк:
+ *  - HEADER — заголовок даты («Сегодня», «Вчера», «01.10.2026»)
+ *  - ENTRY  — запись истории
+ *
+ * Группировка по дате (changedAt) в порядке убывания (новые сверху).
+ */
+class HistoryAdapter(
+    private val onItemClick: (HistoryEntry) -> Unit
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    private val items: MutableList<Row> = mutableListOf()
+
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+
+    companion object {
+        private const val TYPE_HEADER = 0
+        private const val TYPE_ENTRY = 1
+    }
+
+    sealed class Row {
+        data class Header(val title: String, val dateKey: String) : Row()
+        data class Entry(val entry: HistoryEntry) : Row()
+    }
+
+    // ============================================================
+    // ПУБЛИЧНОЕ API
+    // ============================================================
+
+    fun submitList(entries: List<HistoryEntry>) {
+        items.clear()
+
+        var lastDateKey: String? = null
+
+        entries.forEach { entry ->
+            val dateKey = dateKeyOf(entry.changedAt)
+            if (dateKey != lastDateKey) {
+                items.add(Row.Header(title = headerTitleOf(entry.changedAt), dateKey = dateKey))
+                lastDateKey = dateKey
+            }
+            items.add(Row.Entry(entry))
+        }
+
+        notifyDataSetChanged()
+    }
+
+    fun clear() {
+        items.clear()
+        notifyDataSetChanged()
+    }
+
+    // ============================================================
+    // КЛЮЧИ ДАТ
+    // ============================================================
+
+    /**
+     * Уникальный ключ даты в формате YYYY-MM-DD — для группировки.
+     */
+    private fun dateKeyOf(timestamp: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val y = cal.get(Calendar.YEAR)
+        val m = cal.get(Calendar.MONTH) + 1
+        val d = cal.get(Calendar.DAY_OF_MONTH)
+        return "%04d-%02d-%02d".format(y, m, d)
+    }
+
+    /**
+     * Человекочитаемый заголовок: «Сегодня», «Вчера» или «01.10.2026».
+     */
+    private fun headerTitleOf(timestamp: Long): String {
+        val today = Calendar.getInstance()
+        val target = Calendar.getInstance().apply { timeInMillis = timestamp }
+
+        val isSameDay = today.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+            today.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
+        if (isSameDay) return "Сегодня"
+
+        val yesterday = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -1)
+        }
+        val isYesterday = yesterday.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+            yesterday.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
+        if (isYesterday) return "Вчера"
+
+        return dateFormat.format(Date(timestamp))
+    }
+
+    // ============================================================
+    // RECYCLER.ADAPTER
+    // ============================================================
+
+    override fun getItemViewType(position: Int): Int = when (items[position]) {
+        is Row.Header -> TYPE_HEADER
+        is Row.Entry -> TYPE_ENTRY
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            TYPE_HEADER -> {
+                val view = inflater.inflate(R.layout.item_history_header, parent, false)
+                HeaderViewHolder(view)
+            }
+            else -> {
+                val view = inflater.inflate(R.layout.item_history_entry, parent, false)
+                EntryViewHolder(view)
+            }
+        }
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val row = items[position]) {
+            is Row.Header -> (holder as HeaderViewHolder).bind(row.title)
+            is Row.Entry -> (holder as EntryViewHolder).bind(row.entry)
+        }
+    }
+
+    override fun getItemCount(): Int = items.size
+
+    // ============================================================
+    // HEADER
+    // ============================================================
+
+    inner class HeaderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        private val tvHeader: TextView = view.findViewById(R.id.tvHeaderDate)
+
+        fun bind(title: String) {
+            tvHeader.text = title
+        }
+    }
+
+    // ============================================================
+    // ENTRY
+    // ============================================================
+
+    inner class EntryViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        private val tvIcon: TextView = view.findViewById(R.id.tvActionIcon)
+        private val tvItemName: TextView = view.findViewById(R.id.tvItemName)
+        private val tvChange: TextView = view.findViewById(R.id.tvChange)
+        private val tvUser: TextView = view.findViewById(R.id.tvUser)
+        private val tvTime: TextView = view.findViewById(R.id.tvTime)
+
+        fun bind(entry: HistoryEntry) {
+            tvIcon.text = iconForAction(entry.action)
+
+            val displayName = entry.itemName?.takeIf { it.isNotBlank() } ?: "—"
+            tvItemName.text = displayName
+
+            tvChange.text = buildChangeText(entry)
+
+            tvUser.text = "👤 ${entry.changedBy}"
+            tvTime.text = timeFormat.format(Date(entry.changedAt))
+
+            itemView.setOnClickListener { onItemClick(entry) }
+        }
+
+        private fun buildChangeText(entry: HistoryEntry): String {
+            val action = entry.action
+
+            return when {
+                action == "create" -> {
+                    "Создан${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "update" -> {
+                    if (!entry.newValue.isNullOrEmpty()) {
+                        entry.newValue
+                    } else if (!entry.oldValue.isNullOrEmpty()) {
+                        "${entry.oldValue} → ${entry.newValue ?: "—"}"
+                    } else {
+                        "Изменён"
+                    }
+                }
+                action == "delete" -> {
+                    "Удалён${if (!entry.oldValue.isNullOrEmpty()) " (${entry.oldValue})" else ""}"
+                }
+                action == "archive" -> {
+                    "📦 В архив${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "unarchive" -> {
+                    "↩️ Из архива${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "unarchive_part" -> {
+                    "↩️ Возврат части: ${entry.oldValue ?: ""} → ${entry.newValue ?: ""}"
+                }
+                action == "write_off" -> {
+                    "🧴 Списано${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "write_off_part" -> {
+                    "🧴 Частичное списание: ${entry.oldValue ?: ""} → ${entry.newValue ?: ""}"
+                }
+                action == "quantity_change" -> {
+                    "📦 Количество: ${entry.oldValue ?: "?"} → ${entry.newValue ?: "?"}"
+                }
+                action == "revision" -> {
+                    "🔍 Ревизия: ${entry.newValue ?: ""}"
+                }
+                action == "lend" -> {
+                    "🤝 Выдан${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "return" -> {
+                    "✅ Возвращён"
+                }
+                action == "move" -> {
+                    "📁 Перемещён${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "move_folder" -> {
+                    "📁 Папка перемещена${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "split_in" -> {
+                    "✂️ Отделено: ${entry.newValue ?: ""}"
+                }
+                action == "split_out" -> {
+                    "✂️ Отдано: ${entry.newValue ?: ""}"
+                }
+                action == "create_folder" -> {
+                    "📁 Создана папка${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                }
+                action == "rename_folder" -> {
+                    "📝 Папка: «${entry.oldValue ?: ""}» → «${entry.newValue ?: ""}»"
+                }
+                action == "delete_folder" -> {
+                    "🗑 Папка удалена${if (!entry.oldValue.isNullOrEmpty()) " (${entry.oldValue})" else ""}"
+                }
+                action == "add_nested_folder" -> {
+                    "📁 Вложенная папка: ${entry.newValue ?: ""}"
+                }
+                action == "detach_children" -> {
+                    "🔗 Отвязано детей: ${entry.newValue ?: "0"}"
+                }
+                else -> {
+                    buildString {
+                        if (!entry.oldValue.isNullOrEmpty()) append("${entry.oldValue} → ")
+                        append(entry.newValue ?: action)
+                    }
+                }
+            }
+        }
+
+        private fun iconForAction(action: String): String = when (action) {
+            "create" -> "➕"
+            "update" -> "✏️"
+            "quantity_change" -> "📦"
+            "delete" -> "🗑"
+            "archive" -> "📦"
+            "unarchive", "unarchive_part" -> "↩️"
+            "write_off", "write_off_part" -> "🧴"
+            "revision" -> "🔍"
+            "lend" -> "🤝"
+            "return" -> "✅"
+            "move" -> "📁"
+            "move_folder" -> "📁"
+            "split_in", "split_out" -> "✂️"
+            "create_folder" -> "📁"
+            "rename_folder" -> "📝"
+            "delete_folder" -> "🗑"
+            "add_nested_folder" -> "📁"
+            "detach_children" -> "🔗"
+            else -> "•"
+        }
+    }
+}
