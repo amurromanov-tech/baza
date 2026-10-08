@@ -125,6 +125,9 @@
         <activity
             android:name=".ui.DiagnosticsActivity"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.HistoryActivity"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ui.AppSettingsActivity"
