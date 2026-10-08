@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
+import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
@@ -91,14 +92,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ============================================================
     // ХЕЛПЕР: ЗАПИСЬ В ИСТОРИЮ
     // ============================================================
-    /**
-     * Единая точка записи в историю.
-     * @param itemId — id предмета (или папки)
-     * @param itemName — имя на момент записи (для отображения после удаления)
-     * @param action — тип действия (см. HistoryEntry)
-     * @param oldValue — что было
-     * @param newValue — что стало
-     */
     private suspend fun writeHistory(
         itemId: String,
         itemName: String?,
@@ -191,6 +184,159 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             fixOldFolderIconUrls()
         } catch (e: Exception) {
             Logger.log(TAG, "Error fixing old folder iconUrls: ${e.message}")
+        }
+
+        // 🆕 v12: разовая миграция истории изменений
+        try {
+            migrateOldHistoryEntries()
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error migrating old history entries: ${e.message}", e)
+        }
+    }
+
+    // ============================================================
+    // 🆕 v12: МИГРАЦИЯ СТАРЫХ ЗАПИСЕЙ ИСТОРИИ
+    // ============================================================
+    /**
+     * Разовая обработка старых записей:
+     *  - заполнить itemName из items (для неудалённых предметов)
+     *  - заменить сырые коды типов («thing», «food», «medicine», «other»)
+     *    на человекочитаемые названия
+     *  - заменить сырые коды подтипов («furniture», «aquarium», и т.д.)
+     *    на человекочитаемые названия через SubtypeCatalog
+     *
+     * Запускается один раз — по флагу settings.historyMigratedV12.
+     */
+    private suspend fun migrateOldHistoryEntries() {
+        val settings = settingsDao.getSettings()
+        if (settings?.historyMigratedV12 == true) {
+            Logger.log(TAG, "migrateOldHistoryEntries: already done, skipping")
+            return
+        }
+
+        Logger.log(TAG, "migrateOldHistoryEntries: START")
+
+        // ---------- 1. Заполняем itemName там, где NULL ----------
+        val entriesWithoutName = db.historyDao().getEntriesWithoutItemName()
+        Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithoutName.size} entries without itemName")
+
+        var nameFilledCount = 0
+        for (entry in entriesWithoutName) {
+            // Пробуем найти предмет
+            val item = db.itemDao().getItemById(entry.itemId)
+            if (item != null) {
+                try {
+                    db.historyDao().updateItemName(entry.id, item.name)
+                    nameFilledCount++
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Failed to update itemName for entry ${entry.id}: ${e.message}")
+                }
+                continue
+            }
+
+            // Может, это папка?
+            val folder = db.folderDao().getFolderById(entry.itemId)
+            if (folder != null) {
+                try {
+                    db.historyDao().updateItemName(entry.id, folder.name)
+                    nameFilledCount++
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Failed to update itemName for folder entry ${entry.id}: ${e.message}")
+                }
+                continue
+            }
+
+            // Ничего не найдено — оставляем NULL, адаптер покажет «—»
+        }
+        Logger.log(TAG, "migrateOldHistoryEntries: filled itemName for $nameFilledCount entries")
+
+        // ---------- 2. Заменяем сырые коды типов/подтипов ----------
+        val entriesWithRawCodes = db.historyDao().getEntriesWithRawTypeCodes()
+        Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithRawCodes.size} entries with raw type codes")
+
+        var rawFixedCount = 0
+        for (entry in entriesWithRawCodes) {
+            val newOld = entry.oldValue?.let { replaceRawCodes(it) }
+            val newNew = entry.newValue?.let { replaceRawCodes(it) }
+
+            if (newOld != entry.oldValue || newNew != entry.newValue) {
+                try {
+                    db.historyDao().updateEntryFields(
+                        entryId = entry.id,
+                        itemName = entry.itemName,
+                        oldValue = newOld,
+                        newValue = newNew
+                    )
+                    rawFixedCount++
+                } catch (e: Exception) {
+                    Logger.log(TAG, "Failed to update entry ${entry.id}: ${e.message}")
+                }
+            }
+        }
+        Logger.log(TAG, "migrateOldHistoryEntries: fixed raw codes in $rawFixedCount entries")
+
+        // ---------- 3. Ставим флаг ----------
+        try {
+            val current = settingsDao.getSettings() ?: SettingsEntity()
+            settingsDao.insertOrUpdateSettings(current.copy(historyMigratedV12 = true))
+            Logger.log(TAG, "migrateOldHistoryEntries: DONE, flag set to true")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Failed to set historyMigratedV12 flag: ${e.message}")
+        }
+    }
+
+    /**
+     * Заменяет в строке сырые коды типов и подтипов на человекочитаемые.
+     * Работает через пары «код → название», ищет целые слова.
+     *
+     * Пример:
+     *   "Тип: thing, подтип: furniture"
+     *   →
+     *   "Тип: 📦 Предмет, подтип: 🪑 Мебель"
+     */
+    private fun replaceRawCodes(text: String): String {
+        var result = text
+
+        // --- Типы предметов ---
+        val typeMap = mapOf(
+            "thing" to "📦 Предмет",
+            "food" to "🍎 Еда",
+            "medicine" to "💊 Лекарство",
+            "other" to "🗂 Другое"
+        )
+        typeMap.forEach { (code, display) ->
+            result = replaceWholeWord(result, code, display)
+        }
+
+        // --- Подтипы через SubtypeCatalog ---
+        // SubtypeCatalog хранит по типам: key → displayName
+        // Пройдёмся по всем типам и всем подтипам
+        try {
+            for (type in listOf("food", "medicine", "thing", "other")) {
+                val subtypes = SubtypeCatalog.getSubtypes(type)
+                subtypes.forEach { subtype ->
+                    if (subtype.key.isNotEmpty()) {
+                        result = replaceWholeWord(result, subtype.key, subtype.displayName)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "replaceRawCodes: SubtypeCatalog error: ${e.message}")
+        }
+
+        return result
+    }
+
+    /**
+     * Заменяет целое слово (не часть другого слова).
+     * Использует regex с границами слов: \bcode\b
+     */
+    private fun replaceWholeWord(text: String, word: String, replacement: String): String {
+        if (word.isEmpty()) return text
+        return try {
+            text.replace(Regex("\\b${Regex.escape(word)}\\b"), replacement)
+        } catch (e: Exception) {
+            text
         }
     }
 
@@ -406,7 +552,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // История по каждому предмету из чека
             prepared.forEach { item ->
                 writeHistory(
                     itemId = item.id,
@@ -2400,6 +2545,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Собирает список изменений между старой и новой версией предмета.
      * Каждая строка: «Поле: старое → новое».
+     *
+     * 🆕 v12: для цены null приводится к 0.0, чтобы не было ложного
+     * «Цена: — → 0.0 ₽» при сохранении предмета без изменений.
      */
     private fun buildDiff(old: ItemEntity, new: ItemEntity): List<String> {
         val diffs = mutableListOf<String>()
@@ -2410,7 +2558,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (old.quantity != new.quantity) {
             diffs.add("Количество: ${old.quantity} → ${new.quantity}")
         }
-        if (old.price != new.price) {
+        // 🆕 null и 0.0 приравниваем
+        if ((old.price ?: 0.0) != (new.price ?: 0.0)) {
             diffs.add("Цена: ${formatPrice(old.price)} → ${formatPrice(new.price)}")
         }
         if (old.expiryDate != new.expiryDate) {
@@ -2423,7 +2572,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             diffs.add("Тип: ${typeName(old.itemType)} → ${typeName(new.itemType)}")
         }
         if (old.itemSubtype != new.itemSubtype) {
-            diffs.add("Подтип: ${subtypeName(old.itemSubtype)} → ${subtypeName(new.itemSubtype)}")
+            diffs.add("Подтип: ${subtypeName(old.itemType, old.itemSubtype)} → ${subtypeName(new.itemType, new.itemSubtype)}")
         }
         if (old.barcode != new.barcode) {
             diffs.add("Штрих-код: ${old.barcode ?: "—"} → ${new.barcode ?: "—"}")
@@ -2451,8 +2600,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else -> "—"
     }
 
-    private fun subtypeName(s: String?): String =
-        if (s.isNullOrEmpty()) "—" else s
+    /**
+     * 🆕 v12: подтип через SubtypeCatalog — показываем человекочитаемое название.
+     */
+    private fun subtypeName(type: String?, subtype: String?): String {
+        if (subtype.isNullOrEmpty()) return "—"
+        return try {
+            SubtypeCatalog.getDisplayName(type ?: "", subtype) ?: subtype
+        } catch (e: Exception) {
+            subtype
+        }
+    }
 
     private fun truncate(text: String, max: Int): String =
         if (text.length <= max) text else text.take(max) + "…"
