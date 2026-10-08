@@ -6,8 +6,12 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "settings")
 data class SettingsEntity(
     @PrimaryKey val id: Int = 1,
-    val notificationDaysBefore: Int = 1,
-    val notificationHour: Int = 9,
-    val enableNotifications: Boolean = true,
-    val isFirstLaunch: Boolean = true
+    val isFirstLaunch: Boolean = true,
+
+    /**
+     * 🆕 v12: флаг разовой миграции истории изменений.
+     * После первого прогона migrateOldHistoryEntries() ставится в true.
+     * Защищает от повторной обработки записей.
+     */
+    val historyMigratedV12: Boolean = false
 )
