@@ -26,13 +26,8 @@ class CatalogRepository(private val db: AppDatabase) {
     private val TAG = "CatalogRepository"
     private val DEFAULT_FOLDER_NAME = "BAZA"
 
-    // 🆕 v13.0.3: убраны суффиксы .bak — возвращены стандартные имена файлов.
-    // Раньше было "items.json.bak" / "folders.json.bak" для ускорения загрузки,
-    // но это создавало рассинхрон между устройствами с разными сборками.
     private val ITEMS_FILENAME = "items.json"
     private val FOLDERS_FILENAME = "folders.json"
-
-    // 🆕 v13.2.0 (B-8): синхронизация истории изменений
     private val HISTORY_FILENAME = "history.json"
 
     private var folderPathCache: String? = null
@@ -88,9 +83,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return folder
     }
 
-    /**
-     * 🆕 B-5: создание папки внутри предмета.
-     */
     suspend fun createFolderInItem(
         name: String,
         parentItemId: String,
@@ -141,7 +133,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ
+    // B-3: ОТВЯЗАТЬ ВСЕХ ДЕТЕЙ
     // ============================================================
     suspend fun detachAllChildren(itemId: String): Int {
         return withContext(Dispatchers.IO) {
@@ -579,22 +571,82 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     /**
-     * 🆕 v13.2.0 (B-8): выгрузка всей истории на Диск.
+     * 🆕 v13.2.1: merge-then-upload истории.
+     *
+     * Алгоритм:
+     *  1. Скачиваем history.json с Диска.
+     *  2. Union по id: диск ∪ локальные.
+     *  3. Заливаем объединение обратно на Диск.
+     *  4. Локально добавляем недостающие (те, что только на Диске).
+     *  5. Обновляем last_modified.
+     *
+     * Так порядок синка НЕ важен — никто никого не затирает.
      */
     suspend fun uploadAllHistoryToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val allHistory = db.historyDao().getAllEntries()
-                Logger.log(TAG, "uploadAllHistoryToDisk: uploading ${allHistory.size} history entries")
-                val json = gson.toJson(allHistory)
+                // 1. Скачиваем текущую историю с Диска
+                val auth = getAuthHeader()
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val historyPath = "$rootPath/data/$HISTORY_FILENAME"
+
+                val diskHistory: List<HistoryEntry> = try {
+                    if (auth != null && !isDnsBlocked()) {
+                        val urlResponse = api.getDiskDownloadUrl(auth, historyPath)
+                        if (urlResponse.isSuccessful) {
+                            val href = urlResponse.body()?.href
+                            if (href != null) {
+                                val downloadResponse = api.downloadFile(href)
+                                if (downloadResponse.isSuccessful) {
+                                    val json = downloadResponse.body()?.string()
+                                    if (!json.isNullOrEmpty()) {
+                                        val type = object : TypeToken<List<HistoryEntry>>() {}.type
+                                        gson.fromJson<List<HistoryEntry>>(json, type) ?: emptyList()
+                                    } else emptyList()
+                                } else emptyList()
+                            } else emptyList()
+                        } else emptyList()
+                    } else emptyList()
+                } catch (e: Exception) {
+                    Logger.log(TAG, "uploadAllHistoryToDisk: download failed, using local only: ${e.message}")
+                    emptyList()
+                }
+
+                // 2. Union: берём все локальные + те с Диска, которых нет локально
+                val localHistory = db.historyDao().getAllEntries()
+                val localIds = localHistory.map { it.id }.toSet()
+                val diskOnly = diskHistory.filter { it.id !in localIds }
+                val merged = localHistory + diskOnly
+
+                Logger.log(TAG, "uploadAllHistoryToDisk: local=${localHistory.size}, disk=${diskHistory.size}, merged=${merged.size}, diskOnly=${diskOnly.size}")
+
+                // 3. Заливаем объединение
+                val json = gson.toJson(merged)
                 val success = uploadJsonWithToken("data/$HISTORY_FILENAME", json)
                 if (!success) {
                     Logger.log(TAG, "uploadAllHistoryToDisk: failed (json upload)")
                     return@withContext false
                 }
-                // ⚠️ НЕ обновляем last_modified — он обновляется при заливке items/folders.
-                // Иначе history будет триггерить лишний download.
-                Logger.log(TAG, "uploadAllHistoryToDisk: success")
+
+                // 4. Локально добавляем недостающие (diskOnly)
+                if (diskOnly.isNotEmpty()) {
+                    try {
+                        db.historyDao().insertAll(diskOnly)
+                        Logger.log(TAG, "uploadAllHistoryToDisk: locally inserted ${diskOnly.size} new entries")
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "uploadAllHistoryToDisk: local insert failed: ${e.message}")
+                    }
+                }
+
+                // 5. Обновляем last_modified
+                val lm = updateLastModifiedWithToken()
+                if (!lm) {
+                    Logger.log(TAG, "uploadAllHistoryToDisk: json OK, but last_modified FAILED")
+                    return@withContext false
+                }
+
+                Logger.log(TAG, "uploadAllHistoryToDisk: success (merged ${merged.size})")
                 true
             } catch (e: Exception) {
                 Logger.log(TAG, "uploadAllHistoryToDisk error: ${e.message}")
@@ -760,9 +812,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * 🆕 v13.2.0 (B-8): расширенный DownloadResult с полем history.
-     */
     data class DownloadResult(
         val folders: List<FolderEntity>,
         val items: List<ItemEntity>,
@@ -794,7 +843,6 @@ class CatalogRepository(private val db: AppDatabase) {
                 val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/$ITEMS_FILENAME")
                 Logger.log(TAG, "Downloaded ${itemsResult.data.size} items (error=${itemsResult.error})")
 
-                // 🆕 v13.2.0 (B-8): история
                 val historyResult = downloadJsonFileSafe<HistoryEntry>(api, auth, "$rootPath/data/$HISTORY_FILENAME")
                 Logger.log(TAG, "Downloaded ${historyResult.data.size} history entries (error=${historyResult.error})")
 
@@ -840,7 +888,6 @@ class CatalogRepository(private val db: AppDatabase) {
             val json = downloadResponse.body()?.string()
             if (json.isNullOrEmpty()) return JsonDownloadResult(emptyList(), false)
 
-            // 🆕 v13.2.0: определяем тип по имени файла
             val type = when {
                 path.contains("folders") -> object : TypeToken<List<FolderEntity>>() {}.type
                 path.contains("history") -> object : TypeToken<List<HistoryEntry>>() {}.type
