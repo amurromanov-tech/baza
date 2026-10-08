@@ -19,7 +19,7 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class
     ],
-    version = 12,  // ← увеличили с 11 до 12 (historyMigratedV12 в settings)
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -61,36 +61,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 4 НА 5 (ПОДТИПЫ)
-        // ============================================================
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 5 НА 6 (originalId — частичное списание)
-        // ============================================================
         private val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 6 НА 7 (lastRevisionDate — ревизия)
-        // ============================================================
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 7 НА 8 (parentItemId — ВЛОЖЕННЫЕ ПРЕДМЕТЫ)
-        // ============================================================
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
@@ -98,36 +86,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 8 НА 9 (parentItemId в sync_queue)
-        // ============================================================
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 9 НА 10 (purchaseDate — ДАТА ПОКУПКИ)
-        // ============================================================
         private val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 10 НА 11 (itemName в history)
-        // ============================================================
         private val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 11 НА 12 (historyMigratedV12 в settings)
-        // ============================================================
         private val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
@@ -135,8 +111,54 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 2 НА 4 (ЕСЛИ ПРОПУСТИЛИ 3)
+        // 🆕 v12 → v13: пересоздаём settings с правильной схемой
         // ============================================================
+        /**
+         * Проблема: миграция 11→12 добавила historyMigratedV12 через
+         * ALTER TABLE с DEFAULT 0. Room видит defaultValue='0' вместо
+         * 'undefined' и падает при валидации.
+         *
+         * Решение: пересоздаём таблицу settings с идентичной схемой
+         * (все 6 полей, все NOT NULL, без defaults у historyMigratedV12).
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 1. Создаём новую таблицу с правильной схемой
+                db.execSQL("""
+                    CREATE TABLE settings_new (
+                        id INTEGER NOT NULL,
+                        isFirstLaunch INTEGER NOT NULL,
+                        notificationDaysBefore INTEGER NOT NULL,
+                        notificationHour INTEGER NOT NULL,
+                        enableNotifications INTEGER NOT NULL,
+                        historyMigratedV12 INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+
+                // 2. Копируем данные (все колонки в новом порядке)
+                //    Осторожно: старые значения могут быть с любыми дефолтами.
+                db.execSQL("""
+                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
+                    SELECT 
+                        id, 
+                        isFirstLaunch, 
+                        COALESCE(notificationDaysBefore, 3), 
+                        COALESCE(notificationHour, 10), 
+                        COALESCE(enableNotifications, 1), 
+                        COALESCE(historyMigratedV12, 0)
+                    FROM settings
+                """.trimIndent())
+
+                // 3. Удаляем старую
+                db.execSQL("DROP TABLE settings")
+
+                // 4. Переименовываем
+                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+            }
+        }
+
+        // Цепочки "если пропустили"
         private val MIGRATION_2_4 = object : Migration(2, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
@@ -151,9 +173,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 2 НА 5 (ЕСЛИ ПРОПУСТИЛИ 3 И 4)
-        // ============================================================
         private val MIGRATION_2_5 = object : Migration(2, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
@@ -169,9 +188,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 4 НА 6 (ЕСЛИ ПРОПУСТИЛИ 5)
-        // ============================================================
         private val MIGRATION_4_6 = object : Migration(4, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
@@ -179,9 +195,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 5 НА 7 (ЕСЛИ ПРОПУСТИЛИ 6)
-        // ============================================================
         private val MIGRATION_5_7 = object : Migration(5, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
@@ -189,9 +202,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 6 НА 8 (ЕСЛИ ПРОПУСТИЛИ 7)
-        // ============================================================
         private val MIGRATION_6_8 = object : Migration(6, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
@@ -200,9 +210,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 7 НА 9 (ЕСЛИ ПРОПУСТИЛИ 8)
-        // ============================================================
         private val MIGRATION_7_9 = object : Migration(7, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
@@ -211,9 +218,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 9 НА 11 (ЕСЛИ ПРОПУСТИЛИ 10)
-        // ============================================================
         private val MIGRATION_9_11 = object : Migration(9, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
@@ -221,9 +225,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 9 НА 12 (ЕСЛИ ПРОПУСТИЛИ 10 И 11)
-        // ============================================================
         private val MIGRATION_9_12 = object : Migration(9, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
@@ -232,13 +233,99 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // МИГРАЦИЯ С ВЕРСИИ 10 НА 12 (ЕСЛИ ПРОПУСТИЛИ 11)
-        // ============================================================
         private val MIGRATION_10_12 = object : Migration(10, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // Цепочки "с пропуском 12"
+        private val MIGRATION_9_13 = object : Migration(9, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
+                // settings_new — не нужна, при новой установке settings создаётся сразу
+                db.execSQL("""
+                    CREATE TABLE settings_new (
+                        id INTEGER NOT NULL,
+                        isFirstLaunch INTEGER NOT NULL,
+                        notificationDaysBefore INTEGER NOT NULL,
+                        notificationHour INTEGER NOT NULL,
+                        enableNotifications INTEGER NOT NULL,
+                        historyMigratedV12 INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
+                    SELECT id, isFirstLaunch, 
+                        COALESCE(notificationDaysBefore, 3),
+                        COALESCE(notificationHour, 10),
+                        COALESCE(enableNotifications, 1),
+                        COALESCE(historyMigratedV12, 0)
+                    FROM settings
+                """.trimIndent())
+                db.execSQL("DROP TABLE settings")
+                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+            }
+        }
+
+        private val MIGRATION_10_13 = object : Migration(10, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""
+                    CREATE TABLE settings_new (
+                        id INTEGER NOT NULL,
+                        isFirstLaunch INTEGER NOT NULL,
+                        notificationDaysBefore INTEGER NOT NULL,
+                        notificationHour INTEGER NOT NULL,
+                        enableNotifications INTEGER NOT NULL,
+                        historyMigratedV12 INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
+                    SELECT id, isFirstLaunch, 
+                        COALESCE(notificationDaysBefore, 3),
+                        COALESCE(notificationHour, 10),
+                        COALESCE(enableNotifications, 1),
+                        COALESCE(historyMigratedV12, 0)
+                    FROM settings
+                """.trimIndent())
+                db.execSQL("DROP TABLE settings")
+                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+            }
+        }
+
+        private val MIGRATION_11_13 = object : Migration(11, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""
+                    CREATE TABLE settings_new (
+                        id INTEGER NOT NULL,
+                        isFirstLaunch INTEGER NOT NULL,
+                        notificationDaysBefore INTEGER NOT NULL,
+                        notificationHour INTEGER NOT NULL,
+                        enableNotifications INTEGER NOT NULL,
+                        historyMigratedV12 INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
+                    SELECT id, isFirstLaunch, 
+                        COALESCE(notificationDaysBefore, 3),
+                        COALESCE(notificationHour, 10),
+                        COALESCE(enableNotifications, 1),
+                        COALESCE(historyMigratedV12, 0)
+                    FROM settings
+                """.trimIndent())
+                db.execSQL("DROP TABLE settings")
+                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
             }
         }
 
@@ -260,6 +347,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
+                        MIGRATION_12_13,
                         MIGRATION_2_4,
                         MIGRATION_2_5,
                         MIGRATION_4_6,
@@ -268,7 +356,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_7_9,
                         MIGRATION_9_11,
                         MIGRATION_9_12,
-                        MIGRATION_10_12
+                        MIGRATION_10_12,
+                        MIGRATION_9_13,
+                        MIGRATION_10_13,
+                        MIGRATION_11_13
                     )
                     .build()
                     .also { INSTANCE = it }
