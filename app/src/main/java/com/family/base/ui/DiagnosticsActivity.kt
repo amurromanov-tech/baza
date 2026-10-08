@@ -1,5 +1,6 @@
 package com.family.base.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -70,6 +71,12 @@ class DiagnosticsActivity : AppCompatActivity() {
             uploadLogsToDisk()
         }
 
+        // ===== 🆕 ИСТОРИЯ ИЗМЕНЕНИЙ =====
+        binding.btnHistory.setOnClickListener {
+            Logger.log(TAG, "History clicked")
+            startActivity(Intent(this, HistoryActivity::class.java))
+        }
+
         Logger.log(TAG, "=== DiagnosticsActivity onCreate FINISHED ===")
     }
 
@@ -117,7 +124,7 @@ class DiagnosticsActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 ОТПРАВКА ЛОГОВ НА ЯНДЕКС.ДИСК (папка /logs/)
+    // ОТПРАВКА ЛОГОВ НА ЯНДЕКС.ДИСК (папка /logs/)
     // ============================================================
 
     private fun uploadLogsToDisk() {
@@ -126,7 +133,6 @@ class DiagnosticsActivity : AppCompatActivity() {
             return
         }
 
-        // Проверяем авторизацию
         val token = tokenStorage.getAccessToken()
         if (token.isNullOrEmpty()) {
             Toast.makeText(this, "Требуется вход в аккаунт Яндекс", Toast.LENGTH_LONG).show()
@@ -134,7 +140,6 @@ class DiagnosticsActivity : AppCompatActivity() {
             return
         }
 
-        // Собираем логи
         val logsDir = Logger.getLogsDirectory()
         if (logsDir == null || !logsDir.exists()) {
             Toast.makeText(this, "Папка логов не найдена", Toast.LENGTH_SHORT).show()
@@ -156,12 +161,10 @@ class DiagnosticsActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                // Формируем содержимое: склейка всех файлов с разделителями
                 val merged = withContext(Dispatchers.IO) {
                     buildMergedLogContent(logFiles)
                 }
 
-                // Формируем имя файла: baza_log_{user}_{yyyy-MM-dd_HH-mm-ss}.txt
                 val user = sanitizeFileName(
                     tokenStorage.getCurrentUser()
                         ?: tokenStorage.getUserDisplayName()
@@ -206,9 +209,6 @@ class DiagnosticsActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Склеивает все файлы логов в один String с разделителями.
-     */
     private fun buildMergedLogContent(files: List<File>): String {
         val sb = StringBuilder()
         val df = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -236,16 +236,10 @@ class DiagnosticsActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    /**
-     * Убираем из имени файла всё, что не буквы/цифры/._-
-     */
     private fun sanitizeFileName(name: String): String {
         return name.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
     }
 
-    /**
-     * Диалог с ProgressBar + текстом.
-     */
     private fun createProgressDialog(message: String): AlertDialog {
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
