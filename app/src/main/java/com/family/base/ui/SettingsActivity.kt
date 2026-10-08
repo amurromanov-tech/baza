@@ -89,7 +89,7 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, AppSettingsActivity::class.java))
         }
 
-        binding.cardAbout.setOnClickListener {
+        binding.btnAbout.setOnClickListener {
             Logger.log(TAG, "About clicked")
             startActivity(Intent(this, AboutActivity::class.java))
         }
