@@ -926,13 +926,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
                         }
                     }
-
-                    // 🆕 v13.2.0 (B-8): выгрузка истории после items
-                    val tHistory = System.currentTimeMillis()
-                    val uploadedHistory = repository.uploadAllHistoryToDisk()
-                    Logger.log(TAG, "TIMING: uploadAllHistoryToDisk took ${System.currentTimeMillis() - tHistory}ms, success=$uploadedHistory")
                 } else {
                     Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
+                }
+
+                // 🆕 v13.2.1: история выгружается ВСЕГДА, вне зависимости от pending.
+                // uploadAllHistoryToDisk делает merge (download + union) перед upload,
+                // поэтому порядок синка НЕ важен — никто ничего не затирает.
+                val tHistory = System.currentTimeMillis()
+                val uploadedHistory = repository.uploadAllHistoryToDisk()
+                Logger.log(TAG, "TIMING: uploadAllHistoryToDisk took ${System.currentTimeMillis() - tHistory}ms, success=$uploadedHistory")
+                if (uploadedHistory) {
+                    val freshLm = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                    if (freshLm != null && freshLm > 0L) {
+                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(freshLm) }
+                    }
                 }
 
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
@@ -1394,8 +1402,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // ---------- ИСТОРИЯ (🆕 v13.2.0 B-8) ----------
-            // История — журнал, union по id. Ничего не удаляем.
+            // ---------- ИСТОРИЯ ----------
+            // Union по id. Ничего не удаляем.
             if (historyError && diskHistory.isEmpty()) {
                 Logger.log(TAG, "mergeData: history download error — SKIP")
             } else if (diskHistory.isEmpty()) {
