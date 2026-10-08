@@ -192,6 +192,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Logger.log(TAG, "Error migrating old history entries: ${e.message}", e)
         }
+
+        // 🆕 v13.1.3: разовый сброс фейкового last_modified (9999999999999),
+        // который ставился как костыль для докачки фото. Из-за него
+        // diskModified (реальный timestamp) всегда < localModified, и download
+        // не запускался — новые предметы с других устройств не подтягивались.
+        try {
+            val lm = syncInfoDao.getLastModified()
+            if (lm >= 9999999999999L) {
+                Logger.log(TAG, "RESET fake last_modified ($lm) → 0")
+                syncInfoDao.setLastModified(0L)
+            } else {
+                Logger.log(TAG, "last_modified OK: $lm")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error resetting last_modified: ${e.message}")
+        }
     }
 
     // ============================================================
