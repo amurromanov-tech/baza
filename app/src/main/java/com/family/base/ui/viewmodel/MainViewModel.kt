@@ -980,36 +980,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
 
-                    val tUploadItems = System.currentTimeMillis()
-                    val uploadedItems = repository.uploadAllItemsToDisk()
-                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk #1 took ${System.currentTimeMillis() - tUploadItems}ms")
+                    // 🆕 v13.0.3 (B-7): УБРАН первый uploadAllItemsToDisk (#1).
+                    // Раньше было 3 полных заливки: #1 (до pending), pending, #2 (финальная).
+                    // #1 был лишним — pending и так заливает изменения. Оставлены только
+                    // папки (1 раз) и финальный items (после pending).
 
                     val tUploadFolders = System.currentTimeMillis()
                     val uploadedFolders = repository.uploadAllFoldersToDisk()
                     Logger.log(TAG, "TIMING: uploadAllFoldersToDisk took ${System.currentTimeMillis() - tUploadFolders}ms")
 
-                    Logger.log(TAG, "syncWithDisk: full upload items=$uploadedItems, folders=$uploadedFolders")
+                    Logger.log(TAG, "syncWithDisk: full upload folders=$uploadedFolders")
 
                     val tPending = System.currentTimeMillis()
                     uploadedCount = processPendingChangesInternal()
                     Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
 
-                    if (uploadedCount > 0 || !uploadedItems) {
-                        val tFinal = System.currentTimeMillis()
-                        val refreshed = repository.uploadAllItemsToDisk()
-                        Logger.log(TAG, "TIMING: uploadAllItemsToDisk #2 (final) took ${System.currentTimeMillis() - tFinal}ms, success=$refreshed")
-                        if (refreshed) {
-                            val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                            if (fresh != null && fresh > 0L) {
-                                withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
-                            }
-                        }
-                    } else {
-                        if (uploadedItems || uploadedFolders) {
-                            val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                            if (fresh != null && fresh > 0L) {
-                                withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
-                            }
+                    // Финальный upload items — 1 раз, после pending.
+                    // Нужен, потому что applyItemChange заливает фото, но не сам JSON.
+                    val tFinal = System.currentTimeMillis()
+                    val refreshed = repository.uploadAllItemsToDisk()
+                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk (final) took ${System.currentTimeMillis() - tFinal}ms, success=$refreshed")
+                    if (refreshed) {
+                        val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                        if (fresh != null && fresh > 0L) {
+                            withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
                         }
                     }
                 } else {
@@ -1051,14 +1045,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val nothingChanged = (pendingCount == 0)
-                    && (diskLastModified != null)
-                    && (diskLastModified <= localLastModified)
-
+                // 🆕 v13.0.3: фото-блок теперь ВСЕГДА проверяет недокачанные фото,
+                // даже если данные не менялись. Раньше при nothingChanged=true
+                // syncImages() пропускался, и фото не докачивались.
                 val tPhotoBlock = System.currentTimeMillis()
-                if (nothingChanged) {
-                    Logger.log(TAG, "syncWithDisk: nothing changed → SKIP all photo checks")
-                } else {
+                if (pendingCount > 0) {
                     val tUploadImages = System.currentTimeMillis()
                     uploadUnsyncedImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - tUploadImages}ms")
@@ -1066,15 +1057,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val tUploadFolderImages = System.currentTimeMillis()
                     uploadUnsyncedFolderImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
-
-                    val tSyncImages = System.currentTimeMillis()
-                    syncImages()
-                    Logger.log(TAG, "TIMING: syncImages took ${System.currentTimeMillis() - tSyncImages}ms")
-
-                    val tSyncFolderImages = System.currentTimeMillis()
-                    syncFolderImages()
-                    Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
                 }
+                // syncImages() и syncFolderImages() вызываются ВСЕГДА — они сами
+                // проверяют, что нужно скачать (только недокачанные фото/иконки).
+                val tSyncImages = System.currentTimeMillis()
+                syncImages()
+                Logger.log(TAG, "TIMING: syncImages took ${System.currentTimeMillis() - tSyncImages}ms")
+
+                val tSyncFolderImages = System.currentTimeMillis()
+                syncFolderImages()
+                Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
+
                 Logger.log(TAG, "TIMING: photo block total took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
                 finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
@@ -1399,6 +1392,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 🆕 v13.0.3: теперь mergeData удаляет локальные записи, которых нет на Диске.
+     *
+     * Логика:
+     *  1. Сливаем скачанные данные (добавляем/обновляем) — как раньше.
+     *  2. Дополнительно: если на Диске новее, чем локально (diskLastModified > localLastModified),
+     *     то записи, которых нет на Диске, считаются удалёнными — удаляем их локально.
+     *     Это исправляет баг, когда удалённый на одном устройстве предмет
+     *     оставался на других устройствах навсегда.
+     *
+     * ВАЖНО: удаляем только если НЕ было ошибки скачивания (foldersError/itemsError == false)
+     *        и диск реально новее локального состояния.
+     */
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -1409,6 +1415,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
 
+            val diskLastModified = repository.getDiskLastModified() ?: 0L
+            val localLastModified = syncInfoDao.getLastModified()
+            val diskIsNewer = diskLastModified > localLastModified && diskLastModified > 0L
+
+            // ---------- ПАПКИ ----------
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
             } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
@@ -1426,8 +1437,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         db.folderDao().updateFolder(merged)
                     }
                 }
+
+                // 🆕 Удаляем локальные папки, которых нет на Диске (если диск новее)
+                if (diskIsNewer) {
+                    val diskFolderIds = diskFolders.map { it.id }.toSet()
+                    val localOnlyFolders = db.folderDao().getAllFolders().filter { it.id !in diskFolderIds }
+                    for (folder in localOnlyFolders) {
+                        if (folder.updatedAt < diskLastModified) {
+                            Logger.log(TAG, "mergeData: DELETING local-only folder ${folder.id} '${folder.name}'")
+                            db.folderDao().deleteFolderById(folder.id)
+                        }
+                    }
+                }
             }
 
+            // ---------- ПРЕДМЕТЫ ----------
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
             } else if (diskItems.isEmpty() && localItemsCount > 0) {
@@ -1445,16 +1469,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         db.itemDao().updateItem(merged)
                     }
                 }
+
+                // 🆕 Удаляем локальные предметы, которых нет на Диске (если диск новее)
+                if (diskIsNewer) {
+                    val appContext = getApplication<Application>().applicationContext
+                    val diskItemIds = diskItems.map { it.id }.toSet()
+                    val localOnlyItems = db.itemDao().getAllItemsRaw().filter { it.id !in diskItemIds }
+                    for (item in localOnlyItems) {
+                        if (item.updatedDate < diskLastModified) {
+                            Logger.log(TAG, "mergeData: DELETING local-only item ${item.id} '${item.name}'")
+                            db.itemDao().deleteItem(item)
+                            ImageUtils.deleteLocalImage(appContext, item.id)
+                        }
+                    }
+                }
             }
 
-            val diskLastModified = repository.getDiskLastModified()
-            val localLastModified = syncInfoDao.getLastModified()
-            if (diskLastModified != null && diskLastModified > localLastModified) {
+            // Обновляем last_modified, если диск новее
+            if (diskIsNewer) {
                 syncInfoDao.setLastModified(diskLastModified)
             }
         }
     }
 
+    /**
+     * 🆕 v13.0.3: processPendingChangesInternal теперь проверяет результат
+     * applyItemChange / applyFolderChange. Если операция НЕ удалась —
+     * запись НЕ удаляется из очереди, а остаётся для следующей попытки.
+     *
+     * Раньше: запись удалялась всегда, даже при ошибке. Это приводило
+     * к молчаливой потере изменений (например, фото не залилось, но
+     * pending очистился).
+     */
     private suspend fun processPendingChangesInternal(): Int {
         val pending = syncQueueDao.getAllPending()
         if (pending.isEmpty()) return 0
@@ -1481,14 +1527,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 val tEntry = System.currentTimeMillis()
-                when (entry.entityType) {
+                val success: Boolean = when (entry.entityType) {
                     "folder" -> applyFolderChange(entry)
                     "item" -> applyItemChange(entry)
+                    else -> false
                 }
-                Logger.log(TAG, "TIMING: applyChange for ${entry.entityType}/${entry.entityId} took ${System.currentTimeMillis() - tEntry}ms")
+                Logger.log(TAG, "TIMING: applyChange for ${entry.entityType}/${entry.entityId} took ${System.currentTimeMillis() - tEntry}ms, success=$success")
 
-                syncQueueDao.removeFromQueueById(entry.id)
-                successCount++
+                if (success) {
+                    syncQueueDao.removeFromQueueById(entry.id)
+                    successCount++
+                } else {
+                    Logger.log(TAG, "Pending entry ${entry.id} (${entry.entityType}/${entry.action}) FAILED, keeping in queue")
+                }
             } catch (e: Exception) {
                 Logger.log(TAG, "Failed to process pending entry ${entry.id} (${entry.entityType}/${entry.action}): ${e.message}")
             }
@@ -1496,49 +1547,75 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return successCount
     }
 
-    private suspend fun applyFolderChange(entry: SyncQueueEntity) {
-        when (entry.action) {
-            "create" -> db.folderDao().getFolderById(entry.entityId)?.let {
-                repository.createFolderOnDisk(it)
-                val appContext = getApplication<Application>().applicationContext
-                val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${it.id}")
-                if (localFile != null && localFile.exists() && it.iconUrl.isNullOrEmpty()) {
-                    try {
-                        val success = repository.uploadFolderImage(it.id, localFile.readBytes())
-                        if (success) {
-                            val updated = it.copy(iconUrl = "folder_${it.id}.jpg")
-                            db.folderDao().updateFolder(updated)
-                            repository.updateFolderOnDisk(updated)
+    /**
+     * 🆕 v13.0.3: возвращает Boolean — успех операции.
+     * Раньше возвращала Unit, и результат игнорировался.
+     */
+    private suspend fun applyFolderChange(entry: SyncQueueEntity): Boolean {
+        return try {
+            when (entry.action) {
+                "create" -> {
+                    val folder = db.folderDao().getFolderById(entry.entityId) ?: return false
+                    val diskSuccess = repository.createFolderOnDisk(folder)
+                    val appContext = getApplication<Application>().applicationContext
+                    val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
+                    if (localFile != null && localFile.exists() && folder.iconUrl.isNullOrEmpty()) {
+                        try {
+                            val imgSuccess = repository.uploadFolderImage(folder.id, localFile.readBytes())
+                            if (imgSuccess) {
+                                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                                db.folderDao().updateFolder(updated)
+                                repository.updateFolderOnDisk(updated)
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "applyFolderChange: upload folder image failed: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "applyFolderChange: upload folder image failed: ${e.message}")
                     }
+                    diskSuccess
                 }
+                "update" -> {
+                    val folder = db.folderDao().getFolderById(entry.entityId) ?: return false
+                    val fresh = folder.copy(updatedAt = System.currentTimeMillis())
+                    db.folderDao().updateFolder(fresh)
+                    repository.updateFolderOnDisk(fresh)
+                }
+                "delete" -> repository.deleteFolderOnDisk(entry.entityId)
+                else -> false
             }
-            "update" -> db.folderDao().getFolderById(entry.entityId)?.let {
-                val fresh = it.copy(updatedAt = System.currentTimeMillis())
-                db.folderDao().updateFolder(fresh)
-                repository.updateFolderOnDisk(fresh)
-            }
-            "delete" -> repository.deleteFolderOnDisk(entry.entityId)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyFolderChange error: ${e.message}")
+            false
         }
     }
 
-    private suspend fun applyItemChange(entry: SyncQueueEntity) {
-        when (entry.action) {
-            "create" -> db.itemDao().getItemById(entry.entityId)?.let {
-                val t2 = System.currentTimeMillis()
-                uploadItemImageIfExists(it)
-                Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
+    /**
+     * 🆕 v13.0.3: возвращает Boolean — успех операции.
+     */
+    private suspend fun applyItemChange(entry: SyncQueueEntity): Boolean {
+        return try {
+            when (entry.action) {
+                "create" -> {
+                    val item = db.itemDao().getItemById(entry.entityId) ?: return false
+                    val t2 = System.currentTimeMillis()
+                    uploadItemImageIfExists(item)
+                    Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
+                    true
+                }
+                "update" -> {
+                    val item = db.itemDao().getItemById(entry.entityId) ?: return false
+                    val fresh = item.copy(updatedDate = System.currentTimeMillis())
+                    db.itemDao().updateItem(fresh)
+                    val t2 = System.currentTimeMillis()
+                    uploadItemImageIfExists(fresh)
+                    Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
+                    true
+                }
+                "delete" -> repository.deleteItemOnDisk(entry.entityId)
+                else -> false
             }
-            "update" -> db.itemDao().getItemById(entry.entityId)?.let {
-                val fresh = it.copy(updatedDate = System.currentTimeMillis())
-                db.itemDao().updateItem(fresh)
-                val t2 = System.currentTimeMillis()
-                uploadItemImageIfExists(fresh)
-                Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
-            }
-            "delete" -> repository.deleteItemOnDisk(entry.entityId)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyItemChange error: ${e.message}")
+            false
         }
     }
 
