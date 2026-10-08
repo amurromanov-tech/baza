@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.family.base.R
 import com.family.base.data.local.entity.HistoryEntry
+import com.family.base.data.model.SubtypeCatalog
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -20,6 +21,11 @@ import java.util.Locale
  *  - ENTRY  — запись истории
  *
  * Группировка по дате (changedAt) в порядке убывания (новые сверху).
+ *
+ * 🆕 v12: косметика отображения:
+ *  - "unknown_user" / "user" / "Пользователь" → «❓ Без автора»
+ *  - сырые коды типов ("thing", "food", "medicine", "other") в тексте
+ *    oldValue/newValue заменяются на человекочитаемые через SubtypeCatalog
  */
 class HistoryAdapter(
     private val onItemClick: (HistoryEntry) -> Unit
@@ -33,6 +39,16 @@ class HistoryAdapter(
     companion object {
         private const val TYPE_HEADER = 0
         private const val TYPE_ENTRY = 1
+
+        private const val ANON_USER_LABEL = "❓ Без автора"
+
+        // Карта сырых кодов типов → человекочитаемые названия
+        private val TYPE_MAP = mapOf(
+            "thing" to "📦 Предмет",
+            "food" to "🍎 Еда",
+            "medicine" to "💊 Лекарство",
+            "other" to "🗂 Другое"
+        )
     }
 
     sealed class Row {
@@ -70,9 +86,6 @@ class HistoryAdapter(
     // КЛЮЧИ ДАТ
     // ============================================================
 
-    /**
-     * Уникальный ключ даты в формате YYYY-MM-DD — для группировки.
-     */
     private fun dateKeyOf(timestamp: Long): String {
         val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
         val y = cal.get(Calendar.YEAR)
@@ -81,9 +94,6 @@ class HistoryAdapter(
         return "%04d-%02d-%02d".format(y, m, d)
     }
 
-    /**
-     * Человекочитаемый заголовок: «Сегодня», «Вчера» или «01.10.2026».
-     */
     private fun headerTitleOf(timestamp: Long): String {
         val today = Calendar.getInstance()
         val target = Calendar.getInstance().apply { timeInMillis = timestamp }
@@ -165,91 +175,146 @@ class HistoryAdapter(
 
             tvChange.text = buildChangeText(entry)
 
-            tvUser.text = "👤 ${entry.changedBy}"
+            // 🆕 v12: косметика пользователя
+            tvUser.text = "👤 ${displayUser(entry.changedBy)}"
             tvTime.text = timeFormat.format(Date(entry.changedAt))
 
             itemView.setOnClickListener { onItemClick(entry) }
         }
 
+        /**
+         * 🆕 v12: анонимизация старых пользователей.
+         */
+        private fun displayUser(raw: String?): String {
+            if (raw.isNullOrBlank()) return ANON_USER_LABEL
+            return when (raw.lowercase()) {
+                "unknown_user", "user", "пользователь", "—" -> ANON_USER_LABEL
+                else -> raw
+            }
+        }
+
         private fun buildChangeText(entry: HistoryEntry): String {
             val action = entry.action
 
+            // 🆕 v12: для старых записей подменяем сырые коды
+            val oldValue = entry.oldValue?.let { replaceRawCodes(it) }
+            val newValue = entry.newValue?.let { replaceRawCodes(it) }
+
             return when {
                 action == "create" -> {
-                    "Создан${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "Создан${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "update" -> {
-                    if (!entry.newValue.isNullOrEmpty()) {
-                        entry.newValue
-                    } else if (!entry.oldValue.isNullOrEmpty()) {
-                        "${entry.oldValue} → ${entry.newValue ?: "—"}"
+                    if (!newValue.isNullOrEmpty()) {
+                        newValue
+                    } else if (!oldValue.isNullOrEmpty()) {
+                        "$oldValue → ${newValue ?: "—"}"
                     } else {
                         "Изменён"
                     }
                 }
                 action == "delete" -> {
-                    "Удалён${if (!entry.oldValue.isNullOrEmpty()) " (${entry.oldValue})" else ""}"
+                    "Удалён${if (!oldValue.isNullOrEmpty()) " ($oldValue)" else ""}"
                 }
                 action == "archive" -> {
-                    "📦 В архив${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "📦 В архив${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "unarchive" -> {
-                    "↩️ Из архива${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "↩️ Из архива${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "unarchive_part" -> {
-                    "↩️ Возврат части: ${entry.oldValue ?: ""} → ${entry.newValue ?: ""}"
+                    "↩️ Возврат части: ${oldValue ?: ""} → ${newValue ?: ""}"
                 }
                 action == "write_off" -> {
-                    "🧴 Списано${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "🧴 Списано${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "write_off_part" -> {
-                    "🧴 Частичное списание: ${entry.oldValue ?: ""} → ${entry.newValue ?: ""}"
+                    "🧴 Частичное списание: ${oldValue ?: ""} → ${newValue ?: ""}"
                 }
                 action == "quantity_change" -> {
-                    "📦 Количество: ${entry.oldValue ?: "?"} → ${entry.newValue ?: "?"}"
+                    "📦 Количество: ${oldValue ?: "?"} → ${newValue ?: "?"}"
                 }
                 action == "revision" -> {
-                    "🔍 Ревизия: ${entry.newValue ?: ""}"
+                    "🔍 Ревизия: ${newValue ?: ""}"
                 }
                 action == "lend" -> {
-                    "🤝 Выдан${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "🤝 Выдан${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "return" -> {
                     "✅ Возвращён"
                 }
                 action == "move" -> {
-                    "📁 Перемещён${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "📁 Перемещён${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "move_folder" -> {
-                    "📁 Папка перемещена${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "📁 Папка перемещена${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "split_in" -> {
-                    "✂️ Отделено: ${entry.newValue ?: ""}"
+                    "✂️ Отделено: ${newValue ?: ""}"
                 }
                 action == "split_out" -> {
-                    "✂️ Отдано: ${entry.newValue ?: ""}"
+                    "✂️ Отдано: ${newValue ?: ""}"
                 }
                 action == "create_folder" -> {
-                    "📁 Создана папка${if (!entry.newValue.isNullOrEmpty()) ": ${entry.newValue}" else ""}"
+                    "📁 Создана папка${if (!newValue.isNullOrEmpty()) ": $newValue" else ""}"
                 }
                 action == "rename_folder" -> {
-                    "📝 Папка: «${entry.oldValue ?: ""}» → «${entry.newValue ?: ""}»"
+                    "📝 Папка: «${oldValue ?: ""}» → «${newValue ?: ""}»"
                 }
                 action == "delete_folder" -> {
-                    "🗑 Папка удалена${if (!entry.oldValue.isNullOrEmpty()) " (${entry.oldValue})" else ""}"
+                    "🗑 Папка удалена${if (!oldValue.isNullOrEmpty()) " ($oldValue)" else ""}"
                 }
                 action == "add_nested_folder" -> {
-                    "📁 Вложенная папка: ${entry.newValue ?: ""}"
+                    "📁 Вложенная папка: ${newValue ?: ""}"
                 }
                 action == "detach_children" -> {
-                    "🔗 Отвязано детей: ${entry.newValue ?: "0"}"
+                    "🔗 Отвязано детей: ${newValue ?: "0"}"
                 }
                 else -> {
                     buildString {
-                        if (!entry.oldValue.isNullOrEmpty()) append("${entry.oldValue} → ")
-                        append(entry.newValue ?: action)
+                        if (!oldValue.isNullOrEmpty()) append("$oldValue → ")
+                        append(newValue ?: action)
                     }
                 }
+            }
+        }
+
+        /**
+         * 🆕 v12: заменяет сырые коды в тексте на человекочитаемые.
+         * Работает и для типов ("thing" → "📦 Предмет"), и для подтипов
+         * ("furniture" → "🪑 Мебель") через SubtypeCatalog.
+         */
+        private fun replaceRawCodes(text: String): String {
+            var result = text
+
+            // --- Типы ---
+            TYPE_MAP.forEach { (code, display) ->
+                result = replaceWholeWord(result, code, display)
+            }
+
+            // --- Подтипы (из SubtypeCatalog) ---
+            try {
+                for (type in listOf("food", "medicine", "thing", "other")) {
+                    val subtypes = SubtypeCatalog.getSubtypes(type)
+                    subtypes.forEach { subtype ->
+                        if (subtype.key.isNotEmpty()) {
+                            result = replaceWholeWord(result, subtype.key, subtype.displayName)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // тихо игнорируем — некритично
+            }
+
+            return result
+        }
+
+        private fun replaceWholeWord(text: String, word: String, replacement: String): String {
+            if (word.isEmpty()) return text
+            return try {
+                text.replace(Regex("\\b${Regex.escape(word)}\\b"), replacement)
+            } catch (e: Exception) {
+                text
             }
         }
 
