@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="6dp">
+
+    <TextView
+        android:id="@+id/tvHeaderDate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Сегодня"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:textColor="?android:attr/textColorSecondary"
+        android:letterSpacing="0.05"
+        android:background="#10000000"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp" />
+
+</FrameLayout>
