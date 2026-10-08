@@ -26,8 +26,11 @@ class CatalogRepository(private val db: AppDatabase) {
     private val TAG = "CatalogRepository"
     private val DEFAULT_FOLDER_NAME = "BAZA"
 
-    private val ITEMS_FILENAME = "items.json.bak"
-    private val FOLDERS_FILENAME = "folders.json.bak"
+    // 🆕 v13.0.3: убраны суффиксы .bak — возвращены стандартные имена файлов.
+    // Раньше было "items.json.bak" / "folders.json.bak" для ускорения загрузки,
+    // но это создавало рассинхрон между устройствами с разными сборками.
+    private val ITEMS_FILENAME = "items.json"
+    private val FOLDERS_FILENAME = "folders.json"
 
     private var folderPathCache: String? = null
 
