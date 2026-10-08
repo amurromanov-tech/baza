@@ -105,6 +105,32 @@
             android:layout_marginBottom="24dp" />
 
         <!-- ============================================================ -->
+        <!-- СЕКЦИЯ: ИСТОРИЯ ИЗМЕНЕНИЙ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ИСТОРИЯ ИЗМЕНЕНИЙ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnHistory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📜 История" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Кто, что и когда добавил, изменил, переместил, заархивировал или удалил"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ============================================================ -->
         <!-- ИНФОРМАЦИЯ -->
         <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
