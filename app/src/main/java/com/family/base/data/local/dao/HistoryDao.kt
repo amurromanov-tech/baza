@@ -143,4 +143,62 @@ interface HistoryDao {
         ORDER BY changedAt DESC
     """)
     suspend fun getEntriesForItem(itemId: String): List<HistoryEntry>
+
+    // ============================================================
+    // 🆕 МИГРАЦИЯ СТАРЫХ ЗАПИСЕЙ (v12)
+    // ============================================================
+
+    /**
+     * Найти все записи, у которых itemName = NULL — их надо заполнить.
+     * Возвращает id + itemId, чтобы в Kotlin-коде найти имя из items.
+     */
+    @Query("""
+        SELECT * FROM history 
+        WHERE itemName IS NULL 
+        ORDER BY changedAt DESC
+    """)
+    suspend fun getEntriesWithoutItemName(): List<HistoryEntry>
+
+    /**
+     * Найти записи, где action содержит сырые коды типов в oldValue/newValue.
+     * Например: "Тип: thing, подтип: furniture".
+     */
+    @Query("""
+        SELECT * FROM history 
+        WHERE (oldValue LIKE '%Тип: %' OR newValue LIKE '%Тип: %')
+          AND (oldValue LIKE '%thing%' OR oldValue LIKE '%food%' OR oldValue LIKE '%medicine%' OR oldValue LIKE '%other%'
+            OR newValue LIKE '%thing%' OR newValue LIKE '%food%' OR newValue LIKE '%medicine%' OR newValue LIKE '%other%')
+        ORDER BY changedAt DESC
+    """)
+    suspend fun getEntriesWithRawTypeCodes(): List<HistoryEntry>
+
+    /**
+     * Обновить одну запись — itemName, oldValue, newValue.
+     * Не трогает action/changedBy/changedAt.
+     */
+    @Query("""
+        UPDATE history 
+        SET itemName = :itemName, 
+            oldValue = :oldValue, 
+            newValue = :newValue 
+        WHERE id = :entryId
+    """)
+    suspend fun updateEntryFields(
+        entryId: String,
+        itemName: String?,
+        oldValue: String?,
+        newValue: String?
+    )
+
+    /**
+     * Установить itemName для одной записи (когда остальное трогать не надо).
+     */
+    @Query("UPDATE history SET itemName = :itemName WHERE id = :entryId")
+    suspend fun updateItemName(entryId: String, itemName: String)
+
+    /**
+     * Сколько записей ещё без itemName (для прогресса миграции).
+     */
+    @Query("SELECT COUNT(*) FROM history WHERE itemName IS NULL")
+    suspend fun countEntriesWithoutItemName(): Int
 }
