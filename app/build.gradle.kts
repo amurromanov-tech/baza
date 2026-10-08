@@ -15,8 +15,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 102  // увеличивать при каждом обновлении
-        versionName = "13.1.2"   // версия для пользователя
+        versionCode = 103  // увеличивать при каждом обновлении
+        versionName = "13.1.3"   // версия для пользователя
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
     }
