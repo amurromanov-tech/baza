@@ -63,7 +63,7 @@ dependencies {
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
     // ===== SECURITY (стабильная версия) =====
-    implementation("androidx.security:security-crypto:1.0.0")
+  implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // ===== ROOM =====
     implementation("androidx.room:room-runtime:2.6.1")
