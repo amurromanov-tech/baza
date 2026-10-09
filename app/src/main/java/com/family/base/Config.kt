@@ -38,8 +38,9 @@ object Config {
 
     /**
      * Имя APK-файла в публичной папке Яндекс.Диска.
+     * v14.1.2: перешли на release-подпись, файл называется app-release.apk
      */
-    const val APK_FILE_NAME = "/app-debug.apk"
+    const val APK_FILE_NAME = "/app-release.apk"
 
     // ============================================================
     // ПОЛЬЗОВАТЕЛИ (users.json на Яндекс.Диске)
