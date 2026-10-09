@@ -10,6 +10,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
 import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.repository.CatalogRepository
+import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getInstance(application)
     private val repository = CatalogRepository(db)
+    private val taskRepository = TaskRepository(application.applicationContext, db)
     private val tokenStorage = TokenStorage(application)
     private val lockDao = db.lockDao()
     private val syncQueueDao = db.syncQueueDao()
@@ -120,6 +122,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
+        }
+
+        // 🆕 v14: гарантируем существование системной папки «🏠 Домашние дела»
+        try {
+            taskRepository.ensureSystemFolder(currentUser)
+            Logger.log(TAG, "checkFirstLaunch: system folder 'home_tasks' ensured")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error ensuring system folder: ${e.message}")
         }
 
         try {
@@ -876,11 +886,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadResult.folders,
                         downloadResult.items,
                         downloadResult.history,
+                        downloadResult.tasks,
                         downloadResult.foldersError,
                         downloadResult.itemsError,
-                        downloadResult.historyError
+                        downloadResult.historyError,
+                        downloadResult.tasksError
                     )
-                    downloadedCount = downloadResult.folders.size + downloadResult.items.size + downloadResult.history.size
+                    downloadedCount = downloadResult.folders.size +
+                        downloadResult.items.size +
+                        downloadResult.history.size +
+                        downloadResult.tasks.size
 
                     val tPhotoBlock = System.currentTimeMillis()
                     syncImages()
@@ -930,13 +945,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
                 }
 
-                // 🆕 v13.2.1: история выгружается ВСЕГДА, вне зависимости от pending.
-                // uploadAllHistoryToDisk делает merge (download + union) перед upload,
-                // поэтому порядок синка НЕ важен — никто ничего не затирает.
+                // 🆕 v13.2.1: история выгружается ВСЕГДА.
                 val tHistory = System.currentTimeMillis()
                 val uploadedHistory = repository.uploadAllHistoryToDisk()
                 Logger.log(TAG, "TIMING: uploadAllHistoryToDisk took ${System.currentTimeMillis() - tHistory}ms, success=$uploadedHistory")
                 if (uploadedHistory) {
+                    val freshLm = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
+                    if (freshLm != null && freshLm > 0L) {
+                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(freshLm) }
+                    }
+                }
+
+                // 🆕 v14: задачи выгружаются ВСЕГДА, merge-then-upload.
+                val tTasks = System.currentTimeMillis()
+                val uploadedTasks = repository.uploadAllTasksToDisk()
+                Logger.log(TAG, "TIMING: uploadAllTasksToDisk took ${System.currentTimeMillis() - tTasks}ms, success=$uploadedTasks")
+                if (uploadedTasks) {
                     val freshLm = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
                     if (freshLm != null && freshLm > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(freshLm) }
@@ -961,13 +985,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadResult.folders,
                         downloadResult.items,
                         downloadResult.history,
+                        downloadResult.tasks,
                         downloadResult.foldersError,
                         downloadResult.itemsError,
-                        downloadResult.historyError
+                        downloadResult.historyError,
+                        downloadResult.tasksError
                     )
                     Logger.log(TAG, "TIMING: mergeData took ${System.currentTimeMillis() - tMerge}ms")
 
-                    downloadedCount = downloadResult.folders.size + downloadResult.items.size + downloadResult.history.size
+                    downloadedCount = downloadResult.folders.size +
+                        downloadResult.items.size +
+                        downloadResult.history.size +
+                        downloadResult.tasks.size
 
                     if (diskLastModified != null && diskLastModified > 0L) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
@@ -1326,9 +1355,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
         diskHistory: List<HistoryEntry>,
+        diskTasks: List<TaskEntity>,
         foldersError: Boolean,
         itemsError: Boolean,
-        historyError: Boolean
+        historyError: Boolean,
+        tasksError: Boolean
     ) {
         withContext(Dispatchers.IO) {
             val localFoldersCount = db.folderDao().getAllFolders().size
@@ -1361,6 +1392,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders().filter { it.id !in diskFolderIds }
                     for (folder in localOnlyFolders) {
+                        if (folder.isSystem) {
+                            Logger.log(TAG, "mergeData: KEEPING system folder ${folder.id} '${folder.name}' (never delete)")
+                            continue
+                        }
                         if (folder.updatedAt < diskLastModified) {
                             Logger.log(TAG, "mergeData: DELETING local-only folder ${folder.id} '${folder.name}'")
                             db.folderDao().deleteFolderById(folder.id)
@@ -1403,7 +1438,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // ---------- ИСТОРИЯ ----------
-            // Union по id. Ничего не удаляем.
             if (historyError && diskHistory.isEmpty()) {
                 Logger.log(TAG, "mergeData: history download error — SKIP")
             } else if (diskHistory.isEmpty()) {
@@ -1417,6 +1451,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     Logger.log(TAG, "mergeData: history already up to date (local=${localIds.size}, disk=${diskHistory.size})")
                 }
+            }
+
+            // ---------- ЗАДАЧИ ----------
+            // Union по id, конфликты по updatedAt. Удаления — по флагу isDeleted
+            // (задача с isDeleted=true с Диска должна примениться локально тоже).
+            if (tasksError && diskTasks.isEmpty()) {
+                Logger.log(TAG, "mergeData: tasks download error — SKIP")
+            } else if (diskTasks.isEmpty()) {
+                Logger.log(TAG, "mergeData: disk tasks empty — nothing to merge")
+            } else {
+                val localTasks = db.taskDao().getAllForSync()
+                val localMap = localTasks.associateBy { it.id }
+                var insertedCount = 0
+                var updatedCount = 0
+
+                diskTasks.forEach { diskTask ->
+                    val local = localMap[diskTask.id]
+                    if (local == null) {
+                        db.taskDao().insert(diskTask)
+                        insertedCount++
+                    } else if (diskTask.updatedAt > local.updatedAt) {
+                        db.taskDao().update(diskTask)
+                        updatedCount++
+                    }
+                }
+                Logger.log(TAG, "mergeData: tasks merged (inserted=$insertedCount, updated=$updatedCount, local=${localTasks.size}, disk=${diskTasks.size})")
             }
 
             if (diskIsNewer) {
@@ -2168,6 +2228,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
                 if (folder != null) {
+                    if (folder.isSystem) {
+                        Logger.log(TAG, "renameFolder: BLOCKED for system folder $folderId")
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                getApplication(),
+                                "Системную папку нельзя переименовать",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@launch
+                    }
                     val oldName = folder.name
                     val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
                     db.folderDao().updateFolder(updated)
@@ -2205,6 +2276,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val folder = db.folderDao().getFolderById(folderId)
+
+                if (folder?.isSystem == true) {
+                    Logger.log(TAG, "deleteFolder: BLOCKED for system folder $folderId")
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Системную папку нельзя удалить",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    return@launch
+                }
 
                 db.itemDao().moveItemsToRoot(folderId)
                 db.folderDao().moveSubfoldersToRoot(folderId)
@@ -2269,6 +2352,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val folder = db.folderDao().getFolderById(folderId)
                 if (folder == null) {
                     Logger.log(TAG, "moveFolder: folder not found $folderId")
+                    return@launch
+                }
+
+                if (folder.isSystem) {
+                    Logger.log(TAG, "moveFolder: BLOCKED for system folder $folderId")
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Системную папку нельзя переместить",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     return@launch
                 }
 
@@ -2623,6 +2718,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteFolderSafely(folderId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
+                val folder = db.folderDao().getFolderById(folderId)
+                if (folder?.isSystem == true) {
+                    Logger.log(TAG, "deleteFolderSafely: BLOCKED for system folder $folderId")
+                    withContext(Dispatchers.Main) { onError("Системную папку нельзя удалить") }
+                    return@launch
+                }
+
                 val folderCount = withContext(Dispatchers.IO) {
                     db.folderDao().getSubfolderCountInFolder(folderId)
                 }
@@ -2638,7 +2740,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                val folder = db.folderDao().getFolderById(folderId)
                 if (folder == null) {
                     withContext(Dispatchers.Main) { onError("Папка не найдена") }
                     return@launch
