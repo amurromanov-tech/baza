@@ -8,6 +8,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -23,7 +24,6 @@ import com.family.base.util.TaskReminderScheduler
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,7 +34,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Экран «🏠 Домашние дела».
+ * Экран «Домашние дела».
  *
  * Показывает список задач с фильтрами (Активные / Выполненные / Все),
  * позволяет создавать, редактировать, удалять, отмечать выполненными.
@@ -168,7 +168,7 @@ class TaskListActivity : AppCompatActivity() {
                     result?.second?.let { clone ->
                         Toast.makeText(
                             this@TaskListActivity,
-                            "🔁 Создана следующая: ${clone.title}",
+                            "Создана следующая: ${clone.title}",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -220,8 +220,8 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
-        // 🆕 v14.1.0: напоминания
-        val switchReminder = view.findViewById<MaterialSwitch>(R.id.switchReminder)
+        // v14.1.0: напоминания
+        val switchReminder = view.findViewById<SwitchCompat>(R.id.switchReminder)
         val layoutReminderTime = view.findViewById<View>(R.id.layoutReminderTime)
         val textReminderTime = view.findViewById<TextView>(R.id.textReminderTime)
         val btnPickReminderTime = view.findViewById<View>(R.id.btnPickReminderTime)
@@ -288,7 +288,7 @@ class TaskListActivity : AppCompatActivity() {
         }
 
         // ============================================================
-        // 🆕 v14.1.0: НАПОМИНАНИЯ
+        // v14.1.0: НАПОМИНАНИЯ
         // ============================================================
 
         fun updateReminderTimeLabel() {
@@ -380,7 +380,7 @@ class TaskListActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 🆕 v14.1.0: применить настройку напоминаний
+                        // v14.1.0: применить настройку напоминаний
                         applyReminderSetting(switchReminder.isChecked)
 
                         dialog.dismiss()
@@ -412,14 +412,14 @@ class TaskListActivity : AppCompatActivity() {
                 if (!wasEnabled) {
                     Toast.makeText(
                         this,
-                        "🔔 Напоминания включены (${TaskReminderPreferences.getTimeLabel(this)})",
+                        "Напоминания включены (${TaskReminderPreferences.getTimeLabel(this)})",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
             } else {
                 TaskReminderScheduler.cancel(this)
                 if (wasEnabled) {
-                    Toast.makeText(this, "🔕 Напоминания выключены", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Напоминания выключены", Toast.LENGTH_SHORT).show()
                 }
             }
         } catch (e: Exception) {
