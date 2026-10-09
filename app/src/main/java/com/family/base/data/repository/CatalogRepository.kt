@@ -29,6 +29,15 @@ class CatalogRepository(private val db: AppDatabase) {
     private val ITEMS_FILENAME = "items.json"
     private val FOLDERS_FILENAME = "folders.json"
     private val HISTORY_FILENAME = "history.json"
+    private val TASKS_FILENAME = "tasks.json"
+
+    /**
+     * Репозиторий задач — используется для merge-синка tasks.json
+     * и для проверок системной папки.
+     */
+    private val taskRepository: TaskRepository by lazy {
+        TaskRepository(BaseApplication.getAppContext(), db)
+    }
 
     private var folderPathCache: String? = null
 
@@ -101,8 +110,42 @@ class CatalogRepository(private val db: AppDatabase) {
         return folder
     }
 
+    /**
+     * Удаление папки.
+     * ⚠️ Системные папки (isSystem = true) удалять НЕЛЬЗЯ.
+     */
     suspend fun deleteFolder(folderId: String) {
+        val folder = db.folderDao().getFolderById(folderId)
+        if (folder?.isSystem == true) {
+            Logger.log(TAG, "deleteFolder: BLOCKED for system folder $folderId")
+            return
+        }
         db.folderDao().deleteFolderById(folderId)
+    }
+
+    /**
+     * Обновление папки.
+     * ⚠️ Системные папки можно обновлять только внутри (updatedAt),
+     * но НЕ менять name / parentId / isSystem.
+     */
+    suspend fun updateFolderSafe(updated: FolderEntity) {
+        val existing = db.folderDao().getFolderById(updated.id)
+        if (existing?.isSystem == true) {
+            // Разрешаем менять только updatedAt (и, при необходимости, path/icon),
+            // но защищаем name, parentId, parentItemId, isSystem, systemKey.
+            val safe = updated.copy(
+                name = existing.name,
+                parentId = existing.parentId,
+                parentItemId = existing.parentItemId,
+                isSystem = existing.isSystem,
+                systemKey = existing.systemKey,
+                path = existing.path
+            )
+            db.folderDao().updateFolder(safe)
+            Logger.log(TAG, "updateFolderSafe: system folder $${updated.id} — protected fields unchanged")
+            return
+        }
+        db.folderDao().updateFolder(updated)
     }
 
     // ============================================================
@@ -572,20 +615,10 @@ class CatalogRepository(private val db: AppDatabase) {
 
     /**
      * 🆕 v13.2.1: merge-then-upload истории.
-     *
-     * Алгоритм:
-     *  1. Скачиваем history.json с Диска.
-     *  2. Union по id: диск ∪ локальные.
-     *  3. Заливаем объединение обратно на Диск.
-     *  4. Локально добавляем недостающие (те, что только на Диске).
-     *  5. Обновляем last_modified.
-     *
-     * Так порядок синка НЕ важен — никто никого не затирает.
      */
     suspend fun uploadAllHistoryToDisk(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                // 1. Скачиваем текущую историю с Диска
                 val auth = getAuthHeader()
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -613,7 +646,6 @@ class CatalogRepository(private val db: AppDatabase) {
                     emptyList()
                 }
 
-                // 2. Union: берём все локальные + те с Диска, которых нет локально
                 val localHistory = db.historyDao().getAllEntries()
                 val localIds = localHistory.map { it.id }.toSet()
                 val diskOnly = diskHistory.filter { it.id !in localIds }
@@ -621,7 +653,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
                 Logger.log(TAG, "uploadAllHistoryToDisk: local=${localHistory.size}, disk=${diskHistory.size}, merged=${merged.size}, diskOnly=${diskOnly.size}")
 
-                // 3. Заливаем объединение
                 val json = gson.toJson(merged)
                 val success = uploadJsonWithToken("data/$HISTORY_FILENAME", json)
                 if (!success) {
@@ -629,7 +660,6 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext false
                 }
 
-                // 4. Локально добавляем недостающие (diskOnly)
                 if (diskOnly.isNotEmpty()) {
                     try {
                         db.historyDao().insertAll(diskOnly)
@@ -639,7 +669,6 @@ class CatalogRepository(private val db: AppDatabase) {
                     }
                 }
 
-                // 5. Обновляем last_modified
                 val lm = updateLastModifiedWithToken()
                 if (!lm) {
                     Logger.log(TAG, "uploadAllHistoryToDisk: json OK, but last_modified FAILED")
@@ -650,6 +679,103 @@ class CatalogRepository(private val db: AppDatabase) {
                 true
             } catch (e: Exception) {
                 Logger.log(TAG, "uploadAllHistoryToDisk error: ${e.message}")
+                false
+            }
+        }
+    }
+
+    /**
+     * 🆕 v14: merge-then-upload задач.
+     *
+     * Алгоритм идентичен истории:
+     *  1. Скачиваем tasks.json с Диска.
+     *  2. Union по id: локальные ∪ диск.
+     *  3. При конфликте версий (одинаковый id) — побеждает более свежий updatedAt.
+     *  4. Заливаем объединение.
+     *  5. Локально добавляем diskOnly.
+     *  6. Обновляем last_modified.
+     */
+    suspend fun uploadAllTasksToDisk(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val auth = getAuthHeader()
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val tasksPath = "$rootPath/data/$TASKS_FILENAME"
+
+                // 1. Скачиваем tasks.json
+                val diskTasks: List<TaskEntity> = try {
+                    if (auth != null && !isDnsBlocked()) {
+                        val urlResponse = api.getDiskDownloadUrl(auth, tasksPath)
+                        if (urlResponse.isSuccessful) {
+                            val href = urlResponse.body()?.href
+                            if (href != null) {
+                                val downloadResponse = api.downloadFile(href)
+                                if (downloadResponse.isSuccessful) {
+                                    val json = downloadResponse.body()?.string()
+                                    if (!json.isNullOrEmpty()) {
+                                        val type = object : TypeToken<List<TaskEntity>>() {}.type
+                                        gson.fromJson<List<TaskEntity>>(json, type) ?: emptyList()
+                                    } else emptyList()
+                                } else emptyList()
+                            } else emptyList()
+                        } else emptyList()
+                    } else emptyList()
+                } catch (e: Exception) {
+                    Logger.log(TAG, "uploadAllTasksToDisk: download failed, using local only: ${e.message}")
+                    emptyList()
+                }
+
+                // 2. Union по id с разрешением конфликтов по updatedAt
+                val localTasks = taskRepository.getAllForSync()
+                val localMap = localTasks.associateBy { it.id }
+                val diskMap = diskTasks.associateBy { it.id }
+
+                val allIds = (localMap.keys + diskMap.keys)
+                val merged = allIds.mapNotNull { id ->
+                    val l = localMap[id]
+                    val d = diskMap[id]
+                    when {
+                        l == null -> d
+                        d == null -> l
+                        else -> if (l.updatedAt >= d.updatedAt) l else d
+                    }
+                }
+
+                // diskOnly — те, что есть на Диске, но нет локально
+                val diskOnly = diskTasks.filter { it.id !in localMap.keys }
+
+                Logger.log(TAG, "uploadAllTasksToDisk: local=${localTasks.size}, disk=${diskTasks.size}, merged=${merged.size}, diskOnly=${diskOnly.size}")
+
+                // 3. Заливаем объединение
+                val json = gson.toJson(merged)
+                val success = uploadJsonWithToken("data/$TASKS_FILENAME", json)
+                if (!success) {
+                    Logger.log(TAG, "uploadAllTasksToDisk: failed (json upload)")
+                    return@withContext false
+                }
+
+                // 4. Локально добавляем diskOnly (игнорируем конфликты)
+                if (diskOnly.isNotEmpty()) {
+                    try {
+                        taskRepository.insertAllIgnore(diskOnly)
+                        Logger.log(TAG, "uploadAllTasksToDisk: locally inserted ${diskOnly.size} new tasks")
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "uploadAllTasksToDisk: local insert failed: ${e.message}")
+                    }
+                }
+
+                // 5. last_modified
+                val lm = updateLastModifiedWithToken()
+                if (!lm) {
+                    Logger.log(TAG, "uploadAllTasksToDisk: json OK, but last_modified FAILED")
+                    return@withContext false
+                }
+
+                Logger.log(TAG, "uploadAllTasksToDisk: success (merged ${merged.size})")
+                true
+            } catch (e: Exception) {
+                Logger.log(TAG, "uploadAllTasksToDisk error: ${e.message}")
                 false
             }
         }
@@ -816,11 +942,13 @@ class CatalogRepository(private val db: AppDatabase) {
         val folders: List<FolderEntity>,
         val items: List<ItemEntity>,
         val history: List<HistoryEntry>,
+        val tasks: List<TaskEntity>,
         val foldersError: Boolean,
         val itemsError: Boolean,
-        val historyError: Boolean
+        val historyError: Boolean,
+        val tasksError: Boolean
     ) {
-        val hasAnyError: Boolean get() = foldersError || itemsError || historyError
+        val hasAnyError: Boolean get() = foldersError || itemsError || historyError || tasksError
     }
 
     suspend fun downloadDataFromDisk(): DownloadResult {
@@ -828,11 +956,17 @@ class CatalogRepository(private val db: AppDatabase) {
             try {
                 if (isDnsBlocked()) {
                     Logger.log(TAG, "downloadDataFromDisk: DNS blocked")
-                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
+                    return@withContext DownloadResult(
+                        emptyList(), emptyList(), emptyList(), emptyList(),
+                        true, true, true, true
+                    )
                 }
                 val auth = getAuthHeader()
                 if (auth == null) {
-                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
+                    return@withContext DownloadResult(
+                        emptyList(), emptyList(), emptyList(), emptyList(),
+                        true, true, true, true
+                    )
                 }
                 val api = YandexDiskApi.getInstance()
                 val rootPath = getRootPath()
@@ -846,22 +980,33 @@ class CatalogRepository(private val db: AppDatabase) {
                 val historyResult = downloadJsonFileSafe<HistoryEntry>(api, auth, "$rootPath/data/$HISTORY_FILENAME")
                 Logger.log(TAG, "Downloaded ${historyResult.data.size} history entries (error=${historyResult.error})")
 
+                val tasksResult = downloadJsonFileSafe<TaskEntity>(api, auth, "$rootPath/data/$TASKS_FILENAME")
+                Logger.log(TAG, "Downloaded ${tasksResult.data.size} tasks (error=${tasksResult.error})")
+
                 DownloadResult(
                     folders = foldersResult.data,
                     items = itemsResult.data,
                     history = historyResult.data,
+                    tasks = tasksResult.data,
                     foldersError = foldersResult.error,
                     itemsError = itemsResult.error,
-                    historyError = historyResult.error
+                    historyError = historyResult.error,
+                    tasksError = tasksResult.error
                 )
             } catch (e: Exception) {
                 if (isDnsError(e)) {
                     noteDnsFailure()
                     Logger.log(TAG, "DNS failure in downloadDataFromDisk: ${e.message}")
-                    return@withContext DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
+                    return@withContext DownloadResult(
+                        emptyList(), emptyList(), emptyList(), emptyList(),
+                        true, true, true, true
+                    )
                 }
                 Logger.log(TAG, "Error downloadDataFromDisk: ${e.message}")
-                DownloadResult(emptyList(), emptyList(), emptyList(), true, true, true)
+                DownloadResult(
+                    emptyList(), emptyList(), emptyList(), emptyList(),
+                    true, true, true, true
+                )
             }
         }
     }
@@ -891,6 +1036,7 @@ class CatalogRepository(private val db: AppDatabase) {
             val type = when {
                 path.contains("folders") -> object : TypeToken<List<FolderEntity>>() {}.type
                 path.contains("history") -> object : TypeToken<List<HistoryEntry>>() {}.type
+                path.contains("tasks") -> object : TypeToken<List<TaskEntity>>() {}.type
                 else -> object : TypeToken<List<ItemEntity>>() {}.type
             }
             val parsed: List<T> = gson.fromJson(json, type) ?: emptyList()
