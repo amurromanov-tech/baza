@@ -214,5 +214,83 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
+        <!-- ============================================================ -->
+        <!-- 🆕 v14.1.0: НАПОМИНАНИЕ -->
+        <!-- ============================================================ -->
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:background="?android:attr/listDivider" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switchReminder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="🔔 Напоминать о делах"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/textReminderDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Раз в день присылать уведомление о задачах с дедлайном сегодня или завтра."
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11sp" />
+
+        <LinearLayout
+            android:id="@+id/layoutReminderTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Время напоминания"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/textReminderTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="09:00"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="14sp"
+                tools:text="09:00" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPickReminderTime"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:text="🕐" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/textReminderHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Настройка общая для всех задач. Уведомление появится, если есть задачи с дедлайном сегодня или завтра."
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11sp"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
     </LinearLayout>
 </ScrollView>
