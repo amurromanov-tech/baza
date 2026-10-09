@@ -20,6 +20,25 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // ============================================================
+    // 🆕 v14.1.0: RELEASE-ПОДПИСЬ (постоянный keystore)
+    // Читает секреты из переменных окружения (GitHub Secrets).
+    // Если секретов нет (локальная сборка) — release подписывается debug-ключом.
+    // ============================================================
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/baza-upload-key.jks"
+            val keystoreFile = file(keystorePath)
+
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("KEY_ALIAS") ?: ""
+                keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -27,6 +46,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+
+            // 🆕 v14.1.0: подключаем release-подпись, если keystore доступен.
+            // Иначе — fallback на debug (для локальной сборки без секретов).
+            val releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning?.storeFile != null) {
+                signingConfig = releaseSigning
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 
