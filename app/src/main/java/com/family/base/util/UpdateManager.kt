@@ -163,26 +163,24 @@ class UpdateManager(private val context: Context) {
 
         Logger.log(TAG, "Direct APK URL: $directUrl")
 
-        // Папка для сохранения APK — внешняя папка приложения (не требует WRITE_EXTERNAL_STORAGE)
+        // v14.1.3: DownloadManager сам создаёт файл в приватной папке Downloads/.
+        // setDestinationUri(Uri.fromFile) на Android 10+ не работает — DownloadManager
+        // не имеет права писать file:// URI в приватную папку приложения.
         val fileName = "baza_$versionName.apk"
-        val downloadDir = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            "updates"
-        )
-        if (!downloadDir.exists()) downloadDir.mkdirs()
 
-        val file = File(downloadDir, fileName)
-        if (file.exists()) file.delete()
-
-        Logger.log(TAG, "Saving APK to: ${file.absolutePath}")
+        Logger.log(TAG, "Saving APK as: $fileName (Downloads)")
 
         val request = DownloadManager.Request(Uri.parse(directUrl))
             .setTitle("Обновление БАЗА")
             .setDescription("Загрузка версии $versionName...")
-            .setDestinationUri(Uri.fromFile(file))
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
+            .setDestinationInExternalFilesDir(
+                context,
+                Environment.DIRECTORY_DOWNLOADS,
+                fileName
+            )
 
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val downloadId = manager.enqueue(request)
@@ -200,8 +198,26 @@ class UpdateManager(private val context: Context) {
                     when (status) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
                             isDownloading = false
-                            Logger.log(TAG, "Download SUCCESS, starting install")
-                            installApk(file)
+                            Logger.log(TAG, "Download SUCCESS")
+
+                            // Получаем URI скачанного файла через DownloadManager —
+                            // это правильный способ на Android 10+ вместо Uri.fromFile(file)
+                            val downloadedUri = manager.getUriForDownloadedFile(downloadId)
+                            if (downloadedUri != null) {
+                                Logger.log(TAG, "Downloaded URI: $downloadedUri")
+                                installApkFromUri(downloadedUri)
+                            } else {
+                                Logger.log(TAG, "Downloaded URI is null, falling back to file path")
+                                val file = File(
+                                    context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+                                    fileName
+                                )
+                                if (file.exists()) {
+                                    installApk(file)
+                                } else {
+                                    Logger.log(TAG, "Fallback file does not exist either")
+                                }
+                            }
                         }
                         DownloadManager.STATUS_FAILED -> {
                             isDownloading = false
@@ -217,7 +233,28 @@ class UpdateManager(private val context: Context) {
     }
 
     // ============================================================
-    // УСТАНОВКА APK
+    // УСТАНОВКА APK (по URI от DownloadManager)
+    // ============================================================
+    private fun installApkFromUri(uri: Uri) {
+        Logger.log(TAG, "=== installApkFromUri START ===")
+        Logger.log(TAG, "URI: $uri")
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            Logger.log(TAG, "Install intent started")
+        } else {
+            Logger.log(TAG, "No activity to handle install intent")
+        }
+    }
+
+    // ============================================================
+    // УСТАНОВКА APK (по File — fallback)
     // ============================================================
     private fun installApk(file: File) {
         Logger.log(TAG, "=== installApk START ===")
@@ -235,17 +272,6 @@ class UpdateManager(private val context: Context) {
             file
         )
 
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-
-        if (intent.resolveActivity(context.packageManager) != null) {
-            context.startActivity(intent)
-            Logger.log(TAG, "Install intent started")
-        } else {
-            Logger.log(TAG, "No activity to handle install intent")
-        }
+        installApkFromUri(uri)
     }
 }
