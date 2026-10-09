@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginStart="12dp"
@@ -8,7 +9,6 @@
     android:layout_marginTop="4dp"
     android:layout_marginBottom="4dp"
     android:foreground="?android:attr/selectableItemBackground"
-    app:cardBackgroundColor="?attr/colorSurface"
     app:cardCornerRadius="10dp"
     app:cardElevation="1dp">
 
@@ -96,14 +96,14 @@
             tools:text="Из «Пятёрочки», взять 2 буханки"
             tools:visibility="visible" />
 
-        <!-- Меню (⋮) -->
+        <!-- Меню (⋮) — встроенная Android-иконка -->
         <ImageButton
             android:id="@+id/buttonMenu"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="Меню задачи"
-            android:src="@drawable/ic_more_vert"
+            android:src="@android:drawable/ic_menu_more"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
