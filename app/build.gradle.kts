@@ -14,6 +14,9 @@ android {
         versionCode = 110
         versionName = "14.1.0"
 
+        // 🆕 OAuth redirect scheme для AppAuth (Яндекс) — обязательно!
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -63,9 +66,6 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     annotationProcessor("androidx.room:room-compiler:2.6.1")
-    // Для Kotlin используем kapt
-    // Если у тебя подключён kotlin-kapt:
-    // kapt("androidx.room:room-compiler:2.6.1")
 
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
