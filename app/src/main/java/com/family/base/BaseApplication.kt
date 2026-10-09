@@ -76,20 +76,20 @@ class BaseApplication : Application(), ImageLoaderFactory {
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
 
-        // 🆕 v14.1: канал уведомлений для напоминаний о задачах
-        try {
-            createTaskReminderChannel()
-        } catch (e: Exception) {
-            Logger.log("BaseApplication", "Failed to create notification channel: ${e.message}")
-        }
+       // 🆕 v14.1: канал уведомлений для напоминаний о задачах
+// try {
+//     createTaskReminderChannel()
+// } catch (e: Exception) {
+//     Logger.log("BaseApplication", "Failed to create notification channel: ${e.message}")
+// }
 
-        // 🆕 v14.1: планировщик напоминаний
-        try {
-            TaskReminderScheduler.schedule(this)
-            Logger.log("BaseApplication", "TaskReminderScheduler scheduled")
-        } catch (e: Exception) {
-            Logger.log("BaseApplication", "Failed to schedule task reminders: ${e.message}")
-        }
+// 🆕 v14.1: планировщик напоминаний
+// try {
+//     TaskReminderScheduler.schedule(this)
+//     Logger.log("BaseApplication", "TaskReminderScheduler scheduled")
+// } catch (e: Exception) {
+//     Logger.log("BaseApplication", "Failed to schedule task reminders: ${e.message}")
+// }
     }
 
     /**
