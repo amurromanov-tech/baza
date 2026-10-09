@@ -11,23 +11,14 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 110
-        versionName = "14.1.0"
+        versionCode = 111
+        versionName = "14.1.1"
 
-        // OAuth redirect scheme для AppAuth (Яндекс)
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // ============================================================
-    // 🆕 Release-подпись (фиксированный keystore)
-    // ============================================================
-    // Пароли и путь читаются из переменных окружения,
-    // которые задаёт GitHub Actions (см. .github/workflows/build.yml).
-    //
-    // Локально, если переменных нет — подпись не применяется,
-    // и сборка идёт как обычно (debug-подпись Android Studio).
     signingConfigs {
         create("release") {
             val keystorePath = System.getenv("KEYSTORE_PATH")
@@ -47,14 +38,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Если keystore передан — используем release-подпись
             if (System.getenv("KEYSTORE_PATH") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
         debug {
-            // 🆕 debug-сборки тоже подписываем тем же release-ключом,
-            // чтобы обновления ставились поверх без «приложение не установлено»
             if (System.getenv("KEYSTORE_PATH") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -105,8 +93,7 @@ dependencies {
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ===== WORKMANAGER =====
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    // 🗑 WORKMANAGER — УДАЛЕНО (v14.1.1 откат напоминаний)
 
     // ===== IMAGES =====
     implementation("io.coil-kt:coil:2.4.0")
