@@ -1,5 +1,9 @@
 name: Android CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     branches: [ main ]
@@ -65,8 +69,16 @@ jobs:
         git add version.json
         if git diff --cached --quiet; then
           echo "No changes to version.json"
-        else
-          git commit -m "chore: version ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})"
-          git pull --rebase origin main
-          git push
+          exit 0
         fi
+        git commit -m "chore: version ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})"
+        
+        # Retry push с rebase — защита от гонки
+        for i in 1 2 3; do
+          if git pull --rebase origin main && git push; then
+            echo "Push successful on attempt $i"
+            break
+          fi
+          echo "Push failed, retrying ($i)..."
+          sleep 5
+        done
