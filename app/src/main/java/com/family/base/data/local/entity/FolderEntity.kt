@@ -32,5 +32,37 @@ data class FolderEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val path: String,
     val iconUrl: String? = null,
-    val iconThumbnailUrl: String? = null
-)
+    val iconThumbnailUrl: String? = null,
+
+    // ===== СИСТЕМНАЯ ПАПКА =====
+
+    /**
+     * Является ли папка системной.
+     * Системные папки нельзя удалять, перемещать, переименовывать,
+     * архивировать. В UI скрываются соответствующие кнопки.
+     *
+     * Пример: «🏠 Домашние дела».
+     */
+    val isSystem: Boolean = false,
+
+    /**
+     * Ключ системной папки.
+     * NULL — для обычных папок.
+     * "home_tasks" — для папки «🏠 Домашние дела».
+     *
+     * Используется для поиска системной папки при старте приложения
+     * (upsert, если её нет) и для перехвата клика в MainActivity.
+     */
+    val systemKey: String? = null
+) {
+    companion object {
+        const val SYSTEM_KEY_HOME_TASKS = "home_tasks"
+
+        /**
+         * Фиксированный id системной папки «Домашние дела».
+         * НЕ UUID — чтобы на всех устройствах это была одна и та же папка
+         * и синк через folders.json не создавал дубликатов.
+         */
+        const val SYSTEM_ID_HOME_TASKS = "system-folder-home-tasks"
+    }
+}
