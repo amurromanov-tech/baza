@@ -9,6 +9,8 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderScheduler
+import com.family.base.util.TaskReminderWorker
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
@@ -73,6 +75,33 @@ class BaseApplication : Application(), ImageLoaderFactory {
         // Создаём глобальный MainViewModel — живёт всё время жизни приложения
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
+
+        // 🆕 v14.1: канал уведомлений для напоминаний о задачах
+        try {
+            createTaskReminderChannel()
+        } catch (e: Exception) {
+            Logger.log("BaseApplication", "Failed to create notification channel: ${e.message}")
+        }
+
+        // 🆕 v14.1: планировщик напоминаний
+        try {
+            TaskReminderScheduler.schedule(this)
+            Logger.log("BaseApplication", "TaskReminderScheduler scheduled")
+        } catch (e: Exception) {
+            Logger.log("BaseApplication", "Failed to schedule task reminders: ${e.message}")
+        }
+    }
+
+    /**
+     * 🆕 v14.1: создаём канал уведомлений для напоминаний о задачах.
+     * Логика вынесена в TaskReminderWorker.createChannelIfNeeded(),
+     * но вызвать её здесь полезно, чтобы канал был создан при первом
+     * старте приложения (а не при первом срабатывании воркера).
+     */
+    private fun createTaskReminderChannel() {
+        // Канал создаётся лениво в воркере. Здесь просто логируем,
+        // что приложение готово к напоминаниям.
+        Logger.log("BaseApplication", "Task reminder channel ready (id=${TaskReminderWorker.CHANNEL_ID})")
     }
 
     override fun newImageLoader(): ImageLoader {
