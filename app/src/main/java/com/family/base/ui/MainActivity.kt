@@ -218,10 +218,28 @@ class MainActivity : AppCompatActivity() {
         supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
         adapter = CatalogAdapter(
-            onFolderClick = { folder -> navigateToFolder(folder) },
+            onFolderClick = { folder ->
+                if (folder.isSystem) {
+                    // 🆕 v14: системная папка → TaskListActivity
+                    Logger.log(TAG, "onFolderClick: opening TaskListActivity for system folder")
+                    startActivity(Intent(this, TaskListActivity::class.java))
+                } else {
+                    navigateToFolder(folder)
+                }
+            },
             onItemClick = { item -> openItemDetail(item) },
             onFolderLongClick = { folder ->
-                if (!isGuestMode()) showFolderContextMenu(folder)
+                if (folder.isSystem) {
+                    // 🆕 Системную папку нельзя переименовать/удалить/переместить
+                    Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
+                    Toast.makeText(
+                        this,
+                        "Системная папка — действия недоступны",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else if (!isGuestMode()) {
+                    showFolderContextMenu(folder)
+                }
             },
             onItemLongClick = { item ->
                 if (!isGuestMode()) showItemContextMenu(item)
@@ -233,6 +251,8 @@ class MainActivity : AppCompatActivity() {
         viewModel.currentEntries.observe(this) { entries ->
             adapter.submitList(entries)
             updatePathTitle()
+            // 🆕 v14: подгружаем счётчик активных задач для системной папки
+            loadSystemFolderTaskCount()
         }
         viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
         viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
@@ -295,6 +315,20 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
         })
+    }
+
+    // ============================================================
+    // 🆕 v14: СЧЁТЧИК АКТИВНЫХ ЗАДАЧ
+    // ============================================================
+    private fun loadSystemFolderTaskCount() {
+        lifecycleScope.launch {
+            try {
+                val count = withContext(Dispatchers.IO) { db.taskDao().getActiveCount() }
+                adapter.setSystemFolderTaskCount(count)
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadSystemFolderTaskCount error: ${e.message}")
+            }
+        }
     }
 
     // ============================================================
@@ -585,6 +619,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showFolderContextMenu(folder: FolderEntity) {
+        // 🆕 v14: страховка — системную папку не трогаем
+        if (folder.isSystem) {
+            Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val items = arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
         AlertDialog.Builder(this)
             .setTitle("Действия с папкой")
@@ -986,6 +1026,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
+        // 🆕 v14: страховка
+        if (folder.isSystem) {
+            Toast.makeText(this, "Системную папку нельзя переименовать", Toast.LENGTH_SHORT).show()
+            return
+        }
         val editText = EditText(this).apply { setText(folder.name) }
         AlertDialog.Builder(this)
             .setTitle("Переименовать папку")
@@ -1001,6 +1046,12 @@ class MainActivity : AppCompatActivity() {
     // УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
     // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
+        // 🆕 v14: страховка — системную папку не удаляем
+        if (folder.isSystem) {
+            Toast.makeText(this, "Системную папку нельзя удалить", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
             val total = folderCount + itemCount
 
@@ -1041,11 +1092,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun changeFolderImage(folder: FolderEntity) {
+        // 🆕 v14: страховка
+        if (folder.isSystem) {
+            Toast.makeText(this, "Системную папку нельзя менять", Toast.LENGTH_SHORT).show()
+            return
+        }
         currentFolderForImage = folder
         pickExistingFolderImageLauncher.launch("image/*")
     }
 
     private fun showFolderStats(folder: FolderEntity) {
+        // 🆕 v14: для системной папки — статистика задач
+        if (folder.isSystem) {
+            lifecycleScope.launch {
+                try {
+                    val active = withContext(Dispatchers.IO) { db.taskDao().getActiveCount() }
+                    val all = withContext(Dispatchers.IO) { db.taskDao().getAllForSync().size }
+                    val done = all - active
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Статистика «${folder.name}»")
+                        .setMessage(
+                            "📋 Активных: $active\n" +
+                            "✅ Выполненных: ${done.coerceAtLeast(0)}\n" +
+                            "📊 Всего: $all"
+                        )
+                        .setPositiveButton("OK", null)
+                        .show()
+                } catch (e: Exception) {
+                    Logger.log(TAG, "showFolderStats (system) error: ${e.message}")
+                }
+            }
+            return
+        }
+
         lifecycleScope.launch {
             viewModel.getFolderStats(folder.id) { stats ->
                 val (itemCount, folderCount) = stats
@@ -1062,6 +1141,12 @@ class MainActivity : AppCompatActivity() {
     // B-6: ПЕРЕМЕЩЕНИЕ ПАПКИ (полное дерево, пара id)
     // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
+        // 🆕 v14: страховка
+        if (folder.isSystem) {
+            Toast.makeText(this, "Системную папку нельзя переместить", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         Logger.log(
             TAG,
             "Show move folder dialog: ${folder.name}, " +
