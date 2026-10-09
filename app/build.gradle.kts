@@ -11,24 +11,12 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 111
-        versionName = "14.1.1"
+        versionCode = 109
+        versionName = "14.0.3"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    signingConfigs {
-        create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH")
-            if (!keystorePath.isNullOrEmpty() && file(keystorePath).exists()) {
-                storeFile = file(keystorePath)
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-                keyAlias = System.getenv("KEY_ALIAS") ?: ""
-                keyPassword = System.getenv("KEY_PASSWORD") ?: ""
-            }
-        }
     }
 
     buildTypes {
@@ -38,14 +26,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (System.getenv("KEYSTORE_PATH") != null) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-        }
-        debug {
-            if (System.getenv("KEYSTORE_PATH") != null) {
-                signingConfig = signingConfigs.getByName("release")
-            }
         }
     }
 
@@ -92,8 +72,6 @@ dependencies {
 
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-
-    // 🗑 WORKMANAGER — УДАЛЕНО (v14.1.1 откат напоминаний)
 
     // ===== IMAGES =====
     implementation("io.coil-kt:coil:2.4.0")
