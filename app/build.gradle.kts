@@ -12,8 +12,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 109
-        versionName = "14.0.3"
+        versionCode = 110
+        versionName = "14.1.0"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
@@ -73,6 +73,9 @@ dependencies {
 
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // ===== WORKMANAGER (напоминания) =====
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // ===== IMAGES =====
     implementation("io.coil-kt:coil:2.4.0")
