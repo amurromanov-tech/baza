@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,14 +31,32 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
 
-    - name: Build APK
-      run: ./gradlew assembleDebug --no-daemon
+    # ============================================================
+    # 🆕 v14.1.0: RELEASE-ПОДПИСЬ
+    # Декодируем keystore из Base64 и кладём в app/baza-upload-key.jks
+    # ============================================================
+    - name: Decode keystore
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/baza-upload-key.jks
+        ls -la app/baza-upload-key.jks
+
+    # ============================================================
+    # 🆕 v14.1.0: СБОРКА RELEASE APK
+    # Передаём секреты в переменные окружения для build.gradle.kts
+    # ============================================================
+    - name: Build Release APK
+      env:
+        KEYSTORE_PATH: ${{ github.workspace }}/app/baza-upload-key.jks
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug
-        path: app/build/outputs/apk/debug/*.apk
+        name: app-release
+        path: app/build/outputs/apk/release/*.apk
 
     - name: Read version from build.gradle.kts
       id: version
@@ -67,6 +89,8 @@ jobs:
           echo "No changes to version.json"
         else
           git commit -m "chore: version ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})"
-          git pull --rebase origin main
-          git push
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push; then break; fi
+            sleep 5
+          done
         fi
