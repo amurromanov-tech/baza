@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 🆕 v14.1.0: для восстановления напоминаний после перезагрузки -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <queries>
@@ -51,6 +54,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- ============================================================ -->
+        <!-- 🆕 v14.1.0: RECEIVER ДЛЯ ВОССТАНОВЛЕНИЯ НАПОМИНАНИЙ -->
+        <!-- ============================================================ -->
+        <receiver
+            android:name=".util.BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- ============================================================ -->
         <!-- ГЛАВНЫЕ ACTIVITIES -->
