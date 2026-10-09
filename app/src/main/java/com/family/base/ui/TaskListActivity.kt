@@ -1,22 +1,15 @@
 package com.family.base.ui
 
-import android.Manifest
 import android.app.DatePickerDialog
-import android.app.TimePickerDialog
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
@@ -24,12 +17,9 @@ import com.family.base.data.local.entity.TaskEntity
 import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.adapter.TaskAdapter
 import com.family.base.util.Logger
-import com.family.base.util.TaskReminderPreferences
-import com.family.base.util.TaskReminderScheduler
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -46,7 +36,7 @@ import java.util.Locale
  * позволяет создавать, редактировать, удалять, отмечать выполненными.
  * Повторяющиеся задачи при выполнении автоматически создают клон.
  *
- * 🆕 v14.1: настройки напоминаний (⚙ в toolbar).
+ * v14.1.1: напоминания откачены (краш при старте). Настройки ⚙ убраны.
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -56,7 +46,6 @@ class TaskListActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var repository: TaskRepository
     private lateinit var tokenStorage: TokenStorage
-    private lateinit var reminderPrefs: TaskReminderPreferences
     private lateinit var adapter: TaskAdapter
 
     private lateinit var rvTasks: RecyclerView
@@ -76,22 +65,6 @@ class TaskListActivity : AppCompatActivity() {
             ?: tokenStorage.getUserDisplayName()
             ?: "Пользователь"
 
-    // ============================================================
-    // РАЗРЕШЕНИЕ НА УВЕДОМЛЕНИЯ (Android 13+)
-    // ============================================================
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        Logger.log(TAG, "POST_NOTIFICATIONS granted=$granted")
-        if (!granted) {
-            Toast.makeText(
-                this,
-                "Без разрешения напоминания не смогут показываться",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_task_list)
@@ -99,7 +72,6 @@ class TaskListActivity : AppCompatActivity() {
         db = AppDatabase.getInstance(this)
         repository = TaskRepository(applicationContext, db)
         tokenStorage = TokenStorage(this)
-        reminderPrefs = TaskReminderPreferences(this)
 
         rvTasks = findViewById(R.id.rvTasks)
         layoutEmpty = findViewById(R.id.layoutEmpty)
@@ -110,16 +82,9 @@ class TaskListActivity : AppCompatActivity() {
         chipDone = findViewById(R.id.chipDone)
         chipAll = findViewById(R.id.chipAll)
 
-        // Toolbar: кнопка «назад» = finish, кнопка ⚙ = настройки напоминаний
+        // Toolbar: кнопка «назад» = finish
         val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
         toolbar?.setNavigationOnClickListener { finish() }
-        toolbar?.inflateMenu(R.menu.menu_task_list)
-        toolbar?.setOnMenuItemClickListener { item ->
-            if (item.itemId == R.id.action_reminder_settings) {
-                showReminderSettingsDialog()
-                true
-            } else false
-        }
 
         adapter = TaskAdapter(
             onToggleDone = { task -> toggleDone(task) },
@@ -141,30 +106,12 @@ class TaskListActivity : AppCompatActivity() {
 
         fabAddTask.setOnClickListener { showEditDialog(null) }
 
-        // Запрос разрешения на уведомления (Android 13+)
-        requestNotificationPermissionIfNeeded()
-
         loadTasks()
     }
 
     override fun onResume() {
         super.onResume()
         loadTasks()
-    }
-
-    // ============================================================
-    // РАЗРЕШЕНИЕ
-    // ============================================================
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-
-        val granted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (!granted && reminderPrefs.isEnabled) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
     }
 
     // ============================================================
@@ -221,8 +168,6 @@ class TaskListActivity : AppCompatActivity() {
                         ).show()
                     }
                 }
-                // Напоминания могли измениться — решедул
-                TaskReminderScheduler.reschedule(this@TaskListActivity)
                 loadTasks()
             } catch (e: Exception) {
                 Logger.log(TAG, "toggleDone error: ${e.message}")
@@ -238,105 +183,12 @@ class TaskListActivity : AppCompatActivity() {
             .setPositiveButton("Удалить") { _, _ ->
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) { repository.softDelete(task.id) }
-                    TaskReminderScheduler.reschedule(this@TaskListActivity)
                     Toast.makeText(this@TaskListActivity, "Удалено", Toast.LENGTH_SHORT).show()
                     loadTasks()
                 }
             }
             .setNegativeButton("Отмена", null)
             .show()
-    }
-
-    // ============================================================
-    // НАСТРОЙКИ НАПОМИНАНИЙ
-    // ============================================================
-    private fun showReminderSettingsDialog() {
-        val view = layoutInflater.inflate(R.layout.dialog_task_reminder_settings, null)
-
-        val switchEnabled = view.findViewById<MaterialSwitch>(R.id.switchRemindersEnabled)
-        val textHour = view.findViewById<TextView>(R.id.textHour)
-        val btnPickHour = view.findViewById<View>(R.id.btnPickHour)
-        val chipGroup = view.findViewById<ChipGroup>(R.id.chipGroupDaysBefore)
-        val chipDays0 = view.findViewById<Chip>(R.id.chipDays0)
-        val chipDays1 = view.findViewById<Chip>(R.id.chipDays1)
-        val chipDays3 = view.findViewById<Chip>(R.id.chipDays3)
-        val chipDays7 = view.findViewById<Chip>(R.id.chipDays7)
-
-        // Заполняем текущие значения
-        switchEnabled.isChecked = reminderPrefs.isEnabled
-        textHour.text = String.format(Locale.getDefault(), "%02d:00", reminderPrefs.hour)
-        when (reminderPrefs.daysBefore) {
-            0 -> chipDays0.isChecked = true
-            1 -> chipDays1.isChecked = true
-            3 -> chipDays3.isChecked = true
-            7 -> chipDays7.isChecked = true
-            else -> chipDays0.isChecked = true
-        }
-
-        // Временные значения в диалоге
-        var pendingHour = reminderPrefs.hour
-
-        btnPickHour.setOnClickListener {
-            TimePickerDialog(
-                this,
-                { _, hourOfDay, _ ->
-                    pendingHour = hourOfDay
-                    textHour.text = String.format(Locale.getDefault(), "%02d:00", hourOfDay)
-                },
-                pendingHour,
-                0,
-                true
-            ).show()
-        }
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Настройки напоминаний")
-            .setView(view)
-            .setPositiveButton("Сохранить", null)
-            .setNegativeButton("Отмена", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val enabled = switchEnabled.isChecked
-                val daysBefore = when {
-                    chipDays1.isChecked -> 1
-                    chipDays3.isChecked -> 3
-                    chipDays7.isChecked -> 7
-                    else -> 0
-                }
-
-                reminderPrefs.isEnabled = enabled
-                reminderPrefs.hour = pendingHour
-                reminderPrefs.daysBefore = daysBefore
-
-                Logger.log(
-                    TAG,
-                    "Reminder settings saved: enabled=$enabled, hour=$pendingHour, daysBefore=$daysBefore"
-                )
-
-                if (enabled) {
-                    requestNotificationPermissionIfNeeded()
-                    TaskReminderScheduler.reschedule(this@TaskListActivity)
-                    Toast.makeText(
-                        this@TaskListActivity,
-                        "Напоминания включены (${String.format(Locale.getDefault(), "%02d:00", pendingHour)})",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                } else {
-                    TaskReminderScheduler.cancel(this@TaskListActivity)
-                    Toast.makeText(
-                        this@TaskListActivity,
-                        "Напоминания выключены",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-
-                dialog.dismiss()
-            }
-        }
-
-        dialog.show()
     }
 
     // ============================================================
@@ -479,8 +331,6 @@ class TaskListActivity : AppCompatActivity() {
                                 repository.updateTask(updated)
                             }
                         }
-                        // Напоминания могли измениться — решедул
-                        TaskReminderScheduler.reschedule(this@TaskListActivity)
                         dialog.dismiss()
                         loadTasks()
                     } catch (e: Exception) {
