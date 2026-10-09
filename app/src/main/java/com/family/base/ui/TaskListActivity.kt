@@ -1,6 +1,7 @@
 package com.family.base.ui
 
 import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.os.Bundle
 import android.view.View
 import android.widget.TextView
@@ -17,9 +18,12 @@ import com.family.base.data.local.entity.TaskEntity
 import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.adapter.TaskAdapter
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderPreferences
+import com.family.base.util.TaskReminderScheduler
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,7 +40,8 @@ import java.util.Locale
  * позволяет создавать, редактировать, удалять, отмечать выполненными.
  * Повторяющиеся задачи при выполнении автоматически создают клон.
  *
- * v14.1.1: напоминания откачены (краш при старте). Настройки ⚙ убраны.
+ * v14.1.0: возвращены напоминания — через WorkManager, глобальная настройка
+ * (одно время для всех задач). Секция «Напоминание» встроена в диалог задачи.
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -215,6 +220,13 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
+        // 🆕 v14.1.0: напоминания
+        val switchReminder = view.findViewById<MaterialSwitch>(R.id.switchReminder)
+        val layoutReminderTime = view.findViewById<View>(R.id.layoutReminderTime)
+        val textReminderTime = view.findViewById<TextView>(R.id.textReminderTime)
+        val btnPickReminderTime = view.findViewById<View>(R.id.btnPickReminderTime)
+        val textReminderHint = view.findViewById<TextView>(R.id.textReminderHint)
+
         var pendingDueDate: Long? = task?.dueDate
 
         fun updateDueDateLabel() {
@@ -275,6 +287,42 @@ class TaskListActivity : AppCompatActivity() {
             updateDueDateLabel()
         }
 
+        // ============================================================
+        // 🆕 v14.1.0: НАПОМИНАНИЯ
+        // ============================================================
+
+        fun updateReminderTimeLabel() {
+            textReminderTime.text = TaskReminderPreferences.getTimeLabel(this)
+        }
+
+        fun updateReminderVisibility() {
+            val visible = switchReminder.isChecked
+            layoutReminderTime.visibility = if (visible) View.VISIBLE else View.GONE
+            textReminderHint.visibility = if (visible) View.VISIBLE else View.GONE
+        }
+
+        // Инициализация из глобальных настроек
+        switchReminder.isChecked = TaskReminderPreferences.isEnabled(this)
+        updateReminderTimeLabel()
+        updateReminderVisibility()
+
+        switchReminder.setOnCheckedChangeListener { _, _ ->
+            updateReminderVisibility()
+        }
+
+        btnPickReminderTime.setOnClickListener {
+            val h = TaskReminderPreferences.getHour(this)
+            val m = TaskReminderPreferences.getMinute(this)
+            TimePickerDialog(
+                this,
+                { _, hour, minute ->
+                    TaskReminderPreferences.setTime(this, hour, minute)
+                    updateReminderTimeLabel()
+                },
+                h, m, true
+            ).show()
+        }
+
         val dialog = AlertDialog.Builder(this)
             .setTitle(if (task == null) "Новая задача" else "Редактировать задачу")
             .setView(view)
@@ -331,6 +379,10 @@ class TaskListActivity : AppCompatActivity() {
                                 repository.updateTask(updated)
                             }
                         }
+
+                        // 🆕 v14.1.0: применить настройку напоминаний
+                        applyReminderSetting(switchReminder.isChecked)
+
                         dialog.dismiss()
                         loadTasks()
                     } catch (e: Exception) {
@@ -342,5 +394,36 @@ class TaskListActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    /**
+     * Применить глобальную настройку напоминаний:
+     *  - сохранить в SharedPreferences
+     *  - перепланировать или отменить WorkManager
+     * Всё в try/catch — ошибка планировщика не должна ронять приложение.
+     */
+    private fun applyReminderSetting(enabled: Boolean) {
+        try {
+            val wasEnabled = TaskReminderPreferences.isEnabled(this)
+            TaskReminderPreferences.setEnabled(this, enabled)
+
+            if (enabled) {
+                TaskReminderScheduler.reschedule(this)
+                if (!wasEnabled) {
+                    Toast.makeText(
+                        this,
+                        "🔔 Напоминания включены (${TaskReminderPreferences.getTimeLabel(this)})",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                TaskReminderScheduler.cancel(this)
+                if (wasEnabled) {
+                    Toast.makeText(this, "🔕 Напоминания выключены", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyReminderSetting error: ${e.message}")
+        }
     }
 }
