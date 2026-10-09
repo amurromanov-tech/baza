@@ -76,7 +76,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Срочно" />
+                android:text="🔴 Срочно" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipHigh"
@@ -84,7 +84,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Важно" />
+                android:text="🟠 Важно" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipNormal"
@@ -93,7 +93,7 @@
                 android:layout_height="wrap_content"
                 android:checkable="true"
                 android:checked="true"
-                android:text="Обычно" />
+                android:text="🟡 Обычно" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipLow"
@@ -101,7 +101,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Не срочно" />
+                android:text="🟢 Не срочно" />
         </com.google.android.material.chip.ChipGroup>
 
         <!-- Дедлайн -->
@@ -139,7 +139,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:minWidth="0dp"
-                android:text="Дата" />
+                android:text="📅 Дата" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnClearDate"
@@ -147,7 +147,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:minWidth="0dp"
-                android:text="Сброс" />
+                android:text="✖ Сброс" />
         </LinearLayout>
 
         <!-- Повтор -->
@@ -183,7 +183,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Ежедневно" />
+                android:text="🔁 Ежедневно" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipRecWeekly"
@@ -191,7 +191,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Еженедельно" />
+                android:text="🔁 Еженедельно" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipRecMonthly"
@@ -199,7 +199,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
-                android:text="Ежемесячно" />
+                android:text="🔁 Ежемесячно" />
         </com.google.android.material.chip.ChipGroup>
 
         <!-- Подсказка про повтор -->
@@ -278,7 +278,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:minWidth="0dp"
-                android:text="Изменить" />
+                android:text="🕐 Изменить" />
         </LinearLayout>
 
         <TextView
