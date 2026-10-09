@@ -23,8 +23,23 @@ class CatalogAdapter(
 
     private var items: List<Any> = emptyList()
 
+    /**
+     * 🆕 v14: количество активных задач в системной папке «🏠 Домашние дела».
+     * Устанавливается из MainActivity после loadContents().
+     */
+    private var systemFolderTaskCount: Int = 0
+
     fun submitList(newItems: List<Any>) {
         items = newItems
+        notifyDataSetChanged()
+    }
+
+    /**
+     * 🆕 v14: обновить счётчик активных задач для системной папки.
+     */
+    fun setSystemFolderTaskCount(count: Int) {
+        if (systemFolderTaskCount == count) return
+        systemFolderTaskCount = count
         notifyDataSetChanged()
     }
 
@@ -44,25 +59,49 @@ class CatalogAdapter(
                 holder.icon.load(null)
                 holder.icon.setOnClickListener(null)   // сброс обработчика от предыдущего bind
 
-                val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
-                if (iconFile != null && iconFile.exists()) {
-                    holder.icon.load(iconFile) {
-                        crossfade(true)
-                        placeholder(R.drawable.ic_folder_default)
-                        error(R.drawable.ic_folder_default)
+                if (entry.isSystem) {
+                    // ===== СИСТЕМНАЯ ПАПКА «🏠 Домашние дела» =====
+                    // Всегда иконка 🏠, никакой локальной картинки
+                    holder.icon.load(R.drawable.ic_home) {
+                        placeholder(R.drawable.ic_home)
+                        error(R.drawable.ic_home)
                     }
+
+                    holder.name.text = entry.name
+                    holder.info.text = if (systemFolderTaskCount > 0) {
+                        "📋 $systemFolderTaskCount активных"
+                    } else {
+                        "📋 Нет активных задач"
+                    }
+                    holder.expiryInfo.visibility = View.GONE
+                    holder.lentInfo.visibility = View.GONE
+
+                    // Свой цвет полосы — colorPrimary
+                    holder.colorBar.setBackgroundColor(
+                        context.resources.getColor(R.color.colorPrimary, context.theme)
+                    )
                 } else {
-                    holder.icon.load(R.drawable.ic_folder_default)
+                    // ===== ОБЫЧНАЯ ПАПКА =====
+                    val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
+                    if (iconFile != null && iconFile.exists()) {
+                        holder.icon.load(iconFile) {
+                            crossfade(true)
+                            placeholder(R.drawable.ic_folder_default)
+                            error(R.drawable.ic_folder_default)
+                        }
+                    } else {
+                        holder.icon.load(R.drawable.ic_folder_default)
+                    }
+
+                    holder.name.text = entry.name
+                    holder.info.text = ""
+                    holder.expiryInfo.visibility = View.GONE
+                    holder.lentInfo.visibility = View.GONE
+
+                    holder.colorBar.setBackgroundColor(
+                        context.resources.getColor(R.color.colorNormal, context.theme)
+                    )
                 }
-
-                holder.name.text = entry.name
-                holder.info.text = ""
-                holder.expiryInfo.visibility = View.GONE
-                holder.lentInfo.visibility = View.GONE
-
-                holder.colorBar.setBackgroundColor(
-                    context.resources.getColor(R.color.colorNormal, context.theme)
-                )
 
                 holder.itemView.setOnClickListener { onFolderClick(entry) }
                 holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
