@@ -14,4 +14,8 @@
     <string name="settings_theme_dark">🌙 Тёмная тема</string>
     <string name="settings_theme_system">⚙️ Как в системе</string>
     <string name="settings_theme_hint">Выберите оформление приложения. «Как в системе» автоматически переключается вместе с настройками Android.</string>
+
+    <!-- 🆕 v14.1.0: напоминания -->
+    <string name="reminder_channel_name">Напоминания о делах</string>
+    <string name="reminder_channel_description">Ежедневные напоминания о домашних делах</string>
 </resources>
