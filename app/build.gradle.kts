@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-kapt")
 }
 
 android {
@@ -62,13 +63,13 @@ dependencies {
     implementation("androidx.coordinatorlayout:coordinatorlayout:1.2.0")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
-    // ===== SECURITY (стабильная версия) =====
-  implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // ===== SECURITY =====
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // ===== ROOM =====
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    annotationProcessor("androidx.room:room-compiler:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")           // ← kapt вместо annotationProcessor
 
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
