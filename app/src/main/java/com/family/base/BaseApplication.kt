@@ -1,7 +1,10 @@
 package com.family.base
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -9,6 +12,8 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderScheduler
+import com.family.base.util.TaskReminderWorker
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
@@ -74,7 +79,43 @@ class BaseApplication : Application(), ImageLoaderFactory {
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
 
-        // 🗑 v14.1.1: напоминания удалены (откат)
+        // 🆕 v14.1.0: канал уведомлений для напоминаний (безопасно, без WorkManager)
+        ensureReminderChannel(this)
+
+        // 🆕 v14.1.0: восстановление напоминания при холодном старте
+        // В try/catch — если WorkManager даст сбой, приложение продолжит работу
+        try {
+            if (com.family.base.util.TaskReminderPreferences.isEnabled(this)) {
+                TaskReminderScheduler.reschedule(this)
+                Logger.log("BaseApplication", "Task reminders rescheduled on cold start")
+            }
+        } catch (e: Exception) {
+            Logger.log("BaseApplication", "Task reminders schedule error: ${e.message}")
+        }
+    }
+
+    /**
+     * Создать канал уведомлений для напоминаний (Android 8+).
+     * Безопасно вызывать многократно — повторное создание игнорируется системой.
+     */
+    private fun ensureReminderChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (manager.getNotificationChannel(TaskReminderWorker.CHANNEL_ID) != null) return
+
+            val channel = NotificationChannel(
+                TaskReminderWorker.CHANNEL_ID,
+                TaskReminderWorker.CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Ежедневные напоминания о домашних делах"
+            }
+            manager.createNotificationChannel(channel)
+            Logger.log("BaseApplication", "Reminder channel created")
+        } catch (e: Exception) {
+            Logger.log("BaseApplication", "ensureReminderChannel error: ${e.message}")
+        }
     }
 
     override fun newImageLoader(): ImageLoader {
