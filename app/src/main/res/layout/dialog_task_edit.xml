@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp">
+
+        <!-- Название -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilTitle"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Что нужно сделать?">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:inputType="textCapSentences"
+                android:maxLines="2"
+                tools:text="Купить хлеб" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Примечание -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilNote"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:hint="Примечание (необязательно)">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionDone"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxLines="3"
+                tools:text="Из «Пятёрочки», взять 2 буханки" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Приоритет -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="Приоритет"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipGroupPriority"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            app:chipSpacingHorizontal="6dp">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipUrgent"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🔴 Срочно" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipHigh"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🟠 Важно" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipNormal"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:checked="true"
+                android:text="🟡 Обычно" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipLow"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🟢 Не срочно" />
+        </com.google.android.material.chip.ChipGroup>
+
+        <!-- Дедлайн -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Дедлайн"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/textDueDate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="Не указан"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="14sp"
+                tools:text="12.10.2026" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPickDate"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:text="📅" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearDate"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:text="✖" />
+        </LinearLayout>
+
+        <!-- Повтор -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="Повтор"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipGroupRecurrence"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            app:chipSpacingHorizontal="6dp">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipRecNone"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:checked="true"
+                android:text="Не повторять" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipRecDaily"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🔁 Ежедневно" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipRecWeekly"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🔁 Еженедельно" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipRecMonthly"
+                style="@style/Widget.MaterialComponents.Chip.Choice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="🔁 Ежемесячно" />
+        </com.google.android.material.chip.ChipGroup>
+
+        <!-- Подсказка про повтор -->
+        <TextView
+            android:id="@+id/textRecurrenceHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="После выполнения задача автоматически создастся снова через выбранный период."
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11sp"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+    </LinearLayout>
+</ScrollView>
