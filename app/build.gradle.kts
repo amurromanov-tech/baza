@@ -14,7 +14,7 @@ android {
         versionCode = 110
         versionName = "14.1.0"
 
-        // 🆕 OAuth redirect scheme для AppAuth (Яндекс) — обязательно!
+        // OAuth redirect scheme для AppAuth (Яндекс) — обязательно!
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -41,6 +41,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true      // 🆕 нужно для BuildConfig (AboutActivity)
     }
 }
 
@@ -61,6 +62,9 @@ dependencies {
     implementation("androidx.cardview:cardview:1.0.0")
     implementation("androidx.coordinatorlayout:coordinatorlayout:1.2.0")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
+    // ===== SECURITY (🆕 нужно для TokenStorage) =====
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // ===== ROOM =====
     implementation("androidx.room:room-runtime:2.6.1")
