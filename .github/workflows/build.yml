@@ -31,7 +31,23 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
 
+    # ============================================================
+    # 🆕 Декодирование release-keystore из GitHub Secrets
+    # ============================================================
+    - name: Decode keystore
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/baza-release.jks
+        ls -la ${{ github.workspace }}/baza-release.jks
+
+    # ============================================================
+    # Сборка APK с release-подписью
+    # ============================================================
     - name: Build APK
+      env:
+        KEYSTORE_PATH: ${{ github.workspace }}/baza-release.jks
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: ./gradlew assembleDebug --no-daemon
 
     - name: Upload APK
