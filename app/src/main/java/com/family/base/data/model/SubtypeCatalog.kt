@@ -16,6 +16,11 @@ import java.util.Locale
  * 🆕 B-6: добавлены подтипы thing:
  *           - furniture  🪑 Мебель
  *           - aquarium   🐠 Аквариум
+ *
+ * 🆕 v14.1.4: добавлены подтипы thing:
+ *           - lighting   💡 Освещение
+ *           - hygiene    🧼 Личная гигиена
+ *           - jewelry    💍 Украшения
  */
 object SubtypeCatalog {
 
@@ -84,9 +89,13 @@ object SubtypeCatalog {
         Subtype("repair",        "🛠 Ремонт / Стройка"),
         Subtype("car",           "🚗 Для авто"),
         Subtype("garden",        "🌱 Сад / Огород"),
-        // 🆕 B-6: новые подтипы
+        // B-6: новые подтипы
         Subtype("furniture",     "🪑 Мебель"),
         Subtype("aquarium",      "🐠 Аквариум"),
+        // v14.1.4: новые подтипы
+        Subtype("lighting",      "💡 Освещение"),
+        Subtype("hygiene",       "🧼 Личная гигиена"),
+        Subtype("jewelry",       "💍 Украшения"),
         Subtype("thing_other",   "📦 Прочее (предметы)")
     )
 
