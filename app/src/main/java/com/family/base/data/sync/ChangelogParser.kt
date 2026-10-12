@@ -1,8 +1,8 @@
 package com.family.base.data.sync
 
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.DeviceIdProvider
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.ProcessedChangelogEntity
@@ -23,7 +23,9 @@ import com.google.gson.JsonSyntaxException
  *     чтобы не зациклить пересылку (иначе получим ping-pong между устройствами).
  *  4. Для item/folder delete — физическое удаление.
  *     Для task delete — ставим isDeleted = true (soft-delete).
- *  5. Пакет фиксируется в processed_changelogs всегда (кроме явных ошибок).
+ *  5. Для history — append-only, просто INSERT IGNORE по id.
+ *     Никаких merge: если запись с таким id уже есть, пропускаем.
+ *  6. Пакет фиксируется в processed_changelogs всегда (кроме явных ошибок).
  *
  * Парсер НЕ пишет в outbox — входящие изменения не надо отправлять обратно.
  */
@@ -120,6 +122,7 @@ class ChangelogParser(
             OutboxEntity.ENTITY_ITEM -> applyItemEntry(entry)
             OutboxEntity.ENTITY_FOLDER -> applyFolderEntry(entry)
             OutboxEntity.ENTITY_TASK -> applyTaskEntry(entry)
+            OutboxEntity.ENTITY_HISTORY -> applyHistoryEntry(entry)
             else -> {
                 Logger.log(TAG, "applyEntry: unknown entityType '${entry.entityType}', skipping")
                 false
@@ -134,14 +137,11 @@ class ChangelogParser(
     private suspend fun applyItemEntry(entry: ChangelogEntry): Boolean {
         val local = db.itemDao().getItemById(entry.entityId)
 
-        // DELETE: физически удаляем, если локальный не новее
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyItem DELETE: id=${entry.entityId} not found locally, skip")
                 return false
             }
-            // Сравниваем время: удалять, только если изменение пришло позже
-            // последнего локального обновления
             if (entry.changedAt < local.updatedDate) {
                 Logger.log(
                     TAG,
@@ -154,7 +154,6 @@ class ChangelogParser(
             return true
         }
 
-        // CREATE / UPDATE: десериализуем
         val remote: ItemEntity = try {
             gson.fromJson(entry.payloadJson, ItemEntity::class.java)
         } catch (e: Exception) {
@@ -162,7 +161,6 @@ class ChangelogParser(
             return false
         }
 
-        // Принудительно synced, чтобы не переслать обратно
         val remoteSynced = remote.copy(syncStatus = ItemEntity.SYNC_STATUS_SYNCED)
 
         if (local == null) {
@@ -171,9 +169,7 @@ class ChangelogParser(
             return true
         }
 
-        // Конфликт: побеждает тот, у кого updatedDate больше
         if (remoteSynced.updatedDate > local.updatedDate) {
-            // Сохраняем локальные imageUrl и parentItemId, если у remote пусто
             val merged = remoteSynced.copy(
                 imageUrl = remoteSynced.imageUrl ?: local.imageUrl,
                 thumbnailUrl = remoteSynced.thumbnailUrl ?: local.thumbnailUrl,
@@ -238,8 +234,6 @@ class ChangelogParser(
         }
 
         if (remoteSynced.updatedAt > local.updatedAt) {
-            // Системную папку не трогаем по name/parentId/systemKey,
-            // но разрешаем обновить updatedAt (вдруг что-то менялось).
             val merged = if (local.isSystem || remoteSynced.isSystem) {
                 remoteSynced.copy(
                     name = local.name,
@@ -278,7 +272,6 @@ class ChangelogParser(
     private suspend fun applyTaskEntry(entry: ChangelogEntry): Boolean {
         val local = db.taskDao().getById(entry.entityId)
 
-        // Для задач delete — soft-delete (isDeleted = true)
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyTask DELETE: id=${entry.entityId} not found locally, skip")
@@ -330,6 +323,53 @@ class ChangelogParser(
             )
             return false
         }
+    }
+
+    // ============================================================
+    // 🆕 v16.2: HISTORY (append-only)
+    // ============================================================
+
+    /**
+     * История — append-only.
+     *
+     * Правила:
+     *  - Только "create" (update / delete для истории не бывает).
+     *  - Если запись с таким id уже есть — пропускаем (INSERT IGNORE).
+     *  - Никакого merge по времени: у HistoryEntry нет updatedAt.
+     *  - Поля oldValue / newValue / itemName приходят полностью из payload.
+     */
+    private suspend fun applyHistoryEntry(entry: ChangelogEntry): Boolean {
+        // Для истории update/delete не используются.
+        // Если всё же пришли — просто пропускаем.
+        if (entry.action != OutboxEntity.ACTION_CREATE) {
+            Logger.log(
+                TAG,
+                "applyHistory: action=${entry.action} not supported for history, skipping id=${entry.entityId}"
+            )
+            return false
+        }
+
+        val remote: HistoryEntry = try {
+            gson.fromJson(entry.payloadJson, HistoryEntry::class.java)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyHistory: cannot parse payload for id=${entry.entityId}: ${e.message}")
+            return false
+        }
+
+        // Проверка дубликата по id
+        val existingIds = db.historyDao().getAllIds()
+        if (remote.id in existingIds) {
+            Logger.log(TAG, "applyHistory SKIP: id=${remote.id} already exists")
+            return false
+        }
+
+        // Вставляем через insertAll (IGNORE) — на случай гонок
+        db.historyDao().insertAll(listOf(remote))
+        Logger.log(
+            TAG,
+            "applyHistory INSERT: id=${remote.id}, action=${remote.action}, itemId=${remote.itemId}, by=${remote.changedBy}"
+        )
+        return true
     }
 
     // ============================================================
