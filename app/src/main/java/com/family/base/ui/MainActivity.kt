@@ -14,6 +14,7 @@ import android.view.animation.RotateAnimation
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -278,9 +279,6 @@ class MainActivity : AppCompatActivity() {
         binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
         binding.btnSearch.setOnClickListener { showSearchDialog() }
-        binding.btnScanSearch.setOnClickListener {
-            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
-        }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -516,21 +514,75 @@ class MainActivity : AppCompatActivity() {
         itemDetailLauncher.launch(intent)
     }
 
+    // ============================================================
+    // 🆕 ПОИСК: диалог с полем ввода и кнопкой сканирования штрих-кода
+    // ============================================================
     private fun showSearchDialog() {
-        val editText = EditText(this)
-        editText.hint = "Поиск по названию или штрих-коду..."
-        viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) editText.setText(it) }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 8)
+        }
 
-        AlertDialog.Builder(this)
+        val editText = EditText(this).apply {
+            hint = "Поиск по названию или штрих-коду..."
+            viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) setText(it) }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        container.addView(editText)
+
+        val scanButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_scan)
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.btn_dark_circle)
+            contentDescription = "Сканировать штрих-код"
+            setColorFilter(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 24
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            }
+        }
+        container.addView(scanButton)
+
+        val scanLabel = TextView(this).apply {
+            text = "Сканировать штрих-код"
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 4
+            }
+        }
+        container.addView(scanLabel)
+
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Поиск")
-            .setView(editText)
+            .setView(container)
             .setPositiveButton("Искать") { _, _ ->
                 val q = editText.text.toString().trim()
                 if (q.isNotEmpty()) viewModel.search(q) else viewModel.clearSearch()
             }
             .setNegativeButton("Сбросить") { _, _ -> viewModel.clearSearch() }
             .setNeutralButton("Отмена", null)
-            .show()
+            .create()
+
+        scanButton.setOnClickListener {
+            dialog.dismiss()
+            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+        }
+        scanLabel.setOnClickListener {
+            dialog.dismiss()
+            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+        }
+
+        dialog.show()
     }
 
     private fun searchByBarcode(barcode: String) {
