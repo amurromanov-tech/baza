@@ -2849,14 +2849,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun forceSync() {
+    fun forceSync(): Boolean {
         if (forceSyncJob?.isActive == true) {
             Logger.log(TAG, "forceSync: already running, skipping")
-            return
+            return false
         }
         forceSyncRequested = true
         syncResultMessage.postValue("⏳ Синхронизация…")
         forceSyncJob = applicationScope.launch { syncWithDisk() }
+        return true
     }
 
     fun search(query: String) {
