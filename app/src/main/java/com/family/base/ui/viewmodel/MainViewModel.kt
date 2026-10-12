@@ -956,39 +956,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
+                 // 🆕 v16.1: старая логика upload отключена — всё идёт через changelog.
+                // uploadAllFoldersToDisk / uploadAllItemsToDisk / processPendingChangesInternal
+                // больше не вызываются. Changelog (ниже) сам обработает pending-записи.
                 if (pendingCount > 0) {
-                    Logger.log(TAG, "syncWithDisk: pending=$pendingCount → full upload")
+                    Logger.log(TAG, "syncWithDisk: pending=$pendingCount → changelog push")
 
                     syncProgress.postValue(
                         SyncProgress(
                             SyncPhase.SENDING,
                             0,
                             1,
-                            "Отправка данных ($localItemsCount предм., $localFoldersCount папок, $pendingCount в очереди)…"
+                            "Отправка изменений ($pendingCount в очереди)…"
                         )
                     )
-
-                    val tUploadFolders = System.currentTimeMillis()
-                    val uploadedFolders = repository.uploadAllFoldersToDisk()
-                    Logger.log(TAG, "TIMING: uploadAllFoldersToDisk took ${System.currentTimeMillis() - tUploadFolders}ms")
-
-                    Logger.log(TAG, "syncWithDisk: full upload folders=$uploadedFolders")
-
-                    val tPending = System.currentTimeMillis()
-                    uploadedCount = processPendingChangesInternal()
-                    Logger.log(TAG, "TIMING: processPendingChangesInternal took ${System.currentTimeMillis() - tPending}ms")
-
-                    val tFinal = System.currentTimeMillis()
-                    val refreshed = repository.uploadAllItemsToDisk()
-                    Logger.log(TAG, "TIMING: uploadAllItemsToDisk (final) took ${System.currentTimeMillis() - tFinal}ms, success=$refreshed")
-                    if (refreshed) {
-                        val fresh = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                        if (fresh != null && fresh > 0L) {
-                            withContext(Dispatchers.IO) { syncInfoDao.setLastModified(fresh) }
-                        }
-                    }
                 } else {
-                    Logger.log(TAG, "syncWithDisk: pending=0 → SKIP upload (nothing changed locally)")
+                    Logger.log(TAG, "syncWithDisk: pending=0 → ничего не менялось локально")
                 }
 
                 // 🆕 v13.2.1: история выгружается ВСЕГДА.
@@ -1002,16 +985,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // 🆕 v14: задачи выгружаются ВСЕГДА, merge-then-upload.
-                val tTasks = System.currentTimeMillis()
-                val uploadedTasks = repository.uploadAllTasksToDisk()
-                Logger.log(TAG, "TIMING: uploadAllTasksToDisk took ${System.currentTimeMillis() - tTasks}ms, success=$uploadedTasks")
-                if (uploadedTasks) {
-                    val freshLm = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                    if (freshLm != null && freshLm > 0L) {
-                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(freshLm) }
-                    }
-                }
+                // 🆕 v16.1: uploadAllTasksToDisk убран — задачи идут через changelog.
+                // Скачивание tasks.json и mergeData для tasks оставлены ниже
+                // для обратной совместимости с другими устройствами.
 
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
@@ -1593,35 +1569,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return successCount
     }
 
-    private suspend fun applyFolderChange(entry: SyncQueueEntity): Boolean {
+      private suspend fun applyFolderChange(entry: SyncQueueEntity): Boolean {
         return try {
             when (entry.action) {
                 "create" -> {
-                    val folder = db.folderDao().getFolderById(entry.entityId) ?: return false
-                    val diskSuccess = repository.createFolderOnDisk(folder)
+                    val folder = db.folderDao().getFolderById(entry.entityId)
+                    if (folder == null) {
+                        Logger.log(TAG, "applyFolderChange: folder ${entry.entityId} уже удалён, закрываем запись")
+                        return true
+                    }
+                    // 🆕 v16.1: старая логика upload отключена — changelog сам зальёт.
+                    // Оставляем только попытку подтянуть локальную иконку на Диск,
+                    // если папка новая и иконка есть локально, но нет на Диске.
                     val appContext = getApplication<Application>().applicationContext
                     val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
                     if (localFile != null && localFile.exists() && folder.iconUrl.isNullOrEmpty()) {
                         try {
-                            val imgSuccess = repository.uploadFolderImage(folder.id, localFile.readBytes())
-                            if (imgSuccess) {
-                                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                                db.folderDao().updateFolder(updated)
-                                repository.updateFolderOnDisk(updated)
-                            }
+                            repository.uploadFolderImage(folder.id, localFile.readBytes())
                         } catch (e: Exception) {
                             Logger.log(TAG, "applyFolderChange: upload folder image failed: ${e.message}")
                         }
                     }
-                    diskSuccess
+                    true
                 }
                 "update" -> {
-                    val folder = db.folderDao().getFolderById(entry.entityId) ?: return false
-                    val fresh = folder.copy(updatedAt = System.currentTimeMillis())
-                    db.folderDao().updateFolder(fresh)
-                    repository.updateFolderOnDisk(fresh)
+                    val folder = db.folderDao().getFolderById(entry.entityId)
+                    if (folder == null) {
+                        Logger.log(TAG, "applyFolderChange: folder ${entry.entityId} уже удалён, закрываем запись")
+                        return true
+                    }
+                    // 🆕 v16.1: uploadAllFoldersToDisk больше не вызывается — changelog зальёт.
+                    true
                 }
-                "delete" -> repository.deleteFolderOnDisk(entry.entityId)
+                "delete" -> {
+                    // 🆕 v16.1: deleteFolderOnDisk = uploadAllFoldersToDisk — отключено.
+                    // Changelog сам отправит удаление.
+                    true
+                }
                 else -> false
             }
         } catch (e: Exception) {
@@ -1630,26 +1614,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun applyItemChange(entry: SyncQueueEntity): Boolean {
+        private suspend fun applyItemChange(entry: SyncQueueEntity): Boolean {
         return try {
             when (entry.action) {
                 "create" -> {
-                    val item = db.itemDao().getItemById(entry.entityId) ?: return false
-                    val t2 = System.currentTimeMillis()
+                    val item = db.itemDao().getItemById(entry.entityId)
+                    if (item == null) {
+                        Logger.log(TAG, "applyItemChange: item ${entry.entityId} уже удалён, закрываем запись")
+                        return true
+                    }
+                    // 🆕 v16.1: uploadAllItemsToDisk больше не вызывается — changelog зальёт.
+                    // Оставляем только попытку подтянуть локальное фото на Диск.
                     uploadItemImageIfExists(item)
-                    Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
                     true
                 }
                 "update" -> {
-                    val item = db.itemDao().getItemById(entry.entityId) ?: return false
-                    val fresh = item.copy(updatedDate = System.currentTimeMillis())
-                    db.itemDao().updateItem(fresh)
-                    val t2 = System.currentTimeMillis()
-                    uploadItemImageIfExists(fresh)
-                    Logger.log(TAG, "TIMING: applyItemChange uploadItemImageIfExists took ${System.currentTimeMillis() - t2}ms")
+                    val item = db.itemDao().getItemById(entry.entityId)
+                    if (item == null) {
+                        Logger.log(TAG, "applyItemChange: item ${entry.entityId} уже удалён, закрываем запись")
+                        return true
+                    }
+                    // 🆕 v16.1: uploadAllItemsToDisk больше не вызывается — changelog зальёт.
+                    // Оставляем только попытку подтянуть локальное фото на Диск.
+                    uploadItemImageIfExists(item)
                     true
                 }
-                "delete" -> repository.deleteItemOnDisk(entry.entityId)
+                "delete" -> {
+                    // 🆕 v16.1: deleteItemOnDisk = uploadAllItemsToDisk — отключено.
+                    // Changelog сам отправит удаление.
+                    true
+                }
                 else -> false
             }
         } catch (e: Exception) {
