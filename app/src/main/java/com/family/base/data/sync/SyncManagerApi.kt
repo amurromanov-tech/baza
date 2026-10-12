@@ -18,7 +18,6 @@ import java.net.UnknownHostException
  *  - удаление одного файла.
  *
  * Всё общение с Яндекс.Диском — через YandexDiskApi.
- * Не имеет состояния кроме контекста и TokenStorage.
  */
 class SyncManagerApi {
 
@@ -109,6 +108,9 @@ class SyncManagerApi {
      * Возвращает список имён файлов в /BAZA/changelog/ (без пути).
      * Пустой список — если папки нет, или она пуста.
      * null — если сетевая ошибка (важно: НЕ пустой список!).
+     *
+     * ⚠️ API getDiskResources не поддерживает limit/offset —
+     * Яндекс отдаёт все элементы папки разом.
      */
     suspend fun listChangelogFiles(): List<String>? {
         val auth = getAuth() ?: return null
@@ -116,11 +118,7 @@ class SyncManagerApi {
         val folderPath = getChangelogPath()
 
         return try {
-            val response = api.getDiskResources(
-                auth = auth,
-                path = folderPath,
-                limit = 1000
-            )
+            val response = api.getDiskResources(auth, folderPath)
 
             if (response.code() == 404) {
                 Logger.log(TAG, "listChangelogFiles: folder not found, returning empty")
@@ -132,7 +130,12 @@ class SyncManagerApi {
             }
 
             val body = response.body() ?: return emptyList()
-            val items = body._embedded?.items ?: return emptyList()
+            // Поле _embedded — стандартное для Яндекс.Диска.
+            // Если модель не содержит — вернём пустой список.
+            val items = body.embedded?.items ?: run {
+                Logger.log(TAG, "listChangelogFiles: _embedded.items is null")
+                return emptyList()
+            }
 
             val files = items
                 .filter { it.type == "file" }
