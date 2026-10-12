@@ -5,6 +5,11 @@ import com.family.base.data.local.entity.FolderEntity
 
 @Dao
 interface FolderDao {
+
+    // ============================================================
+    // ЧТЕНИЕ
+    // ============================================================
+
     /**
      * Получение корневых папок (parentId IS NULL, parentItemId IS NULL)
      */
@@ -31,17 +36,59 @@ interface FolderDao {
     @Query("SELECT * FROM folders WHERE path = :path LIMIT 1")
     suspend fun getFolderByPath(path: String): FolderEntity?
 
+    @Query("SELECT * FROM folders")
+    suspend fun getAllFolders(): List<FolderEntity>
+
+    // ============================================================
+    // 🆕 v15: СИНХРОНИЗАЦИЯ
+    // ============================================================
+
+    /**
+     * Все папки со статусом pending — для SyncManager.
+     */
+    @Query("SELECT * FROM folders WHERE syncStatus = 'pending'")
+    suspend fun getFoldersBySyncStatusPending(): List<FolderEntity>
+
+    /**
+     * Обновить syncStatus у одной папки.
+     */
+    @Query("UPDATE folders SET syncStatus = :status WHERE id = :folderId")
+    suspend fun updateSyncStatus(folderId: String, status: String)
+
+    /**
+     * Пометить все переданные папки как synced.
+     */
+    @Query("UPDATE folders SET syncStatus = 'synced' WHERE id IN (:ids)")
+    suspend fun markFoldersSynced(ids: List<String>)
+
+    /**
+     * Пометить все переданные папки как pending.
+     */
+    @Query("UPDATE folders SET syncStatus = 'pending' WHERE id IN (:ids)")
+    suspend fun markFoldersPending(ids: List<String>)
+
+    // ============================================================
+    // ЗАПИСЬ
+    // ============================================================
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFolder(folder: FolderEntity)
 
     @Update
     suspend fun updateFolder(folder: FolderEntity)
 
+    @Update
+    suspend fun updateFolders(folders: List<FolderEntity>)
+
     @Delete
     suspend fun deleteFolder(folder: FolderEntity)
 
     @Query("DELETE FROM folders WHERE id = :id")
     suspend fun deleteFolderById(id: String)
+
+    // ============================================================
+    // СЧЁТЧИКИ
+    // ============================================================
 
     /**
      * ВАЖНО: считаем только НЕархивные предметы.
@@ -53,15 +100,16 @@ interface FolderDao {
     @Query("SELECT COUNT(*) FROM folders WHERE parentId = :folderId")
     suspend fun getSubfolderCountInFolder(folderId: String): Int
 
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЯ
+    // ============================================================
+
     /**
      * Перенос всех подпапок из папки в корень.
      * Используется при удалении папки (защита от «висячих» подпапок).
      */
     @Query("UPDATE folders SET parentId = NULL WHERE parentId = :folderId")
     suspend fun moveSubfoldersToRoot(folderId: String)
-
-    @Query("SELECT * FROM folders")
-    suspend fun getAllFolders(): List<FolderEntity>
 
     // ============================================================
     // ВЛОЖЕННОСТЬ (parentItemId) — папка внутри предмета
