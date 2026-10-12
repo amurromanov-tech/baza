@@ -2242,18 +2242,8 @@ class ItemDetailActivity : AppCompatActivity() {
                     }
                 }
 
-                viewModel.updateItemFull(updated)
-
-                withContext(Dispatchers.IO) {
-                    db.historyDao().insertEntry(
-                        HistoryEntry(
-                            itemId = id, action = "update",
-                            oldValue = "Тип: ${item.itemType}, подтип: ${item.itemSubtype}",
-                            newValue = "Тип: $newItemType, подтип: $newItemSubtype",
-                            changedBy = "user"
-                        )
-                    )
-                }
+            viewModel.updateItemFull(updated)
+                // 🆕 v16.2: дублирующая запись истории убрана — updateItemFull → writeHistory → OutboxLogger уже пишет diff.
 
                 Toast.makeText(this@ItemDetailActivity, "Сохранено", Toast.LENGTH_SHORT).show()
                 finish()
