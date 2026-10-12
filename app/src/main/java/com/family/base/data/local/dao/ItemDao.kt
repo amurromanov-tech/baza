@@ -20,6 +20,12 @@ interface ItemDao {
     @Update
     suspend fun updateItem(item: ItemEntity)
 
+    /**
+     * 🆕 v15: массовое обновление (для batch-логирования в outbox).
+     */
+    @Update
+    suspend fun updateItems(items: List<ItemEntity>)
+
     @Delete
     suspend fun deleteItem(item: ItemEntity)
 
@@ -52,6 +58,40 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE parentId = :parentId")
     suspend fun getItemsByParentRaw(parentId: String?): List<ItemEntity>
+
+    // ============================================================
+    // 🆕 v15: СИНХРОНИЗАЦИЯ
+    // ============================================================
+
+    /**
+     * Все items со статусом pending — для SyncManager.
+     */
+    @Query("SELECT * FROM items WHERE syncStatus = 'pending'")
+    suspend fun getItemsBySyncStatusPending(): List<ItemEntity>
+
+    /**
+     * Все items со статусом synced — для отладки.
+     */
+    @Query("SELECT * FROM items WHERE syncStatus = 'synced'")
+    suspend fun getItemsBySyncStatusSynced(): List<ItemEntity>
+
+    /**
+     * Обновить syncStatus у одного item.
+     */
+    @Query("UPDATE items SET syncStatus = :status WHERE id = :itemId")
+    suspend fun updateSyncStatus(itemId: String, status: String)
+
+    /**
+     * Пометить все переданные items как synced.
+     */
+    @Query("UPDATE items SET syncStatus = 'synced' WHERE id IN (:ids)")
+    suspend fun markItemsSynced(ids: List<String>)
+
+    /**
+     * Пометить все переданные items как pending.
+     */
+    @Query("UPDATE items SET syncStatus = 'pending' WHERE id IN (:ids)")
+    suspend fun markItemsPending(ids: List<String>)
 
     // ============================================================
     // ВЛОЖЕННОСТЬ (parentItemId) — предмет внутри предмета
@@ -151,7 +191,8 @@ interface ItemDao {
             archivedReason = :reason, 
             archivedDate = :date, 
             archivedNote = :note,
-            updatedDate = :date
+            updatedDate = :date,
+            syncStatus = 'pending'
         WHERE id = :itemId
     """)
     suspend fun archiveItem(
@@ -167,7 +208,8 @@ interface ItemDao {
             archivedReason = NULL, 
             archivedDate = NULL, 
             archivedNote = NULL,
-            updatedDate = :date
+            updatedDate = :date,
+            syncStatus = 'pending'
         WHERE id = :itemId
     """)
     suspend fun unarchiveItem(itemId: String, date: Long)
