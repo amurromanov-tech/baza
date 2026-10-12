@@ -5,9 +5,12 @@ import android.os.Environment
 import com.family.base.data.BackupData
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxHelper
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.SettingsEntity
 import com.family.base.data.local.entity.SyncQueueEntity
 import com.google.gson.Gson
@@ -198,22 +201,22 @@ class BackupManagerV2(private val context: Context) {
      * 1. Полностью очищает локальную БД (folders / items / history).
      * 2. Очищает sync_queue — чтобы старые «хвосты» не смешались с новыми.
      * 3. Вставляет данные из бэкапа.
-     * 4. 🆕 Ставит ВСЕ папки и ВСЕ предметы в SyncQueueEntity с action="create".
+     * 4. 🆕 v16.2: пишет ВСЕ папки, предметы и историю в outbox (changelog).
      *
      * Это нужно, чтобы:
-     *   - при следующем синке они гарантированно залились на Диск;
-     *   - если сети нет — импорт «запомнился» и зальётся при следующем sync;
-     *   - при инкрементальном синке (pending > 0) сработал полный upload.
+     *   - при следующем синке они гарантированно залились на Диск через changelog;
+     *   - если сети нет — импорт «запомнился» и зальётся при следующем sync.
+     *
+     * ⚠️ Старая sync_queue больше НЕ используется — она отключена
+     *     в syncWithDisk() и не обрабатывается.
      */
     private suspend fun applyBackupData(db: AppDatabase, backupData: BackupData) {
         // 1. Очищаем локальные данные
         clearAllData(db)
 
-        // 2. 🆕 Очищаем очередь — она относится к старым данным
+        // 2. 🆕 Очищаем старую очередь — она относится к старым данным
         db.syncQueueDao().clearAll()
         Logger.log(TAG, "applyBackupData: sync_queue cleared")
-
-        val now = System.currentTimeMillis()
 
         // 3. Вставляем папки
         backupData.folders.forEach { db.folderDao().insertFolder(it) }
@@ -228,41 +231,44 @@ class BackupManagerV2(private val context: Context) {
         backupData.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
         // ============================================================
-        // 🆕 7. СТАВИМ В ОЧЕРЕДЬ СИНХРОНИЗАЦИИ
+        // 🆕 v16.2: пишем в outbox (changelog), НЕ в старую sync_queue.
+        // Старая sync_queue отключена и не обрабатывается.
         // ============================================================
+        val changedBy = "backup_import"
+
         var folderQueueCount = 0
         backupData.folders.forEach { folder ->
-            db.syncQueueDao().addToQueue(
-                SyncQueueEntity(
-                    entityType = "folder",
-                    entityId = folder.id,
-                    action = "create",
-                    parentId = folder.parentId,
-                    data = null,
-                    timestamp = now
-                )
+            OutboxLogger.folderChanged(
+                db = db,
+                folder = folder,
+                action = OutboxEntity.ACTION_CREATE,
+                changedBy = changedBy
             )
             folderQueueCount++
         }
 
         var itemQueueCount = 0
         backupData.items.forEach { item ->
-            db.syncQueueDao().addToQueue(
-                SyncQueueEntity(
-                    entityType = "item",
-                    entityId = item.id,
-                    action = "create",
-                    parentId = item.parentId,
-                    data = null,
-                    timestamp = now
-                )
+            OutboxLogger.itemChanged(
+                db = db,
+                item = item,
+                action = OutboxEntity.ACTION_CREATE,
+                changedBy = changedBy
             )
             itemQueueCount++
         }
 
+        var historyQueueCount = 0
+        backupData.history.forEach { entry ->
+            // ⚠️ НЕ OutboxLogger.historyAdded — она бы вставила историю в БД повторно.
+            // В БД история уже вставлена на шаге 5. Здесь только outbox.
+            OutboxHelper.logHistory(db, entry, changedBy)
+            historyQueueCount++
+        }
+
         Logger.log(
             TAG,
-            "applyBackupData: queued $folderQueueCount folders + $itemQueueCount items for sync"
+            "applyBackupData: queued $folderQueueCount folders + $itemQueueCount items + $historyQueueCount history for changelog"
         )
     }
 
