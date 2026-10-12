@@ -8,16 +8,11 @@ import java.util.UUID
 /**
  * Очередь исходящих изменений для синхронизации через changelog.
  *
- * Каждое локальное изменение Item / Folder / Task кладёт сюда запись.
+ * Каждое локальное изменение Item / Folder / Task / History кладёт сюда запись.
  * SyncManager читает несинхронизированные записи, формирует
  * JSON-пакет changelog и отправляет на Яндекс.Диск.
  *
- * После успешной отправки — record удаляется или помечается isSynced = true.
- *
- * Отличие от SyncQueueEntity:
- *  - SyncQueueEntity — старая очередь для полного upload (folders.json/items.json).
- *  - OutboxEntity  — новая очередь для дельта-синка (changelog).
- *  Старая очередь сохраняется для обратной совместимости.
+ * После успешной отправки — record помечается isSynced = true.
  */
 @Entity(
     tableName = "outbox",
@@ -35,12 +30,12 @@ data class OutboxEntity(
      *  - "item"
      *  - "folder"
      *  - "task"
+     *  - "history"  🆕 v16.2
      */
     val entityType: String,
 
     /**
-     * ID изменённой сущности (item.id / folder.id / task.id).
-     * Для дальнейшего поиска и возможного схлопывания операций.
+     * ID изменённой сущности (item.id / folder.id / task.id / history.id).
      */
     val entityId: String,
 
@@ -55,8 +50,6 @@ data class OutboxEntity(
     /**
      * Полный JSON сущности на момент изменения.
      * Для delete — JSON может быть пустым или содержать только id.
-     * Хранится, чтобы SyncManager мог сформировать пакет без
-     * повторного обращения к БД по каждой записи.
      */
     val payloadJson: String,
 
@@ -95,6 +88,7 @@ data class OutboxEntity(
         const val ENTITY_ITEM = "item"
         const val ENTITY_FOLDER = "folder"
         const val ENTITY_TASK = "task"
+        const val ENTITY_HISTORY = "history"  // 🆕 v16.2
 
         const val ACTION_CREATE = "create"
         const val ACTION_UPDATE = "update"
