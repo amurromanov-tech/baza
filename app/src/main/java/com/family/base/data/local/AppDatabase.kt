@@ -19,9 +19,10 @@ import com.family.base.data.local.entity.*
         SyncQueueEntity::class,
         SyncInfoEntity::class,
         TaskEntity::class,
-        OutboxEntity::class
+        OutboxEntity::class,
+        ProcessedChangelogEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun syncInfoDao(): SyncInfoDao
     abstract fun taskDao(): TaskDao
     abstract fun outboxDao(): OutboxDao
+    abstract fun processedChangelogDao(): ProcessedChangelogDao
 
     companion object {
         @Volatile
@@ -180,40 +182,14 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v14 → v15: syncStatus + outbox (changelog)
+        // v14 → v15: syncStatus + outbox (changelog)
         // ============================================================
-        /**
-         * Добавляем:
-         *  1. items.syncStatus   TEXT NOT NULL DEFAULT 'synced'
-         *  2. folders.syncStatus TEXT NOT NULL DEFAULT 'synced'
-         *  3. tasks.syncStatus   TEXT NOT NULL DEFAULT 'synced'
-         *  4. таблицу outbox (см. OutboxEntity)
-         *
-         * ⚠️ Схема outbox должна ТОЧНО совпадать с Room-генерацией:
-         *    Boolean  → INTEGER NOT NULL
-         *    Long     → INTEGER NOT NULL
-         *    Long?    → INTEGER
-         *    String   → TEXT NOT NULL
-         *    String?  → TEXT
-         *
-         * ⚠️ Индексы должны совпадать с @Entity(indices = [...]).
-         *
-         * Дефолт 'synced' для существующих записей: после апгрейда
-         * v14 → v15 первый синк НЕ будет заливать всю базу,
-         * только реальные новые изменения.
-         */
         private val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 1. syncStatus в items
                 db.execSQL("ALTER TABLE items ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-
-                // 2. syncStatus в folders
                 db.execSQL("ALTER TABLE folders ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-
-                // 3. syncStatus в tasks
                 db.execSQL("ALTER TABLE tasks ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
 
-                // 4. Таблица outbox
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS outbox (
                         id TEXT NOT NULL,
@@ -230,10 +206,34 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
 
-                // 5. Индексы outbox (должны совпадать с @Entity(indices))
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_isSynced ON outbox(isSynced)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_entityType_entityId ON outbox(entityType, entityId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_createdAt ON outbox(createdAt)")
+            }
+        }
+
+        // ============================================================
+        // 🆕 v15 → v16: processed_changelogs (учёт входящих пакетов)
+        // ============================================================
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS processed_changelogs (
+                        batchId TEXT NOT NULL,
+                        deviceId TEXT NOT NULL,
+                        changedBy TEXT,
+                        createdAt INTEGER NOT NULL,
+                        processedAt INTEGER NOT NULL,
+                        entriesCount INTEGER NOT NULL,
+                        appliedCount INTEGER NOT NULL,
+                        isOwn INTEGER NOT NULL,
+                        PRIMARY KEY(batchId)
+                    )
+                """.trimIndent())
+
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_processed_changelogs_batchId ON processed_changelogs(batchId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_deviceId ON processed_changelogs(deviceId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_processedAt ON processed_changelogs(processedAt)")
             }
         }
 
@@ -1022,112 +1022,8 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 14 (сразу в 15)
-        // ============================================================
-        /**
-         * Для каждой цепочки X → 14 добавляем шаг 14 → 15,
-         * чтобы старые БД (v2..v13) корректно доехали до v15.
-         *
-         * Логика: сначала выполняем ту же миграцию X → 14,
-         * потом добавляем поля/таблицу v15.
-         */
-        private fun migrateLegacyTo15(db: SupportSQLiteDatabase, legacyMigration: Migration) {
-            // Прогоняем старую цепочку до v14
-            legacyMigration.migrate(db)
-            // Затем — дельта v15
-            db.execSQL("ALTER TABLE items ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-            db.execSQL("ALTER TABLE folders ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-            db.execSQL("ALTER TABLE tasks ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-            db.execSQL("""
-                CREATE TABLE IF NOT EXISTS outbox (
-                    id TEXT NOT NULL,
-                    entityType TEXT NOT NULL,
-                    entityId TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    payloadJson TEXT NOT NULL,
-                    createdAt INTEGER NOT NULL,
-                    changedBy TEXT NOT NULL,
-                    isSynced INTEGER NOT NULL,
-                    syncedAt INTEGER,
-                    batchId TEXT,
-                    PRIMARY KEY(id)
-                )
-            """.trimIndent())
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_isSynced ON outbox(isSynced)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_entityType_entityId ON outbox(entityType, entityId)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_createdAt ON outbox(createdAt)")
-        }
-
-        private val MIGRATION_2_15 = object : Migration(2, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_2_14)
-            }
-        }
-
-        private val MIGRATION_3_15 = object : Migration(3, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_3_14)
-            }
-        }
-
-        private val MIGRATION_4_15 = object : Migration(4, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_4_14)
-            }
-        }
-
-        private val MIGRATION_5_15 = object : Migration(5, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_5_14)
-            }
-        }
-
-        private val MIGRATION_6_15 = object : Migration(6, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_6_14)
-            }
-        }
-
-        private val MIGRATION_7_15 = object : Migration(7, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_7_14)
-            }
-        }
-
-        private val MIGRATION_8_15 = object : Migration(8, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_8_14)
-            }
-        }
-
-        private val MIGRATION_9_15 = object : Migration(9, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_9_14)
-            }
-        }
-
-        private val MIGRATION_10_15 = object : Migration(10, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_10_14)
-            }
-        }
-
-        private val MIGRATION_11_15 = object : Migration(11, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_11_14)
-            }
-        }
-
-        private val MIGRATION_12_15 = object : Migration(12, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                migrateLegacyTo15(db, MIGRATION_12_14)
-            }
-        }
-
         private val MIGRATION_13_15 = object : Migration(13, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 13 → 14
                 db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
                 db.execSQL("""
@@ -1150,7 +1046,6 @@ abstract class AppDatabase : RoomDatabase() {
                         PRIMARY KEY(id)
                     )
                 """.trimIndent())
-                // 14 → 15
                 db.execSQL("ALTER TABLE items ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
                 db.execSQL("ALTER TABLE folders ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
                 db.execSQL("ALTER TABLE tasks ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
@@ -1172,6 +1067,130 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_isSynced ON outbox(isSynced)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_entityType_entityId ON outbox(entityType, entityId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_createdAt ON outbox(createdAt)")
+            }
+        }
+
+        // ============================================================
+        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 15 (сразу в 16)
+        // ============================================================
+        private fun migrateTo16(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS processed_changelogs (
+                    batchId TEXT NOT NULL,
+                    deviceId TEXT NOT NULL,
+                    changedBy TEXT,
+                    createdAt INTEGER NOT NULL,
+                    processedAt INTEGER NOT NULL,
+                    entriesCount INTEGER NOT NULL,
+                    appliedCount INTEGER NOT NULL,
+                    isOwn INTEGER NOT NULL,
+                    PRIMARY KEY(batchId)
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_processed_changelogs_batchId ON processed_changelogs(batchId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_deviceId ON processed_changelogs(deviceId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_processedAt ON processed_changelogs(processedAt)")
+        }
+
+        private val MIGRATION_2_16 = object : Migration(2, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_3_16 = object : Migration(3, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_4_16 = object : Migration(4, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_5_16 = object : Migration(5, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_6_16 = object : Migration(6, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_7_16 = object : Migration(7, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_8_16 = object : Migration(8, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_9_16 = object : Migration(9, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_10_16 = object : Migration(10, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_11_16 = object : Migration(11, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_12_16 = object : Migration(12, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_13_16 = object : Migration(13, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_15.migrate(db)
+                migrateTo16(db)
+            }
+        }
+
+        private val MIGRATION_14_16 = object : Migration(14, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_15.migrate(db)
+                migrateTo16(db)
             }
         }
 
@@ -1197,6 +1216,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13,
                         MIGRATION_13_14,
                         MIGRATION_14_15,
+                        MIGRATION_15_16,
 
                         // Старые цепочки с пропуском 13 (до v14)
                         MIGRATION_2_4,
@@ -1225,19 +1245,23 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_11_14,
                         MIGRATION_12_14,
 
-                        // 🆕 Цепочки с пропуском 14 (сразу в 15)
-                        MIGRATION_2_15,
-                        MIGRATION_3_15,
-                        MIGRATION_4_15,
-                        MIGRATION_5_15,
-                        MIGRATION_6_15,
-                        MIGRATION_7_15,
-                        MIGRATION_8_15,
-                        MIGRATION_9_15,
-                        MIGRATION_10_15,
-                        MIGRATION_11_15,
-                        MIGRATION_12_15,
-                        MIGRATION_13_15
+                        // Цепочки 13 → 15
+                        MIGRATION_13_15,
+
+                        // 🆕 Цепочки с пропуском 15 (сразу в 16)
+                        MIGRATION_2_16,
+                        MIGRATION_3_16,
+                        MIGRATION_4_16,
+                        MIGRATION_5_16,
+                        MIGRATION_6_16,
+                        MIGRATION_7_16,
+                        MIGRATION_8_16,
+                        MIGRATION_9_16,
+                        MIGRATION_10_16,
+                        MIGRATION_11_16,
+                        MIGRATION_12_16,
+                        MIGRATION_13_16,
+                        MIGRATION_14_16
                     )
                     .build()
                     .also { INSTANCE = it }
