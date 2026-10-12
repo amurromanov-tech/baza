@@ -70,14 +70,13 @@ class SyncManager(
      * Возвращает SyncResult. Не бросает исключений.
      */
     suspend fun syncChangelogs(): SyncResult {
-        val deviceId = DeviceIdProvider.get(
-            try {
-                com.family.base.BaseApplication.getAppContext()
-            } catch (e: Exception) {
-                Logger.log(TAG, "syncChangelogs: cannot get app context: ${e.message}")
-                return SyncResult(0, 0, 0, 0, 0, 0, pullFailed = true, pushFailed = true)
-            }
-        )
+        val deviceId: String = try {
+            val ctx = com.family.base.BaseApplication.getAppContext()
+            DeviceIdProvider.get(ctx)
+        } catch (e: Exception) {
+            Logger.log(TAG, "syncChangelogs: cannot get app context: ${e.message}")
+            return SyncResult(0, 0, 0, 0, 0, 0, pullFailed = true, pushFailed = true)
+        }
 
         Logger.log(TAG, "syncChangelogs: START, deviceId=$deviceId")
 
@@ -145,8 +144,7 @@ class SyncManager(
         val batchId = "${deviceId}_$now"
         val fileName = "$batchId.json"
 
-        // Определяем changedBy: берём из первой записи, это нормально
-        // (все записи пакета обычно от одного пользователя за одну сессию).
+        // Определяем changedBy: берём из первой записи.
         val changedBy = pending.firstOrNull()?.changedBy ?: "unknown"
 
         // Формируем entries
@@ -252,17 +250,18 @@ class SyncManager(
         Logger.log(TAG, "pullIncomingChanges: ${files.size} files on disk")
 
         // Получаем уже обработанные batchId
-        val processedIds = try {
+        val processedIds: Set<String> = try {
             db.processedChangelogDao().getAllBatchIds().toSet()
         } catch (e: Exception) {
             Logger.log(TAG, "pullIncomingChanges: cannot read processed_changelogs: ${e.message}")
             return PullResult(0, 0, 0, 0, failed = true)
         }
 
-        // Фильтруем: имя файла = "{batchId}.json"
-        val candidates = files.filter { fileName ->
+        // Фильтруем: имя файла = "{batchId}.json".
+        // Без continue/break внутри лямбды — только чистый filter.
+        val candidates: List<String> = files.filter { fileName ->
             val id = fileName.removeSuffix(".json")
-            id !in processedIds
+            !processedIds.contains(id)
         }
 
         if (candidates.isEmpty()) {
@@ -284,22 +283,21 @@ class SyncManager(
                 continue
             }
 
-            val batch: ChangelogBatch = try {
+            val batch: ChangelogBatch? = try {
                 val json = String(bytes, Charsets.UTF_8)
                 gson.fromJson(json, ChangelogBatch::class.java)
-                    ?: run {
-                        Logger.log(TAG, "pullIncomingChanges: parsed batch is null for $fileName")
-                        continue
-                    }
             } catch (e: JsonSyntaxException) {
                 Logger.log(TAG, "pullIncomingChanges: JSON syntax error in $fileName: ${e.message}")
                 errors++
-                // Фиксируем как обработанный (битый), чтобы не пытаться снова
                 markProcessedBad(fileName, "syntax_error")
-                continue
+                null
             } catch (e: Exception) {
                 Logger.log(TAG, "pullIncomingChanges: parse error in $fileName: ${e.message}")
                 errors++
+                null
+            }
+
+            if (batch == null) {
                 continue
             }
 
@@ -360,6 +358,9 @@ class SyncManager(
      *  - outbox (synced старше 7 дней);
      *  - processed_changelogs (старше 30 дней);
      *  - свои файлы changelog на Диске (старше 7 дней).
+     *
+     * ⚠️ Переписано без `continue` внутри лямбд, чтобы не упасть
+     * на экспериментальной фиче Kotlin.
      */
     private suspend fun cleanup(deviceId: String) {
         val now = System.currentTimeMillis()
@@ -382,18 +383,23 @@ class SyncManager(
 
         // 3. Свои старые файлы на Диске — необязательно, но полезно
         try {
-            val files = api.listChangelogFiles() ?: return
+            val files = api.listChangelogFiles()
+            if (files == null) {
+                return
+            }
+
             val ownCutoff = now - OWN_BATCH_TTL_MS
 
-            for (fileName in files) {
+            // Собираем список файлов для удаления БЕЗ continue внутри лямбды.
+            val toDelete = files.filter { fileName ->
                 val batchId = fileName.removeSuffix(".json")
-                if (!batchId.startsWith(deviceId)) continue
+                val isOwn = batchId.startsWith(deviceId)
+                val timestamp = batchId.substringAfterLast('_').toLongOrNull()
+                isOwn && timestamp != null && timestamp < ownCutoff
+            }
 
-                // Парсим timestamp из имени: "{deviceId}_{timestamp}"
-                val timestamp = batchId.substringAfterLast('_').toLongOrNull() ?: continue
-                if (timestamp < ownCutoff) {
-                    api.deleteChangelogFile(fileName)
-                }
+            for (fileName in toDelete) {
+                api.deleteChangelogFile(fileName)
             }
         } catch (e: Exception) {
             Logger.log(TAG, "cleanup own disk files error: ${e.message}")
