@@ -36,6 +36,15 @@
                     android:visibility="visible" />
 
                 <ImageButton
+                    android:id="@+id/btnForceSync"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:src="@drawable/ic_sync"
+                    android:background="@drawable/btn_dark_circle"
+                    android:contentDescription="Синхронизировать"
+                    android:tint="?attr/colorControlNormal" />
+
+                <ImageButton
                     android:id="@+id/btnSearch"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
