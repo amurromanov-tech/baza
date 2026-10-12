@@ -7,6 +7,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.*
 import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.repository.CatalogRepository
@@ -466,6 +467,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             enqueue("item", item.id, "create", item.parentId, item.parentItemId)
+            OutboxLogger.itemChanged(db, item, OutboxEntity.ACTION_CREATE, currentUser)
 
             writeHistory(
                 itemId = item.id,
@@ -505,6 +507,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
+                OutboxLogger.itemsBatchCreated(db, prepared, currentUser)
             }
 
             prepared.forEach { item ->
@@ -549,6 +552,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.itemDao().getItemById(itemId)?.let { parent ->
                     enqueue("item", itemId, "update", parent.parentId, parent.parentItemId)
+                    val freshParent = db.itemDao().getItemById(itemId)
+                    if (freshParent != null) {
+                        OutboxLogger.itemChanged(db, freshParent, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
                     writeHistory(
                         itemId = itemId,
                         itemName = parent.name,
@@ -584,6 +591,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
                 enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+                OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                 writeHistory(
                     itemId = itemId,
@@ -618,6 +626,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val now = System.currentTimeMillis()
                 db.itemDao().archiveItem(itemId, reason, now, note)
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                db.itemDao().getItemById(itemId)?.let { fresh ->
+                    OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                }
 
                 writeHistory(
                     itemId = itemId,
@@ -682,6 +693,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 enqueue("folder", folder.id, "create", parentFolderId, parentItemId)
+                OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
 
                 writeHistory(
                     itemId = parentItemId,
@@ -740,6 +752,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val updated = sub.copy(parentId = null, updatedAt = now)
                     withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                     enqueue("folder", sub.id, "update", null, null)
+                    OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
 
                 items.forEach { item ->
@@ -747,6 +760,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     updated.computeExpiryFields()
                     withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
                     enqueue("item", item.id, "update", null, item.parentItemId)
+                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
 
                 val total = subfolders.size + items.size
@@ -773,6 +787,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (folder != null) {
                     withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
                     enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+                    OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
 
                     writeHistory(
                         itemId = folderId,
@@ -1454,8 +1469,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // ---------- ЗАДАЧИ ----------
-            // Union по id, конфликты по updatedAt. Удаления — по флагу isDeleted
-            // (задача с isDeleted=true с Диска должна примениться локально тоже).
             if (tasksError && diskTasks.isEmpty()) {
                 Logger.log(TAG, "mergeData: tasks download error — SKIP")
             } else if (diskTasks.isEmpty()) {
@@ -1638,6 +1651,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
                         itemId = itemId,
@@ -1672,6 +1686,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
                         itemId = itemId,
@@ -1714,6 +1729,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (item != null) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    db.itemDao().getItemById(itemId)?.let { fresh ->
+                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
 
                     writeHistory(
                         itemId = itemId,
@@ -1745,6 +1763,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (originalId == null) {
                     db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    db.itemDao().getItemById(itemId)?.let { fresh ->
+                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
 
                     writeHistory(
                         itemId = itemId,
@@ -1768,9 +1789,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedOriginal.computeExpiryFields()
                         db.itemDao().updateItem(updatedOriginal)
                         enqueue("item", originalId, "update", original.parentId, original.parentItemId)
+                        OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         db.itemDao().deleteItemById(itemId)
                         enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+                        OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                         val appContext = getApplication<Application>().applicationContext
                         ImageUtils.deleteLocalImage(appContext, itemId)
@@ -1797,6 +1820,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         restored.computeExpiryFields()
                         db.itemDao().updateItem(restored)
                         enqueue("item", itemId, "update", restored.parentId, restored.parentItemId)
+                        OutboxLogger.itemChanged(db, restored, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         writeHistory(
                             itemId = itemId,
@@ -1868,6 +1892,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (count == item.quantity) {
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    db.itemDao().getItemById(itemId)?.let { fresh ->
+                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
 
                     writeHistory(
                         itemId = itemId,
@@ -1901,6 +1928,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         db.itemDao().insertItem(archivedPart)
                     }
                     enqueue("item", newId, "create", item.parentId, item.parentItemId)
+                    OutboxLogger.itemChanged(db, archivedPart, OutboxEntity.ACTION_CREATE, currentUser)
 
                     try {
                         val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -1919,6 +1947,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             db.itemDao().deleteItemById(itemId)
                         }
                         enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+                        OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
                         writeHistory(
@@ -1941,6 +1970,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             db.itemDao().updateItem(updatedOriginal)
                         }
                         enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                        OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         writeHistory(
                             itemId = newId,
@@ -1988,6 +2018,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 writeHistory(
                     itemId = itemId,
@@ -2079,6 +2110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().insertItem(copy)
                 }
                 enqueue("item", newId, "create", resolvedParentId, newParentItemId)
+                OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
 
                 try {
                     val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -2101,6 +2133,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().updateItem(updated)
                 }
                 enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
 
@@ -2181,6 +2214,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     enqueue("item", copy.id, "create", copy.parentId, copy.parentItemId)
+                    OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
 
                     writeHistory(
                         itemId = copy.id,
@@ -2210,6 +2244,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
             enqueue("folder", folder.id, "create", currentFolderId, null)
+            OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
 
             writeHistory(
                 itemId = folder.id,
@@ -2243,6 +2278,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
                     db.folderDao().updateFolder(updated)
                     enqueue("folder", folderId, "update", folder.parentId, folder.parentItemId)
+                    OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
                         itemId = folderId,
@@ -2296,6 +2332,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder?.parentId, folder?.parentItemId)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
 
                 writeHistory(
                     itemId = folderId,
@@ -2409,6 +2446,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 db.folderDao().updateFolder(updated)
                 enqueue("folder", folderId, "update", resolvedParentId, newParentItemId)
+                OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
                 writeHistory(
@@ -2500,6 +2538,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
                 enqueue("item", itemId, "update", resolvedParentId, newParentItemId)
+                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
                 writeHistory(
@@ -2533,6 +2572,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
                     enqueue("item", itemId, "update", item.parentId, item.parentItemId)
+                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
                         itemId = itemId,
@@ -2566,6 +2606,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
                 enqueue("item", item.id, "update", item.parentId, item.parentItemId)
+                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val diffs = buildDiff(old, updated)
                 if (diffs.isNotEmpty()) {
@@ -2656,6 +2697,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val appContext = getApplication<Application>().applicationContext
                     ImageUtils.deleteLocalImage(appContext, itemId)
                     enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+                    OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                     writeHistory(
                         itemId = itemId,
@@ -2696,6 +2738,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
                 enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
+                OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                 writeHistory(
                     itemId = itemId,
@@ -2747,6 +2790,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 db.folderDao().deleteFolderById(folderId)
                 enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
 
                 writeHistory(
                     itemId = folderId,
