@@ -93,6 +93,34 @@ interface TaskDao {
     suspend fun getAllIds(): List<String>
 
     // ============================================================
+    // 🆕 v15: СИНХРОНИЗАЦИЯ
+    // ============================================================
+
+    /**
+     * Все задачи со статусом pending — для SyncManager.
+     */
+    @Query("SELECT * FROM tasks WHERE syncStatus = 'pending'")
+    suspend fun getTasksBySyncStatusPending(): List<TaskEntity>
+
+    /**
+     * Обновить syncStatus у одной задачи.
+     */
+    @Query("UPDATE tasks SET syncStatus = :status WHERE id = :taskId")
+    suspend fun updateSyncStatus(taskId: String, status: String)
+
+    /**
+     * Пометить все переданные задачи как synced.
+     */
+    @Query("UPDATE tasks SET syncStatus = 'synced' WHERE id IN (:ids)")
+    suspend fun markTasksSynced(ids: List<String>)
+
+    /**
+     * Пометить все переданные задачи как pending.
+     */
+    @Query("UPDATE tasks SET syncStatus = 'pending' WHERE id IN (:ids)")
+    suspend fun markTasksPending(ids: List<String>)
+
+    // ============================================================
     // ЗАПИСЬ
     // ============================================================
 
@@ -111,6 +139,9 @@ interface TaskDao {
 
     @Update
     suspend fun update(task: TaskEntity)
+
+    @Update
+    suspend fun updateAll(tasks: List<TaskEntity>)
 
     @Query("DELETE FROM tasks WHERE id = :id")
     suspend fun deleteById(id: String)
