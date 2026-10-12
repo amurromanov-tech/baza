@@ -83,7 +83,20 @@ data class ItemEntity(
     val lentTo: String? = null,
     val lentDate: Long? = null,
     val lentNote: String? = null,
-    val returnDate: Long? = null
+    val returnDate: Long? = null,
+
+    // ===== СИНХРОНИЗАЦИЯ (v15) =====
+    /**
+     * Статус синхронизации записи.
+     *  - "synced"  — запись синхронизирована с Яндекс.Диском.
+     *  - "pending" — запись изменена локально, ждёт отправки в changelog.
+     *  - "conflict" — конфликт при merge (задел на будущее, сейчас не используется).
+     *
+     * Значение по умолчанию после миграции v14 → v15 = "synced":
+     * все существующие записи считаются уже синхронизированными,
+     * чтобы первый запуск v15 не заливал на Диск всю базу.
+     */
+    val syncStatus: String = SYNC_STATUS_SYNCED
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
@@ -95,5 +108,11 @@ data class ItemEntity(
             daysUntilExpiry = Int.MAX_VALUE
             isExpired = false
         }
+    }
+
+    companion object {
+        const val SYNC_STATUS_SYNCED = "synced"
+        const val SYNC_STATUS_PENDING = "pending"
+        const val SYNC_STATUS_CONFLICT = "conflict"
     }
 }
