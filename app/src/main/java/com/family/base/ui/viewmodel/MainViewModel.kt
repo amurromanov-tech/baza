@@ -974,16 +974,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Logger.log(TAG, "syncWithDisk: pending=0 → ничего не менялось локально")
                 }
 
-                // 🆕 v13.2.1: история выгружается ВСЕГДА.
-                val tHistory = System.currentTimeMillis()
-                val uploadedHistory = repository.uploadAllHistoryToDisk()
-                Logger.log(TAG, "TIMING: uploadAllHistoryToDisk took ${System.currentTimeMillis() - tHistory}ms, success=$uploadedHistory")
-                if (uploadedHistory) {
-                    val freshLm = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
-                    if (freshLm != null && freshLm > 0L) {
-                        withContext(Dispatchers.IO) { syncInfoDao.setLastModified(freshLm) }
-                    }
-                }
+                // 🆕 v16.2: uploadAllHistoryToDisk убран — история идёт через changelog.
+                // Скачивание history.json и mergeData для истории оставлены ниже
+                // для обратной совместимости с устройствами на старых версиях.
 
                 // 🆕 v16.1: uploadAllTasksToDisk убран — задачи идут через changelog.
                 // Скачивание tasks.json и mergeData для tasks оставлены ниже
