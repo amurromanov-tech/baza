@@ -11,8 +11,7 @@ import java.util.UUID
  * количества, срока годности, цены, штрих-кода, фото, ревизии,
  * архивации. Зато есть приоритет, дедлайн, повтор, статус выполнения.
  *
- * Синхронизируется отдельным файлом tasks.json (merge-then-upload,
- * по аналогии с history.json).
+ * Синхронизируется через общий changelog (v15), наравне с items и folders.
  */
 @Entity(tableName = "tasks")
 data class TaskEntity(
@@ -107,7 +106,18 @@ data class TaskEntity(
      * чтобы удаление разошлось по всем устройствам.
      * В UI такие задачи не показываются.
      */
-    val isDeleted: Boolean = false
+    val isDeleted: Boolean = false,
+
+    // ===== СИНХРОНИЗАЦИЯ (v15) =====
+    /**
+     * Статус синхронизации записи.
+     *  - "synced"  — запись синхронизирована с Яндекс.Диском.
+     *  - "pending" — запись изменена локально, ждёт отправки в changelog.
+     *  - "conflict" — конфликт при merge (задел на будущее, сейчас не используется).
+     *
+     * Значение по умолчанию после миграции v14 → v15 = "synced".
+     */
+    val syncStatus: String = SYNC_STATUS_SYNCED
 ) {
     companion object {
         const val PRIORITY_LOW = 0
@@ -119,5 +129,9 @@ data class TaskEntity(
         const val RECURRENCE_DAILY = 1
         const val RECURRENCE_WEEKLY = 2
         const val RECURRENCE_MONTHLY = 3
+
+        const val SYNC_STATUS_SYNCED = "synced"
+        const val SYNC_STATUS_PENDING = "pending"
+        const val SYNC_STATUS_CONFLICT = "conflict"
     }
 }
