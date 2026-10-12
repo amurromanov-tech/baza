@@ -102,7 +102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getCurrentFolderId(): String? = currentFolderId
 
-    private suspend fun writeHistory(
+       private suspend fun writeHistory(
         itemId: String,
         itemName: String?,
         action: String,
@@ -110,16 +110,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newValue: String?
     ) {
         try {
-            db.historyDao().insertEntry(
-                HistoryEntry(
-                    itemId = itemId,
-                    itemName = itemName,
-                    action = action,
-                    oldValue = oldValue,
-                    newValue = newValue,
-                    changedBy = currentUser
-                )
+            // 🆕 v16.2: история пишется в БД и одновременно в outbox для changelog.
+            val entry = HistoryEntry(
+                itemId = itemId,
+                itemName = itemName,
+                action = action,
+                oldValue = oldValue,
+                newValue = newValue,
+                changedBy = currentUser
             )
+            OutboxLogger.historyAdded(db, entry, currentUser)
         } catch (e: Exception) {
             Logger.log(TAG, "writeHistory error: action=$action, itemId=$itemId, ${e.message}")
         }
