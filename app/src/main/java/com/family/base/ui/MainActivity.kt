@@ -279,6 +279,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
         binding.btnSearch.setOnClickListener { showSearchDialog() }
+        binding.btnForceSync.setOnClickListener {
+            val started = viewModel.forceSync()
+            val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
