@@ -1,6 +1,7 @@
 package com.family.base.data.local
 
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.TaskEntity
@@ -11,17 +12,15 @@ import com.google.gson.Gson
  * Единая точка записи изменений в outbox (changelog).
  *
  * Вызывается из MainViewModel / TaskRepository при каждом
- * локальном изменении Item / Folder / Task.
+ * локальном изменении Item / Folder / Task / History.
  *
  * Отвечает за:
  *  - Сериализацию entity в JSON.
  *  - Формирование OutboxEntity.
  *  - Вставку в БД (через OutboxDao).
- *  - Пометку syncStatus = "pending" у самой сущности
- *    (это делает вызывающая сторона, чтобы не плодить updateItem здесь).
  *
  * ⚠️ НЕ вызывает сеть. Только локальная запись.
- * Отправка на Диск — задача SyncManager (Шаг 3).
+ * Отправка на Диск — задача SyncManager.
  */
 object OutboxHelper {
 
@@ -103,6 +102,34 @@ object OutboxHelper {
             Logger.log(TAG, "logTask: action=$action, id=${task.id}, title='${task.title}'")
         } catch (e: Exception) {
             Logger.log(TAG, "logTask ERROR: action=$action, id=${task.id}, ${e.message}")
+        }
+    }
+
+    /**
+     * 🆕 v16.2: Записать новую запись истории в outbox.
+     *
+     * История — append-only. Поэтому action всегда "create".
+     * entityId = HistoryEntry.id.
+     */
+    suspend fun logHistory(
+        db: AppDatabase,
+        entry: HistoryEntry,
+        changedBy: String
+    ) {
+        try {
+            val json = gson.toJson(entry)
+            val outbox = OutboxEntity(
+                entityType = OutboxEntity.ENTITY_HISTORY,
+                entityId = entry.id,
+                action = OutboxEntity.ACTION_CREATE,
+                payloadJson = json,
+                changedBy = changedBy,
+                createdAt = System.currentTimeMillis()
+            )
+            db.outboxDao().insert(outbox)
+            Logger.log(TAG, "logHistory: id=${entry.id}, action=${entry.action}, itemId=${entry.itemId}")
+        } catch (e: Exception) {
+            Logger.log(TAG, "logHistory ERROR: id=${entry.id}, ${e.message}")
         }
     }
 
