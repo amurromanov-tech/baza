@@ -1,6 +1,7 @@
 package com.family.base.data.local
 
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.TaskEntity
@@ -12,18 +13,10 @@ import com.family.base.util.Logger
  * Отличие от OutboxHelper:
  *  - OutboxHelper только пишет в outbox.
  *  - OutboxLogger — пишет в outbox И помечает syncStatus = "pending"
- *    у самой сущности в БД (items/folders/tasks).
+ *    у самой сущности в БД (items/folders/tasks), когда это применимо.
  *
- * Так гарантируется, что:
- *  1. Любое изменение попадает в outbox.
- *  2. У сущности в БД выставлен признак "не синхронизировано".
- *
- * Использование:
- *   OutboxLogger.itemChanged(db, item, ACTION_UPDATE, currentUser)
- *   OutboxLogger.folderDeleted(db, folderId, currentUser, nameHint)
- *   OutboxLogger.taskChanged(db, task, ACTION_CREATE, currentUser)
- *
- * ⚠️ Сетевых вызовов нет — только локальная запись.
+ * Для History никакого syncStatus нет — история append-only,
+ * поэтому метод historyAdded просто пишет в outbox.
  */
 object OutboxLogger {
 
@@ -33,10 +26,6 @@ object OutboxLogger {
     // ITEM
     // ============================================================
 
-    /**
-     * Item изменён (create / update).
-     * Помечает syncStatus = pending и логирует в outbox.
-     */
     suspend fun itemChanged(
         db: AppDatabase,
         item: ItemEntity,
@@ -52,10 +41,6 @@ object OutboxLogger {
         }
     }
 
-    /**
-     * Item удалён (hard-delete).
-     * Сущности уже нет в БД — пишем минимальный delete-пакет.
-     */
     suspend fun itemDeleted(
         db: AppDatabase,
         itemId: String,
@@ -152,13 +137,38 @@ object OutboxLogger {
     }
 
     // ============================================================
-    // БАТЧ-ОПЕРАЦИИ
+    // 🆕 v16.2: HISTORY
     // ============================================================
 
     /**
-     * Массовая запись items (например, после импорта из чека).
-     * Помечает все как pending и логирует каждую.
+     * Записать новую запись истории в outbox.
+     *
+     * История append-only: каждая новая запись уходит в changelog
+     * как отдельный "create". Удаления и обновления истории
+     * не поддерживаются (это лог).
+     *
+     * ВАЖНО: не нужно предварительно вызывать db.historyDao().insertEntry() —
+     * делаем это здесь, чтобы не забыть.
      */
+    suspend fun historyAdded(
+        db: AppDatabase,
+        entry: HistoryEntry,
+        changedBy: String
+    ) {
+        try {
+            // Вставляем запись в историю
+            db.historyDao().insertEntry(entry)
+            // И пишем в outbox для отправки в changelog
+            OutboxHelper.logHistory(db, entry, changedBy)
+        } catch (e: Exception) {
+            Logger.log(TAG, "historyAdded ERROR: id=${entry.id}, ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // БАТЧ-ОПЕРАЦИИ
+    // ============================================================
+
     suspend fun itemsBatchCreated(
         db: AppDatabase,
         items: List<ItemEntity>,
