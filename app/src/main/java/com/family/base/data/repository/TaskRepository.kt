@@ -3,8 +3,10 @@ package com.family.base.data.repository
 import android.content.Context
 import com.family.base.AppUser
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.entity.TaskEntity
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.OutboxEntity
+import com.family.base.data.local.entity.TaskEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -17,8 +19,9 @@ import kotlinx.coroutines.withContext
  *  - Логику повторов (создание клона при выполнении)
  *  - Счётчик активных задач
  *  - Soft-delete
+ *  - 🆕 v15: логирование изменений в outbox (changelog)
  *
- * НЕ отвечает за синхронизацию — это в CatalogRepository.
+ * НЕ отвечает за синхронизацию — это в CatalogRepository / SyncManager.
  */
 class TaskRepository(
     private val context: Context,
@@ -36,7 +39,8 @@ class TaskRepository(
      * Гарантирует, что системная папка «🏠 Домашние дела» существует.
      * Если нет — создаёт с фиксированным id и systemKey = home_tasks.
      *
-     * Вызывается при старте приложения (BaseApplication).
+     * 🆕 v15: при создании папки пишем в outbox, чтобы она ушла
+     * на Диск и появилась на других устройствах.
      */
     suspend fun ensureSystemFolder(createdBy: String) = withContext(Dispatchers.IO) {
         val existing = folderDao.getFolderById(FolderEntity.SYSTEM_ID_HOME_TASKS)
@@ -52,6 +56,12 @@ class TaskRepository(
                 systemKey = FolderEntity.SYSTEM_KEY_HOME_TASKS
             )
             folderDao.insertFolder(folder)
+            OutboxLogger.folderChanged(
+                db = db,
+                folder = folder,
+                action = OutboxEntity.ACTION_CREATE,
+                changedBy = createdBy
+            )
         }
     }
 
@@ -106,6 +116,12 @@ class TaskRepository(
             updatedAt = System.currentTimeMillis()
         )
         taskDao.insert(task)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = task,
+            action = OutboxEntity.ACTION_CREATE,
+            changedBy = createdBy
+        )
         task
     }
 
@@ -116,6 +132,12 @@ class TaskRepository(
     suspend fun updateTask(task: TaskEntity): TaskEntity = withContext(Dispatchers.IO) {
         val updated = task.copy(updatedAt = System.currentTimeMillis())
         taskDao.update(updated)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = updated.createdBy
+        )
         updated
     }
 
@@ -129,7 +151,7 @@ class TaskRepository(
      * Если у задачи recurrence != NONE — автоматически создаётся
      * новая задача-клон с dueDate + period и recurrenceSource = originalId.
      *
-     * Возвращает пару: (обновлённая задача, созданный клон или null).
+     * 🆕 v15: обе задачи (выполненная + клон) уходят в outbox.
      */
     suspend fun markDone(
         taskId: String,
@@ -146,6 +168,12 @@ class TaskRepository(
             updatedAt = now
         )
         taskDao.update(done)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = done,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = doneBy
+        )
 
         val clone = if (task.recurrence != TaskEntity.RECURRENCE_NONE) {
             createRecurrenceClone(task, doneBy)
@@ -169,11 +197,18 @@ class TaskRepository(
             updatedAt = System.currentTimeMillis()
         )
         taskDao.update(updated)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = updated.createdBy
+        )
         updated
     }
 
     /**
      * Создаёт клон повторяющейся задачи со сдвигом dueDate.
+     * 🆕 v15: клон тоже пишется в outbox.
      */
     private suspend fun createRecurrenceClone(
         original: TaskEntity,
@@ -196,6 +231,12 @@ class TaskRepository(
             updatedAt = System.currentTimeMillis()
         )
         taskDao.insert(clone)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = clone,
+            action = OutboxEntity.ACTION_CREATE,
+            changedBy = createdBy
+        )
         return clone
     }
 
@@ -225,6 +266,9 @@ class TaskRepository(
      * Soft-delete: помечает isDeleted = true.
      * Задача остаётся в БД и синкается как удалённая,
      * чтобы удаление разошлось по всем устройствам.
+     *
+     * 🆕 v15: изменение уходит в outbox (ACTION_UPDATE, потому что
+     * задача не физически удалена, а помечена флагом).
      */
     suspend fun softDelete(taskId: String) = withContext(Dispatchers.IO) {
         val task = taskDao.getById(taskId) ?: return@withContext
@@ -233,6 +277,12 @@ class TaskRepository(
             updatedAt = System.currentTimeMillis()
         )
         taskDao.update(updated)
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = updated.createdBy
+        )
     }
 
     // ============================================================
@@ -247,10 +297,17 @@ class TaskRepository(
         taskDao.getAllIds()
     }
 
+    /**
+     * ⚠️ НЕ логируется в outbox: это входящие данные с Диска,
+     * их обратно отправлять не надо.
+     */
     suspend fun insertAllIgnore(tasks: List<TaskEntity>) = withContext(Dispatchers.IO) {
         taskDao.insertAllIgnore(tasks)
     }
 
+    /**
+     * ⚠️ НЕ логируется в outbox: используется при merge.
+     */
     suspend fun insertAll(tasks: List<TaskEntity>) = withContext(Dispatchers.IO) {
         taskDao.insertAll(tasks)
     }
