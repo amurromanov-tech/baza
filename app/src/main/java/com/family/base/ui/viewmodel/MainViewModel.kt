@@ -7,11 +7,15 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.DeviceIdProvider
 import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.*
 import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.data.repository.TaskRepository
+import com.family.base.data.sync.ChangelogParser
+import com.family.base.data.sync.SyncManager
+import com.family.base.data.sync.SyncManagerApi
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +55,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val syncQueueDao = db.syncQueueDao()
     private val syncInfoDao = db.syncInfoDao()
     private val settingsDao = db.settingsDao()
+
+    // 🆕 v16 Шаг 3.4: changelog-синхронизация
+    private val syncManagerApi = SyncManagerApi()
+    private val changelogParser by lazy {
+        ChangelogParser(db, DeviceIdProvider.get(application.applicationContext))
+    }
+    private val syncManager by lazy {
+        SyncManager(db, changelogParser, syncManagerApi)
+    }
 
     val currentEntries = MutableLiveData<List<Any>>()
     val currentPath = MutableLiveData<String>()
@@ -921,6 +934,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
 
+                    // 🆕 v16 Шаг 3.4: changelog-синхронизация при первом запуске
+                    try {
+                        syncProgress.postValue(
+                            SyncProgress(SyncPhase.SENDING, 0, 1, "Синхронизация изменений (changelog)…")
+                        )
+                        val changelogResult = syncManager.syncChangelogs()
+                        Logger.log(
+                            TAG,
+                            "syncWithDisk: changelog (first launch) DONE — pushed=${changelogResult.pushedBatches}/${changelogResult.pushedEntries}, " +
+                                "pulled=${changelogResult.pulledBatches} applied=${changelogResult.pulledEntriesApplied} " +
+                                "skipped=${changelogResult.pulledEntriesSkipped} errors=${changelogResult.pulledErrors}"
+                        )
+                        uploadedCount += changelogResult.pushedEntries
+                        downloadedCount += changelogResult.pulledEntriesApplied
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "syncWithDisk: changelog (first launch) error: ${e.message}", e)
+                    }
+
                     finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
                     return@launch
                 }
@@ -1043,6 +1074,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
 
                 Logger.log(TAG, "TIMING: photo block total took ${System.currentTimeMillis() - tPhotoBlock}ms")
+
+                // 🆕 v16 Шаг 3.4: changelog-синхронизация (в дополнение к старой)
+                try {
+                    syncProgress.postValue(
+                        SyncProgress(SyncPhase.SENDING, 0, 1, "Синхронизация изменений (changelog)…")
+                    )
+                    val changelogResult = syncManager.syncChangelogs()
+                    Logger.log(
+                        TAG,
+                        "syncWithDisk: changelog DONE — pushed=${changelogResult.pushedBatches}/${changelogResult.pushedEntries}, " +
+                            "pulled=${changelogResult.pulledBatches} applied=${changelogResult.pulledEntriesApplied} " +
+                            "skipped=${changelogResult.pulledEntriesSkipped} errors=${changelogResult.pulledErrors}"
+                    )
+                    uploadedCount += changelogResult.pushedEntries
+                    downloadedCount += changelogResult.pulledEntriesApplied
+                } catch (e: Exception) {
+                    Logger.log(TAG, "syncWithDisk: changelog error: ${e.message}", e)
+                }
 
                 finalizeSync(uploadedCount, downloadedCount, startedAt, localItemsCount, localFoldersCount)
 
