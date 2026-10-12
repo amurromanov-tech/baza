@@ -1085,7 +1085,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         localFoldersCount: Int
     ) {
         val tPendingCount = System.currentTimeMillis()
-        val pendingCount = syncQueueDao.getPendingCount()
+        // 🆕 v16.2: pending считаем по outbox (changelog), а НЕ по старой sync_queue.
+        // Старая sync_queue отключена и не обрабатывается — если смотреть на неё,
+        // статус всегда будет "pending", даже когда всё синхронизировано.
+        val pendingCount = db.outboxDao().getPendingCount()
         Logger.log(TAG, "TIMING: finalizeSync getPendingCount took ${System.currentTimeMillis() - tPendingCount}ms")
 
         if (pendingCount > 0) {
