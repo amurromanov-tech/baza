@@ -1843,7 +1843,8 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 segments.add("📁 ${folder.name}")
                 currentFolderId = folder.parentId
-                currentParentItemId = folder.parentItemId                continue
+                currentParentItemId = folder.parentItemId 
+                continue
             }
 
             break
