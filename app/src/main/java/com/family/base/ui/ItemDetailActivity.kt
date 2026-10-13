@@ -561,6 +561,8 @@ class ItemDetailActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     binding.tvTitle.text = "Редактирование: ${item.name}"
                     viewController.showViewMode(false)
+                    currentEditType = item.itemType ?: "thing"
+                    selectedEditSubtype = item.itemSubtype
                     viewController.fillEditFields(
                         item = item,
                         path = path,
