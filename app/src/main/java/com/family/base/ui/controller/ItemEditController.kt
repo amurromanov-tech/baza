@@ -1,4 +1,4 @@
- package com.family.base.ui.controller
+package com.family.base.ui.controller
 
 import android.app.DatePickerDialog
 import android.widget.ArrayAdapter
@@ -10,14 +10,12 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.model.SubtypeCatalog
 import com.family.base.databinding.ActivityItemDetailBinding
 import com.family.base.ui.viewmodel.MainViewModel
-import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -178,7 +176,12 @@ class ItemEditController(
                 }
 
                 val newItemSubtype = selectedEditSubtypeProvider()
-                if (newItemSubtype.isNullOrEmpty()) {
+                val subtypeIsEmpty = newItemSubtype.isNullOrEmpty()
+                val subtypeBelongsToType = if (!subtypeIsEmpty) {
+                    SubtypeCatalog.getSubtypes(newItemType).any { it.key == newItemSubtype }
+                } else false
+
+                if (subtypeIsEmpty || !subtypeBelongsToType) {
                     android.widget.Toast.makeText(
                         activity,
                         "Выберите подтип",
@@ -195,10 +198,6 @@ class ItemEditController(
                     "Save: type=$newItemType, subtype=$newItemSubtype, purchaseDate=$purchaseDate"
                 )
 
-                // newImageBytes — если было выбрано новое фото, imageUrl сбрасывается,
-                // и ниже фото сохраняется локально. Иначе оставляем прежний imageUrl.
-                // Само поле newImageBytes контроллеру неизвестно — фото сохраняет
-                // ItemPhotoController.savePendingPhoto(id), который вызывается до этого.
                 val newImageUrl = item.imageUrl
 
                 val updated = item.copy(
