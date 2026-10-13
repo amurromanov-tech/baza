@@ -50,6 +50,7 @@ import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -95,6 +96,9 @@ class ItemDetailActivity : AppCompatActivity() {
     private val APPEAR_STAGGER = 50L
 
     private var currentItem: ItemEntity? = null
+
+    // 🆕 Ссылка на фоновую задачу загрузки фото (для отмены при повторном вызове)
+    private var photoLoadJob: Job? = null
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
@@ -343,6 +347,108 @@ class ItemDetailActivity : AppCompatActivity() {
         }
 
         binding.etPurchaseDate.setOnClickListener { showPurchaseDatePickerDialog() }
+    }
+
+    // ============================================================
+    // 🆕 ТИХАЯ ЗАГРУЗКА ФОТО ИЗ ОБЛАКА
+    // ============================================================
+    /**
+     * Проверяет локально: есть ли фото. Если нет — тихо качает из облака
+     * в глобальном скоупе BaseApplication.applicationScope.
+     *
+     * Особенности:
+     *  - прогресс-бар photoLoadingBar — тонкий, полупрозрачный;
+     *  - никаких Toast'ов и плашек синхронизации;
+     *  - задача не прерывается при сворачивании или закрытии карточки;
+     *  - если активити ещё жива — обновляем ivPhoto; если нет — фото
+     *    просто сохранится локально и будет видно при следующем открытии.
+     */
+    private fun loadPhotoInBackground(id: String) {
+        // Не запускаем повторно, если уже качается для этого же id
+        if (photoLoadJob?.isActive == true) {
+            Logger.log(TAG, "loadPhotoInBackground: already running, skip $id")
+            return
+        }
+
+        // Проверяем локально — если файл уже есть, ничего не делаем
+        val localFile = ImageUtils.getLocalImageFile(this, id)
+        if (localFile != null && localFile.exists() && localFile.length() > 0L) {
+            Logger.log(TAG, "loadPhotoInBackground: local file exists, skip $id")
+            return
+        }
+
+        // Показываем тонкий прогресс-бар поверх заглушки
+        if (!isFinishing && !isDestroyed) {
+            binding.photoLoadingBar.visibility = View.VISIBLE
+        }
+
+        photoLoadJob = BaseApplication.applicationScope.launch {
+            val bytes = try {
+                repository.downloadItemImageBytes(id)
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadPhotoInBackground: download error for $id: ${e.message}")
+                null
+            }
+
+            if (bytes == null || bytes.isEmpty()) {
+                Logger.log(TAG, "loadPhotoInBackground: no photo on disk for $id (or error)")
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        binding.photoLoadingBar.visibility = View.GONE
+                    }
+                }
+                return@launch
+            }
+
+            // Сохраняем локально
+            try {
+                ImageUtils.saveImageLocally(applicationContext, id, bytes)
+                Logger.log(TAG, "loadPhotoInBackground: saved locally $id (${bytes.size} bytes)")
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadPhotoInBackground: save error for $id: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        binding.photoLoadingBar.visibility = View.GONE
+                    }
+                }
+                return@launch
+            }
+
+            // Обновляем imageUrl в БД, если он был пустой — чтобы при следующем
+            // changelog-синке это уехало на другие устройства (как update)
+            try {
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
+                if (item != null && item.imageUrl.isNullOrEmpty()) {
+                    val updated = item.copy(
+                        imageUrl = "images/$id.jpg",
+                        updatedDate = System.currentTimeMillis(),
+                        updatedBy = "photo-loader"
+                    )
+                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                    Logger.log(TAG, "loadPhotoInBackground: imageUrl updated in DB for $id")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadPhotoInBackground: DB update error for $id: ${e.message}")
+            }
+
+            // Обновляем UI, если активити ещё жива
+            withContext(Dispatchers.Main) {
+                if (isFinishing || isDestroyed) {
+                    Logger.log(TAG, "loadPhotoInBackground: activity gone, skip UI update for $id")
+                    return@withContext
+                }
+
+                val freshFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
+                if (freshFile != null && freshFile.exists()) {
+                    binding.ivPhoto.load(freshFile) { crossfade(true) }
+                    binding.ivPhoto.visibility = View.VISIBLE
+                    binding.ivPhotoPlaceholder.visibility = View.GONE
+                    binding.photoOverlay.visibility = View.VISIBLE
+                    Logger.log(TAG, "loadPhotoInBackground: UI updated for $id")
+                }
+                binding.photoLoadingBar.visibility = View.GONE
+            }
+        }
     }
 
     // ============================================================
@@ -732,6 +838,14 @@ class ItemDetailActivity : AppCompatActivity() {
         super.onResume()
         if (itemId != null) {
             loadNestedContent()
+
+            // 🆕 Тихая проверка/дозагрузка фото при возврате в карточку
+            if (!isEditMode) {
+                val localFile = ImageUtils.getLocalImageFile(this, itemId!!)
+                if (localFile == null || !localFile.exists()) {
+                    loadPhotoInBackground(itemId!!)
+                }
+            }
         }
     }
 
@@ -1426,6 +1540,9 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhoto.visibility = View.GONE
                         binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                         binding.photoOverlay.visibility = View.VISIBLE
+
+                        // 🆕 Фото нет локально — тихо качаем из облака
+                        loadPhotoInBackground(itemId)
                     }
 
                     if (item.isLent && !item.lentTo.isNullOrEmpty()) {
@@ -1489,6 +1606,9 @@ class ItemDetailActivity : AppCompatActivity() {
                         binding.ivPhotoPlaceholder.visibility = View.VISIBLE
                         binding.photoOverlay.visibility = View.VISIBLE
                         binding.btnAddPhoto.visibility = View.VISIBLE
+
+                        // 🆕 Фото нет локально — тихо качаем из облака
+                        loadPhotoInBackground(itemId)
                     }
 
                     binding.cardLentInfo.visibility = View.GONE
@@ -1723,8 +1843,7 @@ class ItemDetailActivity : AppCompatActivity() {
 
                 segments.add("📁 ${folder.name}")
                 currentFolderId = folder.parentId
-                currentParentItemId = folder.parentItemId
-                continue
+                currentParentItemId = folder.parentItemId                continue
             }
 
             break
@@ -2263,6 +2382,8 @@ class ItemDetailActivity : AppCompatActivity() {
         totalPriceAnimator?.cancel()
         stopStatusPulse()
         stopRepeat()
+        // 🆕 photoLoadJob НЕ отменяем — задача живёт в BaseApplication.applicationScope
+        // и должна докачаться, даже если активити закрыли.
         Logger.log(TAG, "onDestroy called")
     }
 }
