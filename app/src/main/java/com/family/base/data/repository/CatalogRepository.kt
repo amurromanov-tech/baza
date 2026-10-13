@@ -1177,6 +1177,64 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
+    /**
+     * 🆕 Тихая загрузка фото предмета в виде сырых байтов (без декодирования в Bitmap).
+     * Используется в ItemDetailActivity для фонового докачивания фото при открытии карточки.
+     *
+     * Возвращает:
+     *  - ByteArray — если файл на Диске есть и скачался;
+     *  - null — если файла нет (404), нет сети, нет токена или любая другая ошибка.
+     */
+    suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "downloadItemImageBytes: DNS blocked, skip $itemId")
+                    return@withContext null
+                }
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "downloadItemImageBytes: no auth, skip $itemId")
+                    return@withContext null
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/images/$itemId.jpg"
+
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadItemImageBytes: no file on disk for $itemId (code=${urlResponse.code()})")
+                    return@withContext null
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "downloadItemImageBytes: href null for $itemId")
+                    return@withContext null
+                }
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadItemImageBytes: download failed for $itemId (code=${downloadResponse.code()})")
+                    return@withContext null
+                }
+                val bytes = downloadResponse.body()?.bytes()
+                if (bytes == null || bytes.isEmpty()) {
+                    Logger.log(TAG, "downloadItemImageBytes: empty bytes for $itemId")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadItemImageBytes: OK $itemId (${bytes.size} bytes)")
+                return@withContext bytes
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "downloadItemImageBytes: DNS failure for $itemId: ${e.message}")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadItemImageBytes error for $itemId: ${e.message}")
+                null
+            }
+        }
+    }
+
     // ============================================================
     // ЛОГИ
     // ============================================================
