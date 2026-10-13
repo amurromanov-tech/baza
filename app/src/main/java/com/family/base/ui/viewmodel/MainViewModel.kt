@@ -54,6 +54,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val syncInfoDao = db.syncInfoDao()
     private val settingsDao = db.settingsDao()
 
+    // 🆕 A1: делегат истории
+    private val historyViewModel = HistoryViewModel(db) { currentUser }
+
     // 🆕 v16 Шаг 3.4: changelog-синхронизация
     private val syncManagerApi = SyncManagerApi()
     private val changelogParser by lazy {
@@ -100,28 +103,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getCurrentFolderId(): String? = currentFolderId
 
-       private suspend fun writeHistory(
+    // ============================================================
+    // ИСТОРИЯ (делегат HistoryViewModel)
+    // ============================================================
+
+    private suspend fun writeHistory(
         itemId: String,
         itemName: String?,
         action: String,
         oldValue: String?,
         newValue: String?
     ) {
-        try {
-            // 🆕 v16.2: история пишется в БД и одновременно в outbox для changelog.
-            val entry = HistoryEntry(
-                itemId = itemId,
-                itemName = itemName,
-                action = action,
-                oldValue = oldValue,
-                newValue = newValue,
-                changedBy = currentUser
-            )
-            OutboxLogger.historyAdded(db, entry, currentUser)
-        } catch (e: Exception) {
-            Logger.log(TAG, "writeHistory error: action=$action, itemId=$itemId, ${e.message}")
-        }
+        historyViewModel.writeHistory(itemId, itemName, action, oldValue, newValue)
     }
+
+    private suspend fun migrateOldHistoryEntries() {
+        historyViewModel.migrateOldHistoryEntries()
+    }
+
+    // ============================================================
+    // СТАРТОВАЯ ИНИЦИАЛИЗАЦИЯ
+    // ============================================================
 
     private suspend fun checkFirstLaunch() {
         try {
@@ -217,115 +219,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun migrateOldHistoryEntries() {
-        val settings = settingsDao.getSettings()
-        if (settings?.historyMigratedV12 == true) {
-            Logger.log(TAG, "migrateOldHistoryEntries: already done, skipping")
-            return
-        }
-
-        Logger.log(TAG, "migrateOldHistoryEntries: START")
-
-        val entriesWithoutName = db.historyDao().getEntriesWithoutItemName()
-        Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithoutName.size} entries without itemName")
-
-        var nameFilledCount = 0
-        for (entry in entriesWithoutName) {
-            val item = db.itemDao().getItemById(entry.itemId)
-            if (item != null) {
-                try {
-                    db.historyDao().updateItemName(entry.id, item.name)
-                    nameFilledCount++
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to update itemName for entry ${entry.id}: ${e.message}")
-                }
-                continue
-            }
-
-            val folder = db.folderDao().getFolderById(entry.itemId)
-            if (folder != null) {
-                try {
-                    db.historyDao().updateItemName(entry.id, folder.name)
-                    nameFilledCount++
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to update itemName for folder entry ${entry.id}: ${e.message}")
-                }
-                continue
-            }
-        }
-        Logger.log(TAG, "migrateOldHistoryEntries: filled itemName for $nameFilledCount entries")
-
-        val entriesWithRawCodes = db.historyDao().getEntriesWithRawTypeCodes()
-        Logger.log(TAG, "migrateOldHistoryEntries: found ${entriesWithRawCodes.size} entries with raw type codes")
-
-        var rawFixedCount = 0
-        for (entry in entriesWithRawCodes) {
-            val newOld = entry.oldValue?.let { replaceRawCodes(it) }
-            val newNew = entry.newValue?.let { replaceRawCodes(it) }
-
-            if (newOld != entry.oldValue || newNew != entry.newValue) {
-                try {
-                    db.historyDao().updateEntryFields(
-                        entryId = entry.id,
-                        itemName = entry.itemName,
-                        oldValue = newOld,
-                        newValue = newNew
-                    )
-                    rawFixedCount++
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to update entry ${entry.id}: ${e.message}")
-                }
-            }
-        }
-        Logger.log(TAG, "migrateOldHistoryEntries: fixed raw codes in $rawFixedCount entries")
-
-        try {
-            val current = settingsDao.getSettings() ?: SettingsEntity()
-            settingsDao.insertOrUpdateSettings(current.copy(historyMigratedV12 = true))
-            Logger.log(TAG, "migrateOldHistoryEntries: DONE, flag set to true")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Failed to set historyMigratedV12 flag: ${e.message}")
-        }
-    }
-
-    private fun replaceRawCodes(text: String): String {
-        var result = text
-
-        val typeMap = mapOf(
-            "thing" to "📦 Предмет",
-            "food" to "🍎 Еда",
-            "medicine" to "💊 Лекарство",
-            "other" to "🗂 Другое"
-        )
-        typeMap.forEach { (code, display) ->
-            result = replaceWholeWord(result, code, display)
-        }
-
-        try {
-            for (type in listOf("food", "medicine", "thing", "other")) {
-                val subtypes = SubtypeCatalog.getSubtypes(type)
-                subtypes.forEach { subtype ->
-                    if (subtype.key.isNotEmpty()) {
-                        result = replaceWholeWord(result, subtype.key, subtype.displayName)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "replaceRawCodes: SubtypeCatalog error: ${e.message}")
-        }
-
-        return result
-    }
-
-    private fun replaceWholeWord(text: String, word: String, replacement: String): String {
-        if (word.isEmpty()) return text
-        return try {
-            text.replace(Regex("\\b${Regex.escape(word)}\\b"), replacement)
-        } catch (e: Exception) {
-            text
-        }
-    }
-
     private suspend fun fixOldImageUrls() {
         val appContext = getApplication<Application>().applicationContext
         val allItems = db.itemDao().getAllItemsWithImageUrl()
@@ -370,6 +263,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         Logger.log(TAG, "Fixed $fixedCount bad folder iconUrls")
     }
+
+    // ============================================================
+    // НАВИГАЦИЯ
+    // ============================================================
 
     fun navigateToFolder(folderId: String?) {
         currentFolderId = folderId
@@ -447,6 +344,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ПРЕДМЕТЫ — СОЗДАНИЕ
+    // ============================================================
+
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
@@ -508,6 +409,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             0
         }
     }
+
+    // ============================================================
+    // ДЕТИ ПРЕДМЕТА
+    // ============================================================
 
     fun getChildrenCount(itemId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
@@ -685,6 +590,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ПАПКИ — ДЕТИ И ОТВЯЗКА
+    // ============================================================
+
     fun getFolderChildrenCount(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
@@ -799,6 +708,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // СИНХРОНИЗАЦИЯ
+    // ============================================================
+
     fun syncWithDisk() {
         applicationScope.launch {
             if (!syncMutex.tryLock()) {
@@ -889,7 +802,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) { syncInfoDao.setLastModified(diskLastModified) }
                     }
 
-                    // 🆕 v16 Шаг 3.4: changelog-синхронизация при первом запуске
                     try {
                         syncProgress.postValue(
                             SyncProgress(SyncPhase.SENDING, 0, 1, "Синхронизация изменений (changelog)…")
@@ -911,9 +823,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                 // 🆕 v16.1: старая логика upload отключена — всё идёт через changelog.
-                // uploadAllFoldersToDisk / uploadAllItemsToDisk / processPendingChangesInternal
-                // больше не вызываются. Changelog (ниже) сам обработает pending-записи.
                 if (outboxPendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: outboxPending=$outboxPendingCount → changelog push")
 
@@ -928,14 +837,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     Logger.log(TAG, "syncWithDisk: outboxPending=0 → ничего не менялось локально")
                 }
-
-                // 🆕 v16.2: uploadAllHistoryToDisk убран — история идёт через changelog.
-                // Скачивание history.json и mergeData для истории оставлены ниже
-                // для обратной совместимости с устройствами на старых версиях.
-
-                // 🆕 v16.1: uploadAllTasksToDisk убран — задачи идут через changelog.
-                // Скачивание tasks.json и mergeData для tasks оставлены ниже
-                // для обратной совместимости с другими устройствами.
 
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
 
@@ -999,7 +900,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 Logger.log(TAG, "TIMING: photo block total took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
-                // 🆕 v16 Шаг 3.4: changelog-синхронизация (в дополнение к старой)
                 try {
                     syncProgress.postValue(
                         SyncProgress(SyncPhase.SENDING, 0, 1, "Синхронизация изменений (changelog)…")
@@ -1040,9 +940,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         localFoldersCount: Int
     ) {
         val tPendingCount = System.currentTimeMillis()
-        // 🆕 v16.2: pending считаем по outbox (changelog), а НЕ по старой sync_queue.
-        // Старая sync_queue отключена и не обрабатывается — если смотреть на неё,
-        // статус всегда будет "pending", даже когда всё синхронизировано.
         val pendingCount = db.outboxDao().getPendingCount()
         Logger.log(TAG, "TIMING: finalizeSync getPendingCount took ${System.currentTimeMillis() - tPendingCount}ms")
 
@@ -1474,6 +1371,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ЗАЙМ
+    // ============================================================
+
     fun lendItem(itemId: String, personName: String, note: String? = null) {
         Logger.log(TAG, "lendItem: $itemId to $personName")
         viewModelScope.launch {
@@ -1546,6 +1447,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             db.itemDao().getLentItems()
         }
     }
+
+    // ============================================================
+    // АРХИВ
+    // ============================================================
 
     fun archiveItem(
         itemId: String,
@@ -1680,6 +1585,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity> {
         return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
     }
+
+    // ============================================================
+    // СПИСАНИЕ
+    // ============================================================
 
     fun writeOffItem(
         itemId: String,
@@ -1827,6 +1736,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // РЕВИЗИЯ
+    // ============================================================
+
     fun markRevision(itemId: String) {
         Logger.log(TAG, "markRevision: itemId=$itemId")
         viewModelScope.launch {
@@ -1868,6 +1781,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sdf = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
         return sdf.format(java.util.Date(timestamp))
     }
+
+    // ============================================================
+    // РАЗДЕЛЕНИЕ И ПЕРЕМЕЩЕНИЕ
+    // ============================================================
 
     fun splitAndMoveItem(
         itemId: String,
@@ -2018,6 +1935,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // КОПИРОВАНИЕ
+    // ============================================================
+
     fun copyItem(itemId: String) {
         viewModelScope.launch {
             try {
@@ -2055,6 +1976,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // ============================================================
+    // ПАПКИ — CRUD
+    // ============================================================
 
     fun createFolder(name: String) {
         val folder = FolderEntity(
@@ -2169,6 +2094,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // ============================================================
+    // ПЕРЕМЕЩЕНИЯ
+    // ============================================================
 
     private suspend fun isFolderDescendantOf(folderId: String, potentialAncestorId: String): Boolean {
         if (folderId == potentialAncestorId) return true
@@ -2375,6 +2304,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // ОБНОВЛЕНИЕ ПРЕДМЕТА
+    // ============================================================
+
     fun updateItemQuantity(itemId: String, newQty: Int) {
         viewModelScope.launch {
             try {
@@ -2505,6 +2438,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun truncate(text: String, max: Int): String =
         if (text.length <= max) text else text.take(max) + "…"
 
+    // ============================================================
+    // УДАЛЕНИЕ
+    // ============================================================
+
     fun deleteItem(itemId: String) {
         viewModelScope.launch {
             try {
@@ -2623,6 +2560,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // ============================================================
+    // СИЛА-СИНК / ПОИСК / ПРОЧЕЕ
+    // ============================================================
 
     fun forceSync(): Boolean {
         if (forceSyncJob?.isActive == true) {
