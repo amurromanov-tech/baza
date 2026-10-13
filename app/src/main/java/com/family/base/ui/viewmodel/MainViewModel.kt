@@ -7,9 +7,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.*
-import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.data.repository.TaskRepository
 import com.family.base.data.sync.ChangelogParser
@@ -54,8 +52,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val syncInfoDao = db.syncInfoDao()
     private val settingsDao = db.settingsDao()
 
-    // 🆕 A1: делегат истории
+    // 🆕 A1: делегаты
     private val historyViewModel = HistoryViewModel(db) { currentUser }
+
+    private val catalogViewModel: CatalogViewModel by lazy {
+        CatalogViewModel(
+            db = db,
+            repository = repository,
+            historyViewModel = historyViewModel,
+            currentUserProvider = { currentUser },
+            currentFolderIdProvider = { currentFolderId },
+            appContextProvider = { getApplication<Application>().applicationContext },
+            onContentsChanged = { loadContents() }
+        )
+    }
 
     // 🆕 v16 Шаг 3.4: changelog-синхронизация
     private val syncManagerApi = SyncManagerApi()
@@ -138,7 +148,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "Error checking first launch: ${e.message}")
         }
 
-        // 🆕 v14: гарантируем существование системной папки «🏠 Домашние дела»
         try {
             taskRepository.ensureSystemFolder(currentUser)
             Logger.log(TAG, "checkFirstLaunch: system folder 'home_tasks' ensured")
@@ -345,82 +354,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ПРЕДМЕТЫ — СОЗДАНИЕ
+    // ПРЕДМЕТЫ — ДЕЛЕГИРУЮТСЯ В CatalogViewModel
     // ============================================================
 
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
-
-            imageBytes?.let { bytes ->
-                val appContext = getApplication<Application>().applicationContext
-                ImageUtils.saveImageLocally(appContext, item.id, bytes)
-            }
-
-            OutboxLogger.itemChanged(db, item, OutboxEntity.ACTION_CREATE, currentUser)
-
-            writeHistory(
-                itemId = item.id,
-                itemName = item.name,
-                action = "create",
-                oldValue = null,
-                newValue = "${item.quantity} шт."
-            )
-
-            loadContents()
+            catalogViewModel.createItem(item, imageBytes)
         }
     }
 
     suspend fun createItemsBatch(items: List<ItemEntity>, folderId: String?): Int {
-        if (items.isEmpty()) return 0
-
-        Logger.log(TAG, "createItemsBatch: ${items.size} items, folderId=$folderId")
-
-        return try {
-            val prepared = items.map { it.copy(parentId = folderId, parentItemId = null) }
-
-            withContext(Dispatchers.IO) {
-                db.itemDao().insertItems(prepared)
-            }
-
-            withContext(Dispatchers.IO) {
-                OutboxLogger.itemsBatchCreated(db, prepared, currentUser)
-            }
-
-            prepared.forEach { item ->
-                writeHistory(
-                    itemId = item.id,
-                    itemName = item.name,
-                    action = "create",
-                    oldValue = "Импорт из чека",
-                    newValue = "${item.quantity} шт."
-                )
-            }
-
-            Logger.log(TAG, "createItemsBatch: inserted ${prepared.size} items")
-
-            loadContents()
-            syncStatus.postValue(SyncStatus.PENDING)
-
-            prepared.size
-
-        } catch (e: Exception) {
-            Logger.log(TAG, "createItemsBatch error: ${e.message}", e)
-            0
-        }
+        val n = catalogViewModel.createItemsBatch(items, folderId)
+        if (n > 0) syncStatus.postValue(SyncStatus.PENDING)
+        return n
     }
-
-    // ============================================================
-    // ДЕТИ ПРЕДМЕТА
-    // ============================================================
 
     fun getChildrenCount(itemId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
-                val result = repository.countChildren(itemId)
+                val result = catalogViewModel.getChildrenCount(itemId)
                 withContext(Dispatchers.Main) { callback(result) }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error getChildrenCount: ${e.message}")
                 withContext(Dispatchers.Main) { callback(Pair(0, 0)) }
             }
         }
@@ -428,101 +382,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun detachAllChildren(itemId: String, onDone: (Int) -> Unit) {
         viewModelScope.launch {
-            try {
-                val count = repository.detachAllChildren(itemId)
-
-                db.itemDao().getItemById(itemId)?.let { parent ->
-                    val freshParent = db.itemDao().getItemById(itemId)
-                    if (freshParent != null) {
-                        OutboxLogger.itemChanged(db, freshParent, OutboxEntity.ACTION_UPDATE, currentUser)
-                    }
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = parent.name,
-                        action = "detach_children",
-                        oldValue = null,
-                        newValue = "Отвязано детей: $count"
-                    )
-                }
-
-                Logger.log(TAG, "detachAllChildren: item=$itemId, count=$count")
-                withContext(Dispatchers.Main) { onDone(count) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error detachAllChildren: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(0) }
-            }
+            val count = catalogViewModel.detachAllChildren(itemId)
+            withContext(Dispatchers.Main) { onDone(count) }
         }
     }
 
     fun detachAllChildrenAndDelete(itemId: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    withContext(Dispatchers.Main) { onDone(false) }
-                    return@launch
-                }
-
-                val detached = repository.detachAllChildren(itemId)
-                Logger.log(TAG, "detachAllChildrenAndDelete: detached $detached children from $itemId")
-
-                db.itemDao().deleteItem(item)
-                val appContext = getApplication<Application>().applicationContext
-                ImageUtils.deleteLocalImage(appContext, itemId)
-                OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "delete",
-                    oldValue = "Было детей: $detached",
-                    newValue = null
-                )
-
-                Logger.log(TAG, "detachAllChildrenAndDelete: parent $itemId deleted")
-                withContext(Dispatchers.Main) { onDone(true) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error detachAllChildrenAndDelete: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(false) }
-            }
+            val ok = catalogViewModel.detachAllChildrenAndDelete(itemId)
+            withContext(Dispatchers.Main) { onDone(ok) }
         }
     }
 
     fun detachAllChildrenAndArchive(itemId: String, reason: String, note: String?, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    withContext(Dispatchers.Main) { onDone(false) }
-                    return@launch
-                }
-
-                val detached = repository.detachAllChildren(itemId)
-                Logger.log(TAG, "detachAllChildrenAndArchive: detached $detached children from $itemId")
-
-                val now = System.currentTimeMillis()
-                db.itemDao().archiveItem(itemId, reason, now, note)
-                db.itemDao().getItemById(itemId)?.let { fresh ->
-                    OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
-                }
-
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "archive",
-                    oldValue = "В базе (отвязано детей: $detached)",
-                    newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
-                )
-
-                Logger.log(TAG, "detachAllChildrenAndArchive: parent $itemId archived")
-                withContext(Dispatchers.Main) { onDone(true) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error detachAllChildrenAndArchive: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(false) }
-            }
+            val ok = catalogViewModel.detachAllChildrenAndArchive(itemId, reason, note)
+            withContext(Dispatchers.Main) { onDone(ok) }
         }
     }
 
@@ -532,15 +407,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
-                val folders = withContext(Dispatchers.IO) {
-                    repository.getNestedFolders(parentItemId)
-                }
-                val items = withContext(Dispatchers.IO) {
-                    repository.getNestedItems(parentItemId)
-                }
+                val (folders, items) = catalogViewModel.getNestedContent(parentItemId)
                 withContext(Dispatchers.Main) { callback(folders, items) }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error getNestedContent: ${e.message}")
                 withContext(Dispatchers.Main) { callback(emptyList(), emptyList()) }
             }
         }
@@ -552,60 +421,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDone: (String?) -> Unit
     ) {
         viewModelScope.launch {
-            try {
-                val parentItem = withContext(Dispatchers.IO) { db.itemDao().getItemById(parentItemId) }
-                if (parentItem == null) {
-                    Logger.log(TAG, "createFolderInItem: parent item not found $parentItemId")
-                    withContext(Dispatchers.Main) { onDone(null) }
-                    return@launch
-                }
-
-                val parentFolderId = parentItem.parentId
-                val folder = withContext(Dispatchers.IO) {
-                    repository.createFolderInItem(
-                        name = name,
-                        parentItemId = parentItemId,
-                        parentFolderId = parentFolderId,
-                        creator = currentUser
-                    )
-                }
-
-                OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
-
-                writeHistory(
-                    itemId = parentItemId,
-                    itemName = parentItem.name,
-                    action = "add_nested_folder",
-                    oldValue = null,
-                    newValue = "📁 $name"
-                )
-
-                Logger.log(TAG, "createFolderInItem: created folder ${folder.id} '${folder.name}' in item $parentItemId")
-                withContext(Dispatchers.Main) { onDone(folder.id) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error createFolderInItem: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(null) }
-            }
+            val id = catalogViewModel.createFolderInItem(name, parentItemId)
+            withContext(Dispatchers.Main) { onDone(id) }
         }
     }
-
-    // ============================================================
-    // ПАПКИ — ДЕТИ И ОТВЯЗКА
-    // ============================================================
 
     fun getFolderChildrenCount(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
-                val folderCount = withContext(Dispatchers.IO) {
-                    db.folderDao().getSubfolderCountInFolder(folderId)
-                }
-                val itemCount = withContext(Dispatchers.IO) {
-                    db.folderDao().getItemCountInFolder(folderId)
-                }
-                withContext(Dispatchers.Main) { callback(Pair(folderCount, itemCount)) }
+                val result = catalogViewModel.getFolderChildrenCount(folderId)
+                withContext(Dispatchers.Main) { callback(result) }
             } catch (e: Exception) {
-                Logger.log(TAG, "Error getFolderChildrenCount: ${e.message}")
                 withContext(Dispatchers.Main) { callback(Pair(0, 0)) }
             }
         }
@@ -613,98 +439,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun detachAllFolderChildren(folderId: String, onDone: (Int) -> Unit) {
         viewModelScope.launch {
-            try {
-                val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
-                if (folder == null) {
-                    withContext(Dispatchers.Main) { onDone(0) }
-                    return@launch
-                }
-
-                val subfolders = withContext(Dispatchers.IO) {
-                    db.folderDao().getFoldersByParent(folderId)
-                }
-                val items = withContext(Dispatchers.IO) {
-                    db.itemDao().getItemsByParent(folderId)
-                }
-
-                val now = System.currentTimeMillis()
-
-                subfolders.forEach { sub ->
-                    val updated = sub.copy(parentId = null, updatedAt = now)
-                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                    OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-                }
-
-                items.forEach { item ->
-                    val updated = item.copy(parentId = null, updatedDate = now, updatedBy = currentUser)
-                    updated.computeExpiryFields()
-                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-                }
-
-                val total = subfolders.size + items.size
-                Logger.log(
-                    TAG,
-                    "detachAllFolderChildren: folder=$folderId, subfolders=${subfolders.size}, items=${items.size}"
-                )
-
-                withContext(Dispatchers.Main) { onDone(total) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error detachAllFolderChildren: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(0) }
-            }
+            val total = catalogViewModel.detachAllFolderChildren(folderId)
+            withContext(Dispatchers.Main) { onDone(total) }
         }
     }
 
     fun detachAllFolderChildrenAndDelete(folderId: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
-            try {
-                detachAllFolderChildren(folderId) { /* ignore count */ }
-
-                val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
-                if (folder != null) {
-                    withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
-                    OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
-
-                    writeHistory(
-                        itemId = folderId,
-                        itemName = folder.name,
-                        action = "delete_folder",
-                        oldValue = "Папка",
-                        newValue = null
-                    )
-                }
-
-                withContext(Dispatchers.Main) { onDone(true) }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error detachAllFolderChildrenAndDelete: ${e.message}")
-                withContext(Dispatchers.Main) { onDone(false) }
-            }
-        }
-    }
-
-    private suspend fun buildArchiveBlockMessage(itemId: String): String? {
-        return try {
-            val children = repository.countChildren(itemId)
-            val foldersCount = children.first
-            val itemsCount = children.second
-            val total = foldersCount + itemsCount
-
-            if (total == 0) null
-            else buildString {
-                val item = db.itemDao().getItemById(itemId)
-                val name = item?.name ?: "предмет"
-                append("У предмета «$name» есть вложенные:\n\n")
-                if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
-                if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
-                append("\nНельзя архивировать, пока есть вложенные.\n")
-                append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "buildArchiveBlockMessage error: ${e.message}")
-            null
+            val ok = catalogViewModel.detachAllFolderChildrenAndDelete(folderId)
+            withContext(Dispatchers.Main) { onDone(ok) }
         }
     }
 
@@ -1372,84 +1115,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // ЗАЙМ
+    // ЗАЙМ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun lendItem(itemId: String, personName: String, note: String? = null) {
-        Logger.log(TAG, "lendItem: $itemId to $personName")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val updated = item.copy(
-                        isLent = true,
-                        lentTo = personName,
-                        lentDate = System.currentTimeMillis(),
-                        lentNote = note,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
-                    db.itemDao().updateItem(updated)
-                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "lend",
-                        oldValue = "В базе",
-                        newValue = "Выдан: $personName${if (!note.isNullOrEmpty()) " ($note)" else ""}"
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error lending item: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.lendItem(itemId, personName, note) }
     }
 
     fun returnItem(itemId: String) {
-        Logger.log(TAG, "returnItem: $itemId")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val updated = item.copy(
-                        isLent = false,
-                        lentTo = null,
-                        lentDate = null,
-                        lentNote = null,
-                        returnDate = null,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
-                    db.itemDao().updateItem(updated)
-                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "return",
-                        oldValue = "Выдан: ${item.lentTo}",
-                        newValue = "Возвращён в базу"
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error returning item: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.returnItem(itemId) }
     }
 
-    suspend fun getLentItems(): List<ItemEntity> {
-        return withContext(Dispatchers.IO) {
-            db.itemDao().getLentItems()
-        }
-    }
+    suspend fun getLentItems(): List<ItemEntity> = catalogViewModel.getLentItems()
 
     // ============================================================
-    // АРХИВ
+    // АРХИВ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun archiveItem(
@@ -1459,135 +1139,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onBlocked: ((String) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            try {
-                val blockMsg = buildArchiveBlockMessage(itemId)
-                if (blockMsg != null) {
-                    Logger.log(TAG, "archiveItem: BLOCKED for $itemId (has children)")
-                    withContext(Dispatchers.Main) { onBlocked?.invoke(blockMsg) }
-                    return@launch
+            catalogViewModel.archiveItem(itemId, reason, note) { msg ->
+                viewModelScope.launch {
+                    withContext(Dispatchers.Main) { onBlocked?.invoke(msg) }
                 }
-
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
-                    db.itemDao().getItemById(itemId)?.let { fresh ->
-                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
-                    }
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "archive",
-                        oldValue = "В базе",
-                        newValue = "В архиве (${getArchiveReasonText(reason)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error archiving item: ${e.message}")
             }
         }
     }
 
     fun unarchiveItem(itemId: String) {
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    Logger.log(TAG, "unarchiveItem: item not found $itemId")
-                    return@launch
-                }
-
-                val originalId = item.originalId
-
-                if (originalId == null) {
-                    db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                    db.itemDao().getItemById(itemId)?.let { fresh ->
-                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
-                    }
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "unarchive",
-                        oldValue = "В архиве",
-                        newValue = "Вернули в базу"
-                    )
-
-                    Logger.log(TAG, "unarchiveItem: обычный возврат $itemId")
-                } else {
-                    val original = db.itemDao().getItemById(originalId)
-
-                    if (original != null && !original.isArchived) {
-                        val newQty = original.quantity + item.quantity
-                        val updatedOriginal = original.copy(
-                            quantity = newQty,
-                            updatedDate = System.currentTimeMillis(),
-                            updatedBy = currentUser
-                        )
-                        updatedOriginal.computeExpiryFields()
-                        db.itemDao().updateItem(updatedOriginal)
-                        OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                        db.itemDao().deleteItemById(itemId)
-                        OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-
-                        val appContext = getApplication<Application>().applicationContext
-                        ImageUtils.deleteLocalImage(appContext, itemId)
-
-                        writeHistory(
-                            itemId = originalId,
-                            itemName = original.name,
-                            action = "unarchive_part",
-                            oldValue = "${original.quantity} шт.",
-                            newValue = "$newQty шт. (возвращено ${item.quantity})"
-                        )
-
-                        Logger.log(TAG, "unarchiveItem: часть возвращена в оригинал $originalId, qty=$newQty")
-                    } else {
-                        val restored = item.copy(
-                            isArchived = false,
-                            archivedReason = null,
-                            archivedDate = null,
-                            archivedNote = null,
-                            originalId = null,
-                            updatedDate = System.currentTimeMillis(),
-                            updatedBy = currentUser
-                        )
-                        restored.computeExpiryFields()
-                        db.itemDao().updateItem(restored)
-                        OutboxLogger.itemChanged(db, restored, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                        writeHistory(
-                            itemId = itemId,
-                            itemName = item.name,
-                            action = "unarchive",
-                            oldValue = "В архиве",
-                            newValue = "Вернули в базу (оригинал не найден)"
-                        )
-
-                        Logger.log(TAG, "unarchiveItem: оригинал не найден, часть становится активной $itemId")
-                    }
-                }
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error unarchiving item: ${e.message}", e)
-            }
-        }
+        viewModelScope.launch { catalogViewModel.unarchiveItem(itemId) }
     }
 
-    suspend fun getArchivedItems(): List<ItemEntity> {
-        return withContext(Dispatchers.IO) { db.itemDao().getArchivedItems() }
-    }
+    suspend fun getArchivedItems(): List<ItemEntity> = catalogViewModel.getArchivedItems()
 
-    suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity> {
-        return withContext(Dispatchers.IO) { db.itemDao().getArchivedItemsByReason(reason) }
-    }
+    suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity> =
+        catalogViewModel.getArchivedItemsByReason(reason)
 
     // ============================================================
-    // СПИСАНИЕ
+    // СПИСАНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun writeOffItem(
@@ -1597,193 +1167,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         note: String?,
         onBlocked: ((String) -> Unit)? = null
     ) {
-        Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
         viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    Logger.log(TAG, "writeOffItem: item not found: $itemId")
-                    return@launch
+            catalogViewModel.writeOffItem(itemId, count, reason, note) { msg ->
+                viewModelScope.launch {
+                    withContext(Dispatchers.Main) { onBlocked?.invoke(msg) }
                 }
-
-                if (count <= 0) {
-                    Logger.log(TAG, "writeOffItem: count <= 0, ignoring")
-                    return@launch
-                }
-
-                if (count > item.quantity) {
-                    Logger.log(TAG, "writeOffItem: count ($count) > quantity (${item.quantity}), ignoring")
-                    return@launch
-                }
-
-                val isFullWriteOff = (count == item.quantity)
-                if (isFullWriteOff) {
-                    val blockMsg = buildArchiveBlockMessage(itemId)
-                    if (blockMsg != null) {
-                        Logger.log(TAG, "writeOffItem: BLOCKED for $itemId (full write-off = archive, has children)")
-                        withContext(Dispatchers.Main) { onBlocked?.invoke(blockMsg) }
-                        return@launch
-                    }
-                }
-
-                val now = System.currentTimeMillis()
-                val appContext = getApplication<Application>().applicationContext
-                val reasonKey = reason ?: "used_up"
-
-                if (count == item.quantity) {
-                    db.itemDao().archiveItem(itemId, reasonKey, now, note)
-                    db.itemDao().getItemById(itemId)?.let { fresh ->
-                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
-                    }
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "write_off",
-                        oldValue = "${item.quantity} шт.",
-                        newValue = "Списано всё → в архиве (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
-                    )
-
-                    Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
-
-                } else {
-                    val newId = java.util.UUID.randomUUID().toString()
-
-                    val archivedPart = item.copy(
-                        id = newId,
-                        quantity = count,
-                        isArchived = true,
-                        archivedReason = reasonKey,
-                        archivedDate = now,
-                        archivedNote = note,
-                        originalId = itemId,
-                        imageUrl = null,
-                        addedDate = now,
-                        updatedDate = now,
-                        updatedBy = currentUser
-                    )
-                    archivedPart.computeExpiryFields()
-
-                    withContext(Dispatchers.IO) {
-                        db.itemDao().insertItem(archivedPart)
-                    }
-                    OutboxLogger.itemChanged(db, archivedPart, OutboxEntity.ACTION_CREATE, currentUser)
-
-                    try {
-                        val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-                        if (localFile != null && localFile.exists()) {
-                            val bytes = localFile.readBytes()
-                            ImageUtils.saveImageLocally(appContext, newId, bytes)
-                            Logger.log(TAG, "writeOffItem: photo copied to $newId")
-                        }
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "writeOffItem: failed to copy photo: ${e.message}")
-                    }
-
-                    val newQty = item.quantity - count
-                    if (newQty == 0) {
-                        withContext(Dispatchers.IO) {
-                            db.itemDao().deleteItemById(itemId)
-                        }
-                        OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-                        ImageUtils.deleteLocalImage(appContext, itemId)
-
-                        writeHistory(
-                            itemId = newId,
-                            itemName = item.name,
-                            action = "write_off",
-                            oldValue = "Отделено от «${item.name}»",
-                            newValue = "Списано $count шт. (оригинал удалён, ${getArchiveReasonText(reasonKey)})"
-                        )
-
-                        Logger.log(TAG, "writeOffItem: partial → original deleted (qty was $count)")
-                    } else {
-                        val updatedOriginal = item.copy(
-                            quantity = newQty,
-                            updatedDate = now,
-                            updatedBy = currentUser
-                        )
-                        updatedOriginal.computeExpiryFields()
-                        withContext(Dispatchers.IO) {
-                            db.itemDao().updateItem(updatedOriginal)
-                        }
-                        OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                        writeHistory(
-                            itemId = newId,
-                            itemName = item.name,
-                            action = "write_off",
-                            oldValue = "Отделено от «${item.name}»",
-                            newValue = "Списано $count шт. (${getArchiveReasonText(reasonKey)}${if (!note.isNullOrEmpty()) ": $note" else ""})"
-                        )
-
-                        writeHistory(
-                            itemId = itemId,
-                            itemName = item.name,
-                            action = "write_off_part",
-                            oldValue = "${item.quantity} шт.",
-                            newValue = "$newQty шт. (списано $count)"
-                        )
-
-                        Logger.log(TAG, "writeOffItem: partial → new archive entry $newId ($count шт.), original=$newQty шт.")
-                    }
-                }
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error writing off item: ${e.message}", e)
             }
         }
     }
 
     // ============================================================
-    // РЕВИЗИЯ
+    // РЕВИЗИЯ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun markRevision(itemId: String) {
-        Logger.log(TAG, "markRevision: itemId=$itemId")
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    Logger.log(TAG, "markRevision: item not found: $itemId")
-                    return@launch
-                }
-
-                val now = System.currentTimeMillis()
-                val updated = item.copy(
-                    lastRevisionDate = now,
-                    updatedDate = now,
-                    updatedBy = currentUser
-                )
-                updated.computeExpiryFields()
-                db.itemDao().updateItem(updated)
-                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "revision",
-                    oldValue = item.lastRevisionDate?.let { formatDateShort(it) } ?: "не проводилась",
-                    newValue = formatDateShort(now)
-                )
-
-                Logger.log(TAG, "markRevision: done for $itemId")
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error marking revision: ${e.message}", e)
-            }
-        }
-    }
-
-    private fun formatDateShort(timestamp: Long): String {
-        val sdf = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
-        return sdf.format(java.util.Date(timestamp))
+        viewModelScope.launch { catalogViewModel.markRevision(itemId) }
     }
 
     // ============================================================
-    // РАЗДЕЛЕНИЕ И ПЕРЕМЕЩЕНИЕ
+    // РАЗДЕЛЕНИЕ / ПЕРЕМЕЩЕНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun splitAndMoveItem(
@@ -1792,337 +1194,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newParentId: String?,
         newParentItemId: String? = null
     ) {
-        Logger.log(
-            TAG,
-            "splitAndMoveItem: itemId=$itemId, count=$count, " +
-                "newParentId=$newParentId, newParentItemId=$newParentItemId"
-        )
         viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    Logger.log(TAG, "splitAndMoveItem: item not found: $itemId")
-                    return@launch
-                }
-
-                if (count <= 0) {
-                    Logger.log(TAG, "splitAndMoveItem: count <= 0, ignoring")
-                    return@launch
-                }
-
-                if (count >= item.quantity) {
-                    Logger.log(TAG, "splitAndMoveItem: count >= quantity → full move")
-                    moveItem(itemId, newParentId, newParentItemId)
-                    return@launch
-                }
-
-                val resolvedParentId: String? = if (newParentItemId != null) {
-                    val targetItem = db.itemDao().getItemById(newParentItemId)
-                    targetItem?.parentId
-                } else {
-                    newParentId
-                }
-
-                if (newParentItemId != null && isItemDescendantOf(newParentItemId, itemId)) {
-                    Logger.log(TAG, "splitAndMoveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(
-                            getApplication(),
-                            "Нельзя переместить предмет в себя или в своего потомка",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    return@launch
-                }
-
-                val appContext = getApplication<Application>().applicationContext
-                val now = System.currentTimeMillis()
-                val newId = java.util.UUID.randomUUID().toString()
-
-                val copy = item.copy(
-                    id = newId,
-                    quantity = count,
-                    parentId = resolvedParentId,
-                    parentItemId = newParentItemId,
-                    addedDate = now,
-                    updatedDate = now,
-                    updatedBy = currentUser
-                )
-                copy.computeExpiryFields()
-
-                withContext(Dispatchers.IO) {
-                    db.itemDao().insertItem(copy)
-                }
-                OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
-
-                try {
-                    val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-                    if (localFile != null && localFile.exists()) {
-                        val bytes = localFile.readBytes()
-                        ImageUtils.saveImageLocally(appContext, newId, bytes)
-                    }
-                } catch (e: Exception) {
-                    Logger.log(TAG, "splitAndMoveItem: failed to copy photo: ${e.message}")
-                }
-
-                val newQty = item.quantity - count
-                val updated = item.copy(
-                    quantity = newQty,
-                    updatedDate = now,
-                    updatedBy = currentUser
-                )
-                updated.computeExpiryFields()
-                withContext(Dispatchers.IO) {
-                    db.itemDao().updateItem(updated)
-                }
-                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
-
-                writeHistory(
-                    itemId = newId,
-                    itemName = item.name,
-                    action = "split_in",
-                    oldValue = "Отделено от «${item.name}»",
-                    newValue = "$count шт. → $placeName"
-                )
-
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "split_out",
-                    oldValue = "${item.quantity} шт.",
-                    newValue = "$newQty шт. (отделено $count → $placeName)"
-                )
-
-                Logger.log(TAG, "splitAndMoveItem: done. new=$newId ($count шт.), original=$newQty шт.")
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error in splitAndMoveItem: ${e.message}", e)
-            }
+            catalogViewModel.splitAndMoveItem(itemId, count, newParentId, newParentItemId)
         }
     }
-
-    private suspend fun resolvePlaceName(parentId: String?, parentItemId: String?): String {
-        if (parentItemId != null) {
-            val item = db.itemDao().getItemById(parentItemId)
-            return if (item != null) "📦 ${item.name}" else "предмет"
-        }
-        if (parentId == null) return "Корень"
-        return db.folderDao().getFolderById(parentId)?.name ?: "Корень"
-    }
-
-    private suspend fun getFolderNameById(folderId: String?): String {
-        if (folderId == null) return "Корень"
-        return try {
-            db.folderDao().getFolderById(folderId)?.name ?: "Корень"
-        } catch (e: Exception) {
-            "Корень"
-        }
-    }
-
-    private fun getArchiveReasonText(reason: String): String {
-        return when (reason) {
-            "used_up" -> "🧴 Израсходовано"
-            "eaten" -> "Съедено"
-            "broken" -> "Сломано"
-            "thrown" -> "Выброшено"
-            "gifted" -> "Подарено"
-            "sold" -> "Продано"
-            "expired" -> "Истёк срок"
-            else -> "Другое"
-        }
-    }
-
-    // ============================================================
-    // КОПИРОВАНИЕ
-    // ============================================================
 
     fun copyItem(itemId: String) {
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val copy = item.copy(
-                        id = java.util.UUID.randomUUID().toString(),
-                        name = "${item.name} (копия)",
-                        addedDate = System.currentTimeMillis(),
-                        updatedDate = System.currentTimeMillis()
-                    )
-                    db.itemDao().insertItem(copy)
-
-                    val appContext = getApplication<Application>().applicationContext
-                    val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-                    if (localFile != null && localFile.exists()) {
-                        val bytes = localFile.readBytes()
-                        ImageUtils.saveImageLocally(appContext, copy.id, bytes)
-                    }
-
-                    OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
-
-                    writeHistory(
-                        itemId = copy.id,
-                        itemName = copy.name,
-                        action = "create",
-                        oldValue = "Копия «${item.name}»",
-                        newValue = "${copy.quantity} шт."
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error copying item: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.copyItem(itemId) }
     }
 
     // ============================================================
-    // ПАПКИ — CRUD
+    // ПАПКИ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun createFolder(name: String) {
-        val folder = FolderEntity(
-            name = name,
-            parentId = currentFolderId,
-            parentItemId = null,
-            createdBy = currentUser,
-            path = name
-        )
-
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
-            OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
-
-            writeHistory(
-                itemId = folder.id,
-                itemName = folder.name,
-                action = "create_folder",
-                oldValue = null,
-                newValue = "📁 $name"
-            )
-
-            loadContents()
-        }
+        viewModelScope.launch { catalogViewModel.createFolder(name) }
     }
 
     fun renameFolder(folderId: String, newName: String) {
-        viewModelScope.launch {
-            try {
-                val folder = db.folderDao().getFolderById(folderId)
-                if (folder != null) {
-                    if (folder.isSystem) {
-                        Logger.log(TAG, "renameFolder: BLOCKED for system folder $folderId")
-                        withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(
-                                getApplication(),
-                                "Системную папку нельзя переименовать",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return@launch
-                    }
-                    val oldName = folder.name
-                    val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
-                    db.folderDao().updateFolder(updated)
-                    OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                    writeHistory(
-                        itemId = folderId,
-                        itemName = newName,
-                        action = "rename_folder",
-                        oldValue = oldName,
-                        newValue = newName
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error renaming folder: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.renameFolder(folderId, newName) }
     }
 
     fun getFolderStats(folderId: String, callback: (Pair<Int, Int>) -> Unit) {
         viewModelScope.launch {
             try {
-                val itemCount = db.folderDao().getItemCountInFolder(folderId)
-                val folderCount = db.folderDao().getSubfolderCountInFolder(folderId)
-                callback(Pair(itemCount, folderCount))
+                val result = catalogViewModel.getFolderStats(folderId)
+                withContext(Dispatchers.Main) { callback(result) }
             } catch (e: Exception) {
-                callback(Pair(0, 0))
+                withContext(Dispatchers.Main) { callback(Pair(0, 0)) }
             }
         }
     }
 
     fun deleteFolder(folderId: String) {
-        viewModelScope.launch {
-            try {
-                val folder = db.folderDao().getFolderById(folderId)
-
-                if (folder?.isSystem == true) {
-                    Logger.log(TAG, "deleteFolder: BLOCKED for system folder $folderId")
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(
-                            getApplication(),
-                            "Системную папку нельзя удалить",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    return@launch
-                }
-
-                db.itemDao().moveItemsToRoot(folderId)
-                db.folderDao().moveSubfoldersToRoot(folderId)
-
-                Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
-
-                db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
-
-                writeHistory(
-                    itemId = folderId,
-                    itemName = folder?.name,
-                    action = "delete_folder",
-                    oldValue = "Папка (содержимое поднято в корень)",
-                    newValue = null
-                )
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleting folder: ${e.message}")
-            }
-        }
-    }
-
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЯ
-    // ============================================================
-
-    private suspend fun isFolderDescendantOf(folderId: String, potentialAncestorId: String): Boolean {
-        if (folderId == potentialAncestorId) return true
-        var currentId: String? = potentialAncestorId
-        var depth = 0
-        while (currentId != null && depth < 50) {
-            if (currentId == folderId) return true
-            val folder = db.folderDao().getFolderById(currentId) ?: break
-            currentId = folder.parentId
-            depth++
-        }
-        return false
-    }
-
-    private suspend fun isItemDescendantOf(itemId: String, potentialAncestorItemId: String): Boolean {
-        if (itemId == potentialAncestorItemId) return true
-        var currentId: String? = potentialAncestorItemId
-        var depth = 0
-        while (currentId != null && depth < 50) {
-            if (currentId == itemId) return true
-            val item = db.itemDao().getItemById(currentId) ?: break
-            currentId = item.parentItemId
-            depth++
-        }
-        return false
+        viewModelScope.launch { catalogViewModel.deleteFolder(folderId) }
     }
 
     fun moveFolder(
@@ -2130,115 +1235,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newParentId: String?,
         newParentItemId: String? = null
     ) {
-        Logger.log(
-            TAG,
-            "moveFolder: folderId=$folderId, newParentId=$newParentId, newParentItemId=$newParentItemId"
-        )
         viewModelScope.launch {
-            try {
-                val folder = db.folderDao().getFolderById(folderId)
-                if (folder == null) {
-                    Logger.log(TAG, "moveFolder: folder not found $folderId")
-                    return@launch
-                }
-
-                if (folder.isSystem) {
-                    Logger.log(TAG, "moveFolder: BLOCKED for system folder $folderId")
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(
-                            getApplication(),
-                            "Системную папку нельзя переместить",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    return@launch
-                }
-
-                if (newParentItemId == null && newParentId != null) {
-                    if (isFolderDescendantOf(folderId, newParentId)) {
-                        Logger.log(TAG, "moveFolder: CYCLE (folder→folder), aborting")
-                        withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(
-                                getApplication(),
-                                "Нельзя переместить папку в себя или в свою подпапку",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return@launch
-                    }
-                }
-
-                if (newParentItemId != null) {
-                    val ancestorItems = collectAncestorItemIdsForFolder(folderId)
-                    if (newParentItemId in ancestorItems) {
-                        Logger.log(TAG, "moveFolder: CYCLE (folder→item), aborting")
-                        withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(
-                                getApplication(),
-                                "Нельзя переместить папку внутрь связанного предмета",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return@launch
-                    }
-                }
-
-                val resolvedParentId: String? = if (newParentItemId != null) {
-                    db.itemDao().getItemById(newParentItemId)?.parentId
-                } else {
-                    newParentId
-                }
-
-                val updated = folder.copy(
-                    parentId = resolvedParentId,
-                    parentItemId = newParentItemId,
-                    updatedAt = System.currentTimeMillis()
-                )
-                db.folderDao().updateFolder(updated)
-                OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
-                writeHistory(
-                    itemId = folderId,
-                    itemName = folder.name,
-                    action = "move_folder",
-                    oldValue = null,
-                    newValue = "📁 ${folder.name} → $placeName"
-                )
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error moving folder: ${e.message}")
-            }
+            catalogViewModel.moveFolder(folderId, newParentId, newParentItemId)
         }
-    }
-
-    private suspend fun collectAncestorItemIdsForFolder(folderId: String): Set<String> {
-        val result = mutableSetOf<String>()
-        var currentFolderId: String? = folderId
-        var depth = 0
-
-        while (currentFolderId != null && depth < 50) {
-            depth++
-            val folder = db.folderDao().getFolderById(currentFolderId) ?: break
-
-            if (folder.parentItemId != null) {
-                result.add(folder.parentItemId)
-                var itemId: String? = folder.parentItemId
-                var itemDepth = 0
-                while (itemId != null && itemDepth < 50) {
-                    itemDepth++
-                    result.add(itemId)
-                    val item = db.itemDao().getItemById(itemId) ?: break
-                    itemId = item.parentItemId
-                }
-                currentFolderId = folder.parentId
-            } else {
-                currentFolderId = folder.parentId
-            }
-        }
-
-        return result
     }
 
     fun moveItem(
@@ -2246,318 +1245,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newParentId: String?,
         newParentItemId: String? = null
     ) {
-        Logger.log(
-            TAG,
-            "moveItem: itemId=$itemId, newParentId=$newParentId, newParentItemId=$newParentItemId"
-        )
         viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    Logger.log(TAG, "moveItem: item not found $itemId")
-                    return@launch
-                }
-
-                if (newParentItemId != null) {
-                    if (isItemDescendantOf(newParentItemId, itemId)) {
-                        Logger.log(TAG, "moveItem: CYCLE detected (item=$itemId → item=$newParentItemId), aborting")
-                        withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(
-                                getApplication(),
-                                "Нельзя переместить предмет в себя или в своего потомка",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return@launch
-                    }
-                }
-
-                val resolvedParentId: String? = if (newParentItemId != null) {
-                    db.itemDao().getItemById(newParentItemId)?.parentId
-                } else {
-                    newParentId
-                }
-
-                val updated = item.copy(
-                    parentId = resolvedParentId,
-                    parentItemId = newParentItemId,
-                    updatedDate = System.currentTimeMillis(),
-                    updatedBy = currentUser
-                )
-                updated.computeExpiryFields()
-                db.itemDao().updateItem(updated)
-                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "move",
-                    oldValue = "Из предыдущего места",
-                    newValue = "$placeName"
-                )
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error moving item: ${e.message}")
-            }
+            catalogViewModel.moveItem(itemId, newParentId, newParentItemId)
         }
     }
 
     // ============================================================
-    // ОБНОВЛЕНИЕ ПРЕДМЕТА
+    // ОБНОВЛЕНИЕ ПРЕДМЕТА — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun updateItemQuantity(itemId: String, newQty: Int) {
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    val oldQty = item.quantity
-                    if (oldQty == newQty) return@launch
-
-                    val updated = item.copy(
-                        quantity = newQty,
-                        updatedDate = System.currentTimeMillis(),
-                        updatedBy = currentUser
-                    )
-                    updated.computeExpiryFields()
-                    db.itemDao().updateItem(updated)
-                    OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "quantity_change",
-                        oldValue = "$oldQty шт.",
-                        newValue = "$newQty шт."
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error updating quantity: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.updateItemQuantity(itemId, newQty) }
     }
 
     fun updateItemFull(item: ItemEntity) {
-        viewModelScope.launch {
-            try {
-                val old = db.itemDao().getItemById(item.id)
-                if (old == null) {
-                    Logger.log(TAG, "updateItemFull: item not found ${item.id}")
-                    return@launch
-                }
-
-                val updated = item.copy(
-                    updatedDate = System.currentTimeMillis(),
-                    updatedBy = currentUser
-                )
-                updated.computeExpiryFields()
-                db.itemDao().updateItem(updated)
-                OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
-
-                val diffs = buildDiff(old, updated)
-                if (diffs.isNotEmpty()) {
-                    writeHistory(
-                        itemId = item.id,
-                        itemName = updated.name,
-                        action = "update",
-                        oldValue = null,
-                        newValue = diffs.joinToString("\n")
-                    )
-                }
-
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error updating item: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.updateItemFull(item) }
     }
-
-    private fun buildDiff(old: ItemEntity, new: ItemEntity): List<String> {
-        val diffs = mutableListOf<String>()
-
-        if (old.name != new.name) {
-            diffs.add("Название: «${old.name}» → «${new.name}»")
-        }
-        if (old.quantity != new.quantity) {
-            diffs.add("Количество: ${old.quantity} → ${new.quantity}")
-        }
-        if ((old.price ?: 0.0) != (new.price ?: 0.0)) {
-            diffs.add("Цена: ${formatPrice(old.price)} → ${formatPrice(new.price)}")
-        }
-        if (old.expiryDate != new.expiryDate) {
-            diffs.add("Срок годности: ${formatDateOrDash(old.expiryDate)} → ${formatDateOrDash(new.expiryDate)}")
-        }
-        if (old.purchaseDate != new.purchaseDate) {
-            diffs.add("Дата покупки: ${formatDateOrDash(old.purchaseDate)} → ${formatDateOrDash(new.purchaseDate)}")
-        }
-        if (old.itemType != new.itemType) {
-            diffs.add("Тип: ${typeName(old.itemType)} → ${typeName(new.itemType)}")
-        }
-        if (old.itemSubtype != new.itemSubtype) {
-            diffs.add("Подтип: ${subtypeName(old.itemType, old.itemSubtype)} → ${subtypeName(new.itemType, new.itemSubtype)}")
-        }
-        if (old.barcode != new.barcode) {
-            diffs.add("Штрих-код: ${old.barcode ?: "—"} → ${new.barcode ?: "—"}")
-        }
-        if (old.description != new.description) {
-            val oldDesc = if (old.description.isNullOrEmpty()) "—" else "«${truncate(old.description!!, 60)}»"
-            val newDesc = if (new.description.isNullOrEmpty()) "—" else "«${truncate(new.description!!, 60)}»"
-            diffs.add("Описание: $oldDesc → $newDesc")
-        }
-
-        return diffs
-    }
-
-    private fun formatPrice(p: Double?): String =
-        if (p == null || p == 0.0) "—" else "$p ₽"
-
-    private fun formatDateOrDash(ts: Long?): String =
-        if (ts == null) "—" else formatDateShort(ts)
-
-    private fun typeName(t: String?): String = when (t) {
-        "food" -> "🍎 Еда"
-        "medicine" -> "💊 Лекарство"
-        "thing" -> "📦 Предмет"
-        "other" -> "🗂 Другое"
-        else -> "—"
-    }
-
-    private fun subtypeName(type: String?, subtype: String?): String {
-        if (subtype.isNullOrEmpty()) return "—"
-        return try {
-            SubtypeCatalog.getDisplayName(type ?: "", subtype) ?: subtype
-        } catch (e: Exception) {
-            subtype
-        }
-    }
-
-    private fun truncate(text: String, max: Int): String =
-        if (text.length <= max) text else text.take(max) + "…"
 
     // ============================================================
-    // УДАЛЕНИЕ
+    // УДАЛЕНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
     fun deleteItem(itemId: String) {
-        viewModelScope.launch {
-            try {
-                val item = db.itemDao().getItemById(itemId)
-                if (item != null) {
-                    db.itemDao().deleteItem(item)
-                    val appContext = getApplication<Application>().applicationContext
-                    ImageUtils.deleteLocalImage(appContext, itemId)
-                    OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-
-                    writeHistory(
-                        itemId = itemId,
-                        itemName = item.name,
-                        action = "delete",
-                        oldValue = "${item.quantity} шт.",
-                        newValue = null
-                    )
-
-                    loadContents()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleting item: ${e.message}")
-            }
-        }
+        viewModelScope.launch { catalogViewModel.deleteItem(itemId) }
     }
 
     fun deleteItemSafely(itemId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
-            try {
-                val children = repository.countChildren(itemId)
-                val total = children.first + children.second
-
-                if (total > 0) {
-                    val msg = "Нельзя удалить: вложенных ${children.first} папок, ${children.second} предметов"
-                    Logger.log(TAG, "deleteItemSafely: BLOCKED for $itemId — $msg")
-                    withContext(Dispatchers.Main) { onError(msg) }
-                    return@launch
-                }
-
-                val item = db.itemDao().getItemById(itemId)
-                if (item == null) {
-                    withContext(Dispatchers.Main) { onError("Предмет не найден") }
-                    return@launch
-                }
-
-                db.itemDao().deleteItem(item)
-                val appContext = getApplication<Application>().applicationContext
-                ImageUtils.deleteLocalImage(appContext, itemId)
-                OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-
-                writeHistory(
-                    itemId = itemId,
-                    itemName = item.name,
-                    action = "delete",
-                    oldValue = "${item.quantity} шт.",
-                    newValue = null
-                )
-
-                Logger.log(TAG, "deleteItemSafely: deleted $itemId")
-                withContext(Dispatchers.Main) { onSuccess() }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleteItemSafely: ${e.message}")
-                withContext(Dispatchers.Main) { onError("Ошибка удаления: ${e.message}") }
-            }
+            catalogViewModel.deleteItemSafely(
+                itemId = itemId,
+                onSuccess = { viewModelScope.launch { withContext(Dispatchers.Main) { onSuccess() } } },
+                onError = { msg -> viewModelScope.launch { withContext(Dispatchers.Main) { onError(msg) } } }
+            )
         }
     }
 
     fun deleteFolderSafely(folderId: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
-            try {
-                val folder = db.folderDao().getFolderById(folderId)
-                if (folder?.isSystem == true) {
-                    Logger.log(TAG, "deleteFolderSafely: BLOCKED for system folder $folderId")
-                    withContext(Dispatchers.Main) { onError("Системную папку нельзя удалить") }
-                    return@launch
-                }
-
-                val folderCount = withContext(Dispatchers.IO) {
-                    db.folderDao().getSubfolderCountInFolder(folderId)
-                }
-                val itemCount = withContext(Dispatchers.IO) {
-                    db.folderDao().getItemCountInFolder(folderId)
-                }
-                val total = folderCount + itemCount
-
-                if (total > 0) {
-                    val msg = "Нельзя удалить: внутри $folderCount подпапок, $itemCount предметов"
-                    Logger.log(TAG, "deleteFolderSafely: BLOCKED for $folderId — $msg")
-                    withContext(Dispatchers.Main) { onError(msg) }
-                    return@launch
-                }
-
-                if (folder == null) {
-                    withContext(Dispatchers.Main) { onError("Папка не найдена") }
-                    return@launch
-                }
-
-                db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
-
-                writeHistory(
-                    itemId = folderId,
-                    itemName = folder.name,
-                    action = "delete_folder",
-                    oldValue = "Папка",
-                    newValue = null
-                )
-
-                Logger.log(TAG, "deleteFolderSafely: deleted $folderId")
-                withContext(Dispatchers.Main) { onSuccess() }
-                loadContents()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error deleteFolderSafely: ${e.message}")
-                withContext(Dispatchers.Main) { onError("Ошибка удаления: ${e.message}") }
-            }
+            catalogViewModel.deleteFolderSafely(
+                folderId = folderId,
+                onSuccess = { viewModelScope.launch { withContext(Dispatchers.Main) { onSuccess() } } },
+                onError = { msg -> viewModelScope.launch { withContext(Dispatchers.Main) { onError(msg) } } }
+            )
         }
     }
 
