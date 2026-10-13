@@ -1,623 +1,248 @@
-package com.family.base.ui
+package com.family.base.ui.controller
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.view.View
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
+import android.app.DatePickerDialog
+import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.family.base.BaseApplication
 import com.family.base.R
-import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
-import com.family.base.data.repository.CatalogRepository
+import com.family.base.data.model.SubtypeCatalog
 import com.family.base.databinding.ActivityItemDetailBinding
-import com.family.base.ui.controller.ItemActionDialogs
-import com.family.base.ui.controller.ItemEditController
-import com.family.base.ui.controller.ItemNestedController
-import com.family.base.ui.controller.ItemPhotoController
-import com.family.base.ui.controller.ItemViewController
 import com.family.base.ui.viewmodel.MainViewModel
-import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
-class ItemDetailActivity : AppCompatActivity() {
+/**
+ * Контроллер режима редактирования карточки предмета.
+ *
+ * Отвечает за:
+ *  - saveChanges() — валидация полей и сохранение через MainViewModel;
+ *  - дропдаун подтипа (setupSubtypeEditDropdown, updateSubtypeDropdown);
+ *  - datepicker-диалоги для срока годности и даты покупки;
+ *  - parseDate() — парсинг даты.
+ *
+ * НЕ управляет отображением view/edit — этим занимается ItemViewController.
+ * НЕ трогает фото — этим занимается ItemPhotoController.
+ */
+class ItemEditController(
+    private val activity: AppCompatActivity,
+    private val binding: ActivityItemDetailBinding,
+    private val db: AppDatabase,
+    private val viewModel: MainViewModel,
+    private val itemIdProvider: () -> String?,
+    private val currentItemProvider: () -> ItemEntity?,
+    private val currentEditTypeProvider: () -> String,
+    private val selectedEditSubtypeProvider: () -> String?,
+    private val onCurrentItemChanged: (ItemEntity?) -> Unit,
+    private val onFinish: () -> Unit
+) {
 
-    private lateinit var binding: ActivityItemDetailBinding
-    private val TAG = "ItemDetailActivity"
+    private val TAG = "ItemEditController"
 
-    private lateinit var db: AppDatabase
-    private lateinit var repository: CatalogRepository
-    private lateinit var viewModel: MainViewModel
-    private lateinit var tokenStorage: TokenStorage
-
-    private var itemId: String? = null
-    private var isEditMode = false
-    private var currentItem: ItemEntity? = null
-    private var currentParentId: String? = null
-
-    private var currentEditType: String = "thing"
-    private var selectedEditSubtype: String? = null
-
-    // ============================================================
-    // КОНТРОЛЛЕРЫ
-    // ============================================================
-
-    private lateinit var viewController: ItemViewController
-    private lateinit var editController: ItemEditController
-    private lateinit var photoController: ItemPhotoController
-    private lateinit var actionDialogs: ItemActionDialogs
-    private lateinit var nestedController: ItemNestedController
-
-    // ============================================================
-    // COLLAPSE PREFS
-    // ============================================================
-
-    private val PREFS_NAME = "baza_item_detail_collapse"
-    private val KEY_BASIC = "section_basic"
-    private val KEY_DETAILS = "section_details"
-    private val KEY_DATES = "section_dates"
-    private val KEY_DESCRIPTION = "section_description"
-    private val KEY_NESTED = "section_nested"
+    private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
     // ============================================================
-    // LAUNCHERS
+    // ПОДТИП
     // ============================================================
 
-    private val nestedItemDetailLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
-            if (!folderId.isNullOrEmpty()) {
-                setResult(RESULT_OK, Intent().apply {
-                    putExtra("navigate_to_folder_id", folderId)
-                })
-                finish()
+    fun setupSubtypeEditDropdown(
+        onSubtypeSelected: (String) -> Unit
+    ) {
+        val view = binding.autoCompleteSubtypeEdit
+        view.setOnItemClickListener { _, _, position, _ ->
+            val subtypes = SubtypeCatalog.getSubtypes(currentEditTypeProvider())
+            if (position in subtypes.indices) {
+                val key = subtypes[position].key
+                Logger.log(TAG, "Subtype chosen: $key")
+                onSubtypeSelected(key)
             }
-        } else {
-            nestedController.loadNestedContent()
         }
     }
 
-    private val pickImageLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        photoController.onImagePicked(uri)
+    fun updateSubtypeDropdown(type: String) {
+        val subtypes = SubtypeCatalog.getSubtypes(type)
+        val adapter = ArrayAdapter(
+            activity,
+            android.R.layout.simple_dropdown_item_1line,
+            subtypes.map { it.displayName }
+        )
+        binding.autoCompleteSubtypeEdit.setAdapter(adapter)
+        binding.autoCompleteSubtypeEdit.setText("", false)
     }
 
-    private val takePhotoLauncher = registerForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success ->
-        photoController.onPhotoTaken(success)
-    }
+    // ============================================================
+    // DATEPICKER-ДИАЛОГИ
+    // ============================================================
 
-    private val barcodeScannerLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val scannedValue = result.data?.getStringExtra("barcode")
-            if (!scannedValue.isNullOrEmpty()) {
-                binding.etBarcode.setText(scannedValue)
-                if (scannedValue.all { it.isDigit() }) {
-                    actionDialogs.showLookupDialog(scannedValue)
-                } else {
-                    Toast.makeText(this, "Код: $scannedValue", Toast.LENGTH_SHORT).show()
+    fun showDatePickerDialog() {
+        val calendar = Calendar.getInstance()
+        binding.etExpiry.text.toString().let {
+            if (it.isNotEmpty()) {
+                try {
+                    dateFormat.parse(it)?.let { d -> calendar.time = d }
+                } catch (e: Exception) {
+                    // ignore
                 }
             }
         }
-    }
-
-    // ============================================================
-    // LIFECYCLE
-    // ============================================================
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        try {
-            binding = ActivityItemDetailBinding.inflate(layoutInflater)
-            setContentView(binding.root)
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
-            return
-        }
-
-        try {
-            db = AppDatabase.getInstance(this)
-            repository = CatalogRepository(db)
-            viewModel = BaseApplication.mainViewModel
-            tokenStorage = TokenStorage(this)
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to initialize", e)
-            return
-        }
-
-        itemId = intent.getStringExtra("item_id")
-        val editMode = intent.getBooleanExtra("edit_mode", false)
-        val showHistory = intent.getBooleanExtra("show_history", false)
-
-        if (itemId == null) {
-            Toast.makeText(this, "Ошибка: предмет не найден", Toast.LENGTH_SHORT).show()
-            finish()
-            return
-        }
-
-        initControllers()
-        setupListeners()
-        setupCollapsibleSections()
-        applyCollapsibleState()
-
-        when {
-            showHistory -> {
-                isEditMode = false
-                viewController.showHistory(itemId!!)
-            }
-            editMode -> {
-                isEditMode = true
-                showEditMode(itemId!!)
-            }
-            else -> {
-                isEditMode = false
-                showDetails(itemId!!)
-            }
-        }
-    }
-
-    private fun initControllers() {
-        viewController = ItemViewController(
-            activity = this,
-            binding = binding,
-            db = db,
-            itemIdProvider = { itemId },
-            currentItemProvider = { currentItem },
-            onCurrentItemChanged = { item -> currentItem = item },
-            onEditModeChanged = { mode -> isEditMode = mode },
-            onShowDetails = { id -> showDetails(id) },
-            onShowEditMode = { id -> showEditMode(id) }
-        )
-
-        editController = ItemEditController(
-            activity = this,
-            binding = binding,
-            db = db,
-            viewModel = viewModel,
-            itemIdProvider = { itemId },
-            currentItemProvider = { currentItem },
-            currentEditTypeProvider = { currentEditType },
-            selectedEditSubtypeProvider = { selectedEditSubtype },
-            onCurrentItemChanged = { item -> currentItem = item },
-            onFinish = { finish() }
-        )
-
-        photoController = ItemPhotoController(
-            activity = this,
-            binding = binding,
-            db = db,
-            viewModel = viewModel,
-            itemIdProvider = { itemId },
-            currentItemProvider = { currentItem },
-            isEditModeProvider = { isEditMode },
-            isGuestModeProvider = { isGuestMode() },
-            onCurrentItemChanged = { item -> currentItem = item },
-            onPhotoChanged = { /* no-op */ }
-        )
-        photoController.registerLaunchers(pickImageLauncher, takePhotoLauncher)
-
-        actionDialogs = ItemActionDialogs(
-            activity = this,
-            binding = binding,
-            db = db,
-            viewModel = viewModel,
-            itemIdProvider = { itemId },
-            currentItemProvider = { currentItem },
-            onCurrentItemChanged = { item -> currentItem = item },
-            onFinish = { finish() },
-            onLoadNestedContent = { nestedController.loadNestedContent() },
-            onOpenAddItemActivity = { parentItemId ->
-                val intent = Intent(this, AddItemActivity::class.java).apply {
-                    putExtra("parent_item_id", parentItemId)
-                }
-                startActivity(intent)
-            }
-        )
-
-        nestedController = ItemNestedController(
-            activity = this,
-            binding = binding,
-            viewModel = viewModel,
-            itemIdProvider = { itemId },
-            onNavigateToFolder = { folderId ->
-                setResult(RESULT_OK, Intent().apply {
-                    putExtra("navigate_to_folder_id", folderId)
-                })
-                finish()
+        DatePickerDialog(
+            activity,
+            { _, year, month, day ->
+                binding.etExpiry.setText(
+                    "${day.toString().padStart(2, '0')}." +
+                        "${(month + 1).toString().padStart(2, '0')}.$year"
+                )
             },
-            onOpenNestedItem = { nestedId ->
-                val intent = Intent(this, ItemDetailActivity::class.java).apply {
-                    putExtra("item_id", nestedId)
-                }
-                nestedItemDetailLauncher.launch(intent)
-            }
-        )
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
     }
 
-    // ============================================================
-    // ГОСТЕВОЙ РЕЖИМ
-    // ============================================================
-
-    private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
-
-    private fun applyGuestModeIfNeeded() {
-        if (!isGuestMode()) return
-
-        binding.btnWriteOff.visibility = View.GONE
-
-        binding.tvActionsTitle.visibility = View.GONE
-        binding.btnActionEdit.visibility = View.GONE
-        binding.btnActionLend.visibility = View.GONE
-        binding.btnActionMove.visibility = View.GONE
-        binding.btnActionRevision.visibility = View.GONE
-        binding.btnActionArchive.visibility = View.GONE
-        binding.btnActionDelete.visibility = View.GONE
-
-        binding.btnSave.visibility = View.GONE
-        binding.btnCancelEdit.visibility = View.GONE
-        binding.btnAddPhoto.visibility = View.GONE
-
-        binding.btnReturnItem.visibility = View.GONE
-
-        binding.btnAddNested.visibility = View.GONE
-
-        Logger.log(TAG, "Guest mode applied: edit buttons hidden")
-    }
-
-    // ============================================================
-    // LISTENERS
-    // ============================================================
-
-    private fun setupListeners() {
-        binding.toolbar.setNavigationOnClickListener { finish() }
-
-        binding.ivPhoto.setOnClickListener { photoController.openFullscreenPhoto() }
-
-        binding.ivPhoto.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
-            photoController.showPhotoActionsDialog(hasPhoto = true)
-            true
-        }
-
-        binding.ivPhotoPlaceholder.setOnClickListener {
-            if (isGuestMode()) return@setOnClickListener
-            photoController.showImageSourceDialog()
-        }
-
-        binding.ivPhotoPlaceholder.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
-            photoController.showPhotoActionsDialog(hasPhoto = false)
-            true
-        }
-
-        binding.btnSave.setOnClickListener { saveChanges() }
-        binding.btnCancelEdit.setOnClickListener { finish() }
-        binding.btnPlus.setOnClickListener { changeQuantity(+1) }
-        binding.btnMinus.setOnClickListener { changeQuantity(-1) }
-        binding.btnAddPhoto.setOnClickListener { photoController.showImageSourceDialog() }
-        binding.btnScanBarcode.setOnClickListener {
-            barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
-        }
-        binding.btnActionEdit.setOnClickListener {
-            if (!isGuestMode()) itemId?.let { isEditMode = true; showEditMode(it) }
-        }
-        binding.btnActionLend.setOnClickListener { if (!isGuestMode()) actionDialogs.showLendDialog() }
-        binding.btnActionMove.setOnClickListener { if (!isGuestMode()) actionDialogs.showMoveDialog() }
-        binding.btnActionRevision.setOnClickListener {
-            if (!isGuestMode()) {
-                actionDialogs.showRevisionDialog { timestamp ->
-                    currentItem = currentItem?.copy(lastRevisionDate = timestamp)
-                    viewController.updateRevisionRow(timestamp)
-                }
-            }
-        }
-        binding.btnActionArchive.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showArchiveDialog()
-        }
-        binding.btnActionDelete.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showDeleteDialog { actionDialogs.showArchiveDialog() }
-        }
-        binding.btnReturnItem.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showReturnDialog()
-        }
-
-        binding.btnWriteOff.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showWriteOffDialog()
-        }
-
-        binding.chipQuantityView.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
-            actionDialogs.showQuickQuantityDialog()
-            true
-        }
-
-        binding.tvSyncStatus.setOnClickListener {
-            viewController.showSyncStatusToast()
-        }
-
-        binding.btnGoToFolder.setOnClickListener {
-            val parentId = currentParentId
-            if (parentId != null) {
-                val resultIntent = Intent().apply {
-                    putExtra("navigate_to_folder_id", parentId)
-                }
-                setResult(RESULT_OK, resultIntent)
-                finish()
-            }
-        }
-
-        binding.btnAddNested.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showAddNestedDialog()
-        }
-
-        binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
-            currentEditType = when (checkedId) {
-                R.id.rbTypeFood -> "food"
-                R.id.rbTypeMedicine -> "medicine"
-                R.id.rbTypeThing -> "thing"
-                else -> "other"
-            }
-            selectedEditSubtype = null
-            editController.updateSubtypeDropdown(currentEditType)
-        }
-
-        binding.tvDatePurchase.setOnClickListener {
-            if (!isGuestMode()) {
-                itemId?.let { showEditMode(it) }
-                binding.etPurchaseDate.post { editController.showPurchaseDatePickerDialog() }
-            }
-        }
-
-        binding.etPurchaseDate.setOnClickListener { editController.showPurchaseDatePickerDialog() }
-
-        editController.setupSubtypeEditDropdown { key -> selectedEditSubtype = key }
-    }
-
-    // ============================================================
-    // СВОРАЧИВАНИЕ СЕКЦИЙ
-    // ============================================================
-
-    private fun setupCollapsibleSections() {
-        binding.sectionBasicHeader.setOnClickListener {
-            toggleSection(binding.contentBasicExpandable, binding.arrowBasic, KEY_BASIC)
-        }
-        binding.sectionDetailsHeader.setOnClickListener {
-            toggleSection(binding.contentDetailsExpandable, binding.arrowDetails, KEY_DETAILS)
-        }
-        binding.sectionDatesHeader.setOnClickListener {
-            toggleSection(binding.contentDatesExpandable, binding.arrowDates, KEY_DATES)
-        }
-        binding.sectionDescriptionHeader.setOnClickListener {
-            toggleSection(binding.contentDescriptionExpandable, binding.arrowDescription, KEY_DESCRIPTION)
-        }
-        binding.sectionNestedHeader.setOnClickListener {
-            toggleSection(binding.contentNestedExpandable, binding.arrowNested, KEY_NESTED)
-        }
-    }
-
-    private fun toggleSection(content: View, arrow: android.widget.TextView, prefKey: String) {
-        val isExpanded = content.visibility == View.VISIBLE
-        if (isExpanded) {
-            content.visibility = View.GONE
-            arrow.text = "▶"
-            saveCollapsibleState(prefKey, false)
+    fun showPurchaseDatePickerDialog() {
+        val calendar = Calendar.getInstance()
+        val current = currentItemProvider()?.purchaseDate
+        if (current != null) {
+            calendar.timeInMillis = current
         } else {
-            content.visibility = View.VISIBLE
-            arrow.text = "▼"
-            saveCollapsibleState(prefKey, true)
-        }
-    }
-
-    private fun applyCollapsibleState() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-        val basicExpanded = prefs.getBoolean(KEY_BASIC, true)
-        val detailsExpanded = prefs.getBoolean(KEY_DETAILS, false)
-        val datesExpanded = prefs.getBoolean(KEY_DATES, false)
-        val descriptionExpanded = prefs.getBoolean(KEY_DESCRIPTION, false)
-        val nestedExpanded = prefs.getBoolean(KEY_NESTED, false)
-
-        viewController.applySectionState(binding.contentBasicExpandable, binding.arrowBasic, basicExpanded)
-        viewController.applySectionState(binding.contentDetailsExpandable, binding.arrowDetails, detailsExpanded)
-        viewController.applySectionState(binding.contentDatesExpandable, binding.arrowDates, datesExpanded)
-        viewController.applySectionState(binding.contentDescriptionExpandable, binding.arrowDescription, descriptionExpanded)
-        viewController.applySectionState(binding.contentNestedExpandable, binding.arrowNested, nestedExpanded)
-    }
-
-    private fun saveCollapsibleState(key: String, expanded: Boolean) {
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(key, expanded)
-            .apply()
-    }
-
-    // ============================================================
-    // ONRESUME / ONDESTROY
-    // ============================================================
-
-    override fun onResume() {
-        super.onResume()
-        if (itemId != null) {
-            nestedController.loadNestedContent()
-
-            if (!isEditMode) {
-                val localFile = ImageUtils.getLocalImageFile(this, itemId!!)
-                if (localFile == null || !localFile.exists()) {
-                    photoController.loadPhotoInBackground(itemId!!)
+            binding.etPurchaseDate.text.toString().let {
+                if (it.isNotEmpty()) {
+                    try {
+                        dateFormat.parse(it)?.let { d -> calendar.time = d }
+                    } catch (e: Exception) {
+                        // ignore
+                    }
                 }
             }
         }
-    }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        viewController.cleanup()
-        actionDialogs.stopRepeat()
-        Logger.log(TAG, "onDestroy called")
-    }
-
-    // ============================================================
-    // ПОКАЗ VIEW / EDIT
-    // ============================================================
-
-    private fun showDetails(id: String) {
-        isEditMode = false
-        lifecycleScope.launch {
-            try {
-                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
-                if (item == null) {
-                    finish()
-                    return@launch
-                }
-
-                currentItem = item
-                currentParentId = item.parentId
-                val path = withContext(Dispatchers.IO) { viewController.buildItemPath(item) }
-
-                withContext(Dispatchers.Main) {
-                    binding.tvTitle.text = item.name
-                    viewController.showViewMode(true)
-                    viewController.fillViewFields(item, path)
-                    viewController.applyChips(item)
-                    viewController.updateExpiryProgress(item)
-                    viewController.updateSyncIndicator(item)
-                    applyGuestModeIfNeeded()
-
-                    photoController.showLocalPhotoOrPlaceholder(id)
-                    val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
-                    if (localFile == null || !localFile.exists()) {
-                        photoController.loadPhotoInBackground(id)
-                    }
-
-                    if (item.isLent && !item.lentTo.isNullOrEmpty()) {
-                        binding.cardLentInfo.visibility = View.VISIBLE
-                        binding.tvLentPerson.text = "Кому: ${item.lentTo}"
-                        item.lentDate?.let {
-                            binding.tvLentDate.text = "Дата: ${
-                                SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(it))
-                            }"
-                        }
-                        if (!item.lentNote.isNullOrEmpty()) {
-                            binding.tvLentNote.visibility = View.VISIBLE
-                            binding.tvLentNote.text = "Заметка: ${item.lentNote}"
-                        } else {
-                            binding.tvLentNote.visibility = View.GONE
-                        }
-                    } else {
-                        binding.cardLentInfo.visibility = View.GONE
-                    }
-
-                    nestedController.loadNestedContent()
-                    viewController.animateContentAppearance()
-
-                    lifecycleScope.launch {
-                        delay(500)
-                        viewController.startStatusPulse()
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error showing details", e)
-            }
-        }
-    }
-
-    private fun showEditMode(id: String) {
-        isEditMode = true
-        viewController.stopStatusPulse()
-        lifecycleScope.launch {
-            try {
-                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
-                if (item == null) {
-                    finish()
-                    return@launch
-                }
-
-                currentItem = item
-                currentParentId = item.parentId
-                val path = withContext(Dispatchers.IO) { viewController.buildItemPath(item) }
-
-                viewController.expandAllSections()
-
-                withContext(Dispatchers.Main) {
-                    binding.tvTitle.text = "Редактирование: ${item.name}"
-                    viewController.showViewMode(false)
-                    currentEditType = item.itemType ?: "thing"
-                    selectedEditSubtype = item.itemSubtype
-                    viewController.fillEditFields(
-                        item = item,
-                        path = path,
-                        onTypeChecked = { type -> currentEditType = type },
-                        onSubtypeDropdownUpdate = { type -> editController.updateSubtypeDropdown(type) },
-                        onExpiryDateClick = { editController.showDatePickerDialog() }
-                    )
-                    viewController.applyChips(item)
-                    viewController.updateExpiryProgress(item)
-                    viewController.updateSyncIndicator(item)
-                    applyGuestModeIfNeeded()
-
-                    photoController.showLocalPhotoOrPlaceholder(id)
-                    val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
-                    if (localFile == null || !localFile.exists()) {
-                        photoController.loadPhotoInBackground(id)
-                        binding.btnAddPhoto.visibility = View.VISIBLE
-                    } else {
-                        binding.btnAddPhoto.visibility = View.GONE
-                    }
-
-                    binding.cardLentInfo.visibility = View.GONE
-                    nestedController.loadNestedContent()
-                    viewController.startStatusPulse()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error showing edit mode", e)
-            }
-        }
+        DatePickerDialog(
+            activity,
+            { _, year, month, day ->
+                val dateStr = "${day.toString().padStart(2, '0')}." +
+                    "${(month + 1).toString().padStart(2, '0')}.$year"
+                binding.etPurchaseDate.setText(dateStr)
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
     }
 
     // ============================================================
     // СОХРАНЕНИЕ
     // ============================================================
 
-    private fun saveChanges() {
-        photoController.savePendingPhoto()
-        editController.saveChanges()
-    }
+    fun saveChanges() {
+        val id = itemIdProvider() ?: return
+        activity.lifecycleScope.launch {
+            try {
+                val item = withContext(Dispatchers.IO) { db.itemDao().getItemById(id) }
+                if (item == null) {
+                    onFinish()
+                    return@launch
+                }
 
-    private fun changeQuantity(delta: Int) {
-        val currentQty = binding.etQuantity.text.toString().toIntOrNull() ?: 1
-        binding.etQuantity.setText((currentQty + delta).coerceAtLeast(0).toString())
+                val name = binding.etName.text.toString().trim()
+                if (name.isEmpty()) {
+                    android.widget.Toast.makeText(
+                        activity,
+                        "Введите название",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+
+                val quantity = binding.etQuantity.text.toString().toIntOrNull() ?: 1
+                val description = binding.etDescription.text.toString()
+                val expiryDate = parseDate(binding.etExpiry.text.toString())
+                val price = binding.etPrice.text.toString().toDoubleOrNull()
+                val barcode = binding.etBarcode.text.toString().trim().ifEmpty { null }
+
+                val purchaseDateText = binding.etPurchaseDate.text.toString().trim()
+                val purchaseDate = if (purchaseDateText.isEmpty()) null else parseDate(purchaseDateText)
+
+                val newItemType = when (binding.rgTypeEdit.checkedRadioButtonId) {
+                    R.id.rbTypeFood -> "food"
+                    R.id.rbTypeMedicine -> "medicine"
+                    R.id.rbTypeThing -> "thing"
+                    else -> "other"
+                }
+
+                val newItemSubtype = selectedEditSubtypeProvider()
+                val subtypeIsEmpty = newItemSubtype.isNullOrEmpty()
+                val subtypeBelongsToType = if (!subtypeIsEmpty) {
+                    SubtypeCatalog.getSubtypes(newItemType).any { it.key == newItemSubtype }
+                } else false
+
+                if (subtypeIsEmpty || !subtypeBelongsToType) {
+                    android.widget.Toast.makeText(
+                        activity,
+                        "Выберите подтип",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    binding.tilSubtypeEdit.error = "Выберите подтип"
+                    binding.tilSubtypeEdit.requestFocus()
+                    return@launch
+                }
+                binding.tilSubtypeEdit.error = null
+
+                Logger.log(
+                    TAG,
+                    "Save: type=$newItemType, subtype=$newItemSubtype, purchaseDate=$purchaseDate"
+                )
+
+                val newImageUrl = item.imageUrl
+
+                val updated = item.copy(
+                    name = name,
+                    quantity = quantity,
+                    barcode = barcode,
+                    description = description,
+                    expiryDate = expiryDate,
+                    price = price,
+                    purchaseDate = purchaseDate,
+                    itemType = newItemType,
+                    itemSubtype = newItemSubtype,
+                    imageUrl = newImageUrl,
+                    updatedDate = System.currentTimeMillis(),
+                    updatedBy = "user"
+                )
+                updated.computeExpiryFields()
+
+                viewModel.updateItemFull(updated)
+                onCurrentItemChanged(updated)
+
+                android.widget.Toast.makeText(
+                    activity,
+                    "Сохранено",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                onFinish()
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error saving changes", e)
+                android.widget.Toast.makeText(
+                    activity,
+                    "Ошибка сохранения",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     // ============================================================
-    // PERMISSIONS
+    // УТИЛИТЫ
     // ============================================================
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        photoController.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    fun parseDate(dateStr: String): Long? = try {
+        dateFormat.parse(dateStr)?.time
+    } catch (e: Exception) {
+        null
     }
 }
