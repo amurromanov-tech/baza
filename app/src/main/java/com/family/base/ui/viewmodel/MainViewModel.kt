@@ -654,4 +654,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
         return repository.uploadFolderImage(folderId, imageBytes)
     }
+
+    /**
+     * 🆕 A2: прокси для ItemPhotoController — тихая догрузка фото предмета
+     * в виде сырых байтов (без декодирования в Bitmap).
+     */
+    suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
+        return repository.downloadItemImageBytes(itemId)
+    }
 }
