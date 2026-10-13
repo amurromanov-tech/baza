@@ -7,7 +7,6 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.DeviceIdProvider
 import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.*
 import com.family.base.data.model.SubtypeCatalog
@@ -52,14 +51,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val taskRepository = TaskRepository(application.applicationContext, db)
     private val tokenStorage = TokenStorage(application)
     private val lockDao = db.lockDao()
-    private val syncQueueDao = db.syncQueueDao()
     private val syncInfoDao = db.syncInfoDao()
     private val settingsDao = db.settingsDao()
 
     // 🆕 v16 Шаг 3.4: changelog-синхронизация
     private val syncManagerApi = SyncManagerApi()
     private val changelogParser by lazy {
-        ChangelogParser(db, DeviceIdProvider.get(application.applicationContext))
+        ChangelogParser(db, com.family.base.data.local.DeviceIdProvider.get(application.applicationContext))
     }
     private val syncManager by lazy {
         SyncManager(db, changelogParser, syncManagerApi)
@@ -449,27 +447,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun enqueue(
-        entityType: String,
-        entityId: String,
-        action: String,
-        parentId: String?,
-        parentItemId: String? = null
-    ) {
-        syncQueueDao.addToQueue(
-            SyncQueueEntity(
-                entityType = entityType,
-                entityId = entityId,
-                action = action,
-                parentId = parentId,
-                parentItemId = parentItemId,
-                data = null,
-                timestamp = System.currentTimeMillis()
-            )
-        )
-        syncStatus.postValue(SyncStatus.PENDING)
-    }
-
     fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
@@ -479,7 +456,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ImageUtils.saveImageLocally(appContext, item.id, bytes)
             }
 
-            enqueue("item", item.id, "create", item.parentId, item.parentItemId)
             OutboxLogger.itemChanged(db, item, OutboxEntity.ACTION_CREATE, currentUser)
 
             writeHistory(
@@ -507,19 +483,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             withContext(Dispatchers.IO) {
-                prepared.forEach { item ->
-                    syncQueueDao.addToQueue(
-                        SyncQueueEntity(
-                            entityType = "item",
-                            entityId = item.id,
-                            action = "create",
-                            parentId = folderId,
-                            parentItemId = null,
-                            data = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                }
                 OutboxLogger.itemsBatchCreated(db, prepared, currentUser)
             }
 
@@ -564,7 +527,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val count = repository.detachAllChildren(itemId)
 
                 db.itemDao().getItemById(itemId)?.let { parent ->
-                    enqueue("item", itemId, "update", parent.parentId, parent.parentItemId)
                     val freshParent = db.itemDao().getItemById(itemId)
                     if (freshParent != null) {
                         OutboxLogger.itemChanged(db, freshParent, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -603,7 +565,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 db.itemDao().deleteItem(item)
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
-                enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                 OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                 writeHistory(
@@ -638,7 +599,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val now = System.currentTimeMillis()
                 db.itemDao().archiveItem(itemId, reason, now, note)
-                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                 db.itemDao().getItemById(itemId)?.let { fresh ->
                     OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
@@ -705,7 +665,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                enqueue("folder", folder.id, "create", parentFolderId, parentItemId)
                 OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
 
                 writeHistory(
@@ -764,7 +723,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 subfolders.forEach { sub ->
                     val updated = sub.copy(parentId = null, updatedAt = now)
                     withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                    enqueue("folder", sub.id, "update", null, null)
                     OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
 
@@ -772,7 +730,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val updated = item.copy(parentId = null, updatedDate = now, updatedBy = currentUser)
                     updated.computeExpiryFields()
                     withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                    enqueue("item", item.id, "update", null, item.parentItemId)
                     OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
 
@@ -799,7 +756,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
                 if (folder != null) {
                     withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
-                    enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
                     OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
 
                     writeHistory(
@@ -868,7 +824,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!isInternetAvailable()) {
                     Logger.log(TAG, "syncWithDisk: no internet, skipping sync")
                     syncStatus.postValue(SyncStatus.OFFLINE)
-                    checkPendingChanges()
                     notifySyncResult("Нет сети. Изменения сохранены локально")
                     syncProgress.postValue(null)
                     return@launch
@@ -886,7 +841,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val tMetrics = System.currentTimeMillis()
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
                 val localFoldersCount = withContext(Dispatchers.IO) { db.folderDao().getAllFolders().size }
-                val pendingCount = withContext(Dispatchers.IO) { syncQueueDao.getPendingCount() }
+                val outboxPendingCount = withContext(Dispatchers.IO) { db.outboxDao().getPendingCount() }
                 val localLastModified = withContext(Dispatchers.IO) { syncInfoDao.getLastModified() }
                 val diskLastModified: Long? = withContext(Dispatchers.IO) { repository.getDiskLastModified() }
                 Logger.log(TAG, "TIMING: collect metrics took ${System.currentTimeMillis() - tMetrics}ms")
@@ -896,7 +851,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(
                     TAG,
                     "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount, " +
-                        "pending=$pendingCount, localModified=$localLastModified, " +
+                        "outboxPending=$outboxPendingCount, localModified=$localLastModified, " +
                         "diskModified=${diskLastModified ?: "null (network error)"}, " +
                         "isFirstLaunch=$isFirstLaunch"
                 )
@@ -959,19 +914,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                  // 🆕 v16.1: старая логика upload отключена — всё идёт через changelog.
                 // uploadAllFoldersToDisk / uploadAllItemsToDisk / processPendingChangesInternal
                 // больше не вызываются. Changelog (ниже) сам обработает pending-записи.
-                if (pendingCount > 0) {
-                    Logger.log(TAG, "syncWithDisk: pending=$pendingCount → changelog push")
+                if (outboxPendingCount > 0) {
+                    Logger.log(TAG, "syncWithDisk: outboxPending=$outboxPendingCount → changelog push")
 
                     syncProgress.postValue(
                         SyncProgress(
                             SyncPhase.SENDING,
                             0,
                             1,
-                            "Отправка изменений ($pendingCount в очереди)…"
+                            "Отправка изменений ($outboxPendingCount в очереди)…"
                         )
                     )
                 } else {
-                    Logger.log(TAG, "syncWithDisk: pending=0 → ничего не менялось локально")
+                    Logger.log(TAG, "syncWithDisk: outboxPending=0 → ничего не менялось локально")
                 }
 
                 // 🆕 v16.2: uploadAllHistoryToDisk убран — история идёт через changelog.
@@ -1025,7 +980,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val tPhotoBlock = System.currentTimeMillis()
-                if (pendingCount > 0) {
+                if (outboxPendingCount > 0) {
                     val tUploadImages = System.currentTimeMillis()
                     uploadUnsyncedImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - tUploadImages}ms")
@@ -1519,161 +1474,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun processPendingChangesInternal(): Int {
-        val pending = syncQueueDao.getAllPending()
-        if (pending.isEmpty()) return 0
-        if (!isInternetAvailable()) return 0
-
-        var successCount = 0
-        val total = pending.size
-
-        for ((index, entry) in pending.withIndex()) {
-            try {
-                val displayName = when (entry.entityType) {
-                    "folder" -> db.folderDao().getFolderById(entry.entityId)?.name ?: "папка"
-                    "item" -> db.itemDao().getItemById(entry.entityId)?.name ?: "предмет"
-                    else -> "объект"
-                }
-
-                syncProgress.postValue(
-                    SyncProgress(
-                        SyncPhase.SENDING,
-                        index + 1,
-                        total,
-                        "Отправка: $displayName"
-                    )
-                )
-
-                val tEntry = System.currentTimeMillis()
-                val success: Boolean = when (entry.entityType) {
-                    "folder" -> applyFolderChange(entry)
-                    "item" -> applyItemChange(entry)
-                    else -> false
-                }
-                Logger.log(TAG, "TIMING: applyChange for ${entry.entityType}/${entry.entityId} took ${System.currentTimeMillis() - tEntry}ms, success=$success")
-
-                if (success) {
-                    syncQueueDao.removeFromQueueById(entry.id)
-                    successCount++
-                } else {
-                    Logger.log(TAG, "Pending entry ${entry.id} (${entry.entityType}/${entry.action}) FAILED, keeping in queue")
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Failed to process pending entry ${entry.id} (${entry.entityType}/${entry.action}): ${e.message}")
-            }
-        }
-        return successCount
-    }
-
-      private suspend fun applyFolderChange(entry: SyncQueueEntity): Boolean {
-        return try {
-            when (entry.action) {
-                "create" -> {
-                    val folder = db.folderDao().getFolderById(entry.entityId)
-                    if (folder == null) {
-                        Logger.log(TAG, "applyFolderChange: folder ${entry.entityId} уже удалён, закрываем запись")
-                        return true
-                    }
-                    // 🆕 v16.1: старая логика upload отключена — changelog сам зальёт.
-                    // Оставляем только попытку подтянуть локальную иконку на Диск,
-                    // если папка новая и иконка есть локально, но нет на Диске.
-                    val appContext = getApplication<Application>().applicationContext
-                    val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
-                    if (localFile != null && localFile.exists() && folder.iconUrl.isNullOrEmpty()) {
-                        try {
-                            repository.uploadFolderImage(folder.id, localFile.readBytes())
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "applyFolderChange: upload folder image failed: ${e.message}")
-                        }
-                    }
-                    true
-                }
-                "update" -> {
-                    val folder = db.folderDao().getFolderById(entry.entityId)
-                    if (folder == null) {
-                        Logger.log(TAG, "applyFolderChange: folder ${entry.entityId} уже удалён, закрываем запись")
-                        return true
-                    }
-                    // 🆕 v16.1: uploadAllFoldersToDisk больше не вызывается — changelog зальёт.
-                    true
-                }
-                "delete" -> {
-                    // 🆕 v16.1: deleteFolderOnDisk = uploadAllFoldersToDisk — отключено.
-                    // Changelog сам отправит удаление.
-                    true
-                }
-                else -> false
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "applyFolderChange error: ${e.message}")
-            false
-        }
-    }
-
-        private suspend fun applyItemChange(entry: SyncQueueEntity): Boolean {
-        return try {
-            when (entry.action) {
-                "create" -> {
-                    val item = db.itemDao().getItemById(entry.entityId)
-                    if (item == null) {
-                        Logger.log(TAG, "applyItemChange: item ${entry.entityId} уже удалён, закрываем запись")
-                        return true
-                    }
-                    // 🆕 v16.1: uploadAllItemsToDisk больше не вызывается — changelog зальёт.
-                    // Оставляем только попытку подтянуть локальное фото на Диск.
-                    uploadItemImageIfExists(item)
-                    true
-                }
-                "update" -> {
-                    val item = db.itemDao().getItemById(entry.entityId)
-                    if (item == null) {
-                        Logger.log(TAG, "applyItemChange: item ${entry.entityId} уже удалён, закрываем запись")
-                        return true
-                    }
-                    // 🆕 v16.1: uploadAllItemsToDisk больше не вызывается — changelog зальёт.
-                    // Оставляем только попытку подтянуть локальное фото на Диск.
-                    uploadItemImageIfExists(item)
-                    true
-                }
-                "delete" -> {
-                    // 🆕 v16.1: deleteItemOnDisk = uploadAllItemsToDisk — отключено.
-                    // Changelog сам отправит удаление.
-                    true
-                }
-                else -> false
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "applyItemChange error: ${e.message}")
-            false
-        }
-    }
-
-    private suspend fun uploadItemImageIfExists(item: ItemEntity) {
-        val appContext = getApplication<Application>().applicationContext
-        val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-        if (localFile != null && localFile.exists() && item.imageUrl.isNullOrEmpty()) {
-            try {
-                val bytes = localFile.readBytes()
-                val success = repository.uploadItemImage(item.id, bytes)
-                if (success) {
-                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                    db.itemDao().updateItem(updated)
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
-            }
-        }
-    }
-
-    private suspend fun checkPendingChanges() {
-        val pendingCount = syncQueueDao.getPendingCount()
-        if (pendingCount > 0) {
-            syncStatus.postValue(SyncStatus.PENDING)
-        } else {
-            syncStatus.postValue(SyncStatus.SYNCED)
-        }
-    }
-
     fun lendItem(itemId: String, personName: String, note: String? = null) {
         Logger.log(TAG, "lendItem: $itemId to $personName")
         viewModelScope.launch {
@@ -1689,7 +1489,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
@@ -1724,7 +1523,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         updatedBy = currentUser
                     )
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
@@ -1767,7 +1565,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val item = db.itemDao().getItemById(itemId)
                 if (item != null) {
                     db.itemDao().archiveItem(itemId, reason, System.currentTimeMillis(), note)
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
@@ -1801,7 +1598,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (originalId == null) {
                     db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
@@ -1827,11 +1623,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         updatedOriginal.computeExpiryFields()
                         db.itemDao().updateItem(updatedOriginal)
-                        enqueue("item", originalId, "update", original.parentId, original.parentItemId)
                         OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         db.itemDao().deleteItemById(itemId)
-                        enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                         OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                         val appContext = getApplication<Application>().applicationContext
@@ -1858,7 +1652,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         restored.computeExpiryFields()
                         db.itemDao().updateItem(restored)
-                        enqueue("item", itemId, "update", restored.parentId, restored.parentItemId)
                         OutboxLogger.itemChanged(db, restored, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         writeHistory(
@@ -1930,7 +1723,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (count == item.quantity) {
                     db.itemDao().archiveItem(itemId, reasonKey, now, note)
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
@@ -1966,7 +1758,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.IO) {
                         db.itemDao().insertItem(archivedPart)
                     }
-                    enqueue("item", newId, "create", item.parentId, item.parentItemId)
                     OutboxLogger.itemChanged(db, archivedPart, OutboxEntity.ACTION_CREATE, currentUser)
 
                     try {
@@ -1985,7 +1776,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) {
                             db.itemDao().deleteItemById(itemId)
                         }
-                        enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                         OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
                         ImageUtils.deleteLocalImage(appContext, itemId)
 
@@ -2008,7 +1798,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) {
                             db.itemDao().updateItem(updatedOriginal)
                         }
-                        enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                         OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
                         writeHistory(
@@ -2056,7 +1845,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
-                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                 OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 writeHistory(
@@ -2148,7 +1936,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     db.itemDao().insertItem(copy)
                 }
-                enqueue("item", newId, "create", resolvedParentId, newParentItemId)
                 OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
 
                 try {
@@ -2171,7 +1958,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     db.itemDao().updateItem(updated)
                 }
-                enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                 OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
@@ -2252,7 +2038,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ImageUtils.saveImageLocally(appContext, copy.id, bytes)
                     }
 
-                    enqueue("item", copy.id, "create", copy.parentId, copy.parentItemId)
                     OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
 
                     writeHistory(
@@ -2282,7 +2067,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
-            enqueue("folder", folder.id, "create", currentFolderId, null)
             OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
 
             writeHistory(
@@ -2316,7 +2100,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val oldName = folder.name
                     val updated = folder.copy(name = newName, updatedAt = System.currentTimeMillis())
                     db.folderDao().updateFolder(updated)
-                    enqueue("folder", folderId, "update", folder.parentId, folder.parentItemId)
                     OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
@@ -2370,7 +2153,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
                 db.folderDao().deleteFolderById(folderId)
-                enqueue("folder", folderId, "delete", folder?.parentId, folder?.parentItemId)
                 OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
 
                 writeHistory(
@@ -2484,7 +2266,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     updatedAt = System.currentTimeMillis()
                 )
                 db.folderDao().updateFolder(updated)
-                enqueue("folder", folderId, "update", resolvedParentId, newParentItemId)
                 OutboxLogger.folderChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
@@ -2576,7 +2357,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
-                enqueue("item", itemId, "update", resolvedParentId, newParentItemId)
                 OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val placeName = resolvePlaceName(resolvedParentId, newParentItemId)
@@ -2610,7 +2390,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     updated.computeExpiryFields()
                     db.itemDao().updateItem(updated)
-                    enqueue("item", itemId, "update", item.parentId, item.parentItemId)
                     OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                     writeHistory(
@@ -2644,7 +2423,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 updated.computeExpiryFields()
                 db.itemDao().updateItem(updated)
-                enqueue("item", item.id, "update", item.parentId, item.parentItemId)
                 OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
 
                 val diffs = buildDiff(old, updated)
@@ -2735,7 +2513,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     db.itemDao().deleteItem(item)
                     val appContext = getApplication<Application>().applicationContext
                     ImageUtils.deleteLocalImage(appContext, itemId)
-                    enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                     OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                     writeHistory(
@@ -2776,7 +2553,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 db.itemDao().deleteItem(item)
                 val appContext = getApplication<Application>().applicationContext
                 ImageUtils.deleteLocalImage(appContext, itemId)
-                enqueue("item", itemId, "delete", item.parentId, item.parentItemId)
                 OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
 
                 writeHistory(
@@ -2828,7 +2604,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 db.folderDao().deleteFolderById(folderId)
-                enqueue("folder", folderId, "delete", folder.parentId, folder.parentItemId)
                 OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
 
                 writeHistory(
