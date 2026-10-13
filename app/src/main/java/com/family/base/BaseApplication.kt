@@ -14,6 +14,9 @@ import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
 import com.family.base.util.TaskReminderScheduler
 import com.family.base.util.TaskReminderWorker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
@@ -25,6 +28,16 @@ class BaseApplication : Application(), ImageLoaderFactory {
         // ============================================================
         lateinit var mainViewModel: MainViewModel
             private set
+
+        // ============================================================
+        // 🆕 ГЛОБАЛЬНЫЙ СКОУП ДЛЯ ФОНОВЫХ ЗАДАЧ
+        // Живёт всё время жизни процесса приложения.
+        // Используется, например, для тихого скачивания фото
+        // при открытии карточки предмета — задача не прерывается,
+        // если пользователь свернул приложение или закрыл активити.
+        // ============================================================
+        val applicationScope: CoroutineScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         // ============================================================
         // НАСТРОЙКИ ТЕМЫ (SharedPreferences)
