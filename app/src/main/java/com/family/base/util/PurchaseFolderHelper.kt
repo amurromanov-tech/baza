@@ -50,9 +50,6 @@ object PurchaseFolderHelper {
     /**
      * Возвращает системную папку «🛒 Покупки» (по фиксированному id).
      * Если её нет — создаёт (страховка на случай, если миграция почему-то не отработала).
-     *
-     * 🆕 v16.0.15: id — фиксированный (`FolderEntity.SYSTEM_ID_PURCHASES`).
-     * `isSystem = true`, `systemKey = "purchases"`.
      */
     suspend fun getOrCreatePurchasesFolder(db: AppDatabase): FolderEntity? {
         return try {
@@ -193,7 +190,7 @@ object PurchaseFolderHelper {
     }
 
     // ============================================================
-    // 4. 🆕 ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА В СВЕЖУЮ ПАПКУ ПОКУПКИ
+    // 4. ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА В СВЕЖУЮ ПАПКУ ПОКУПКИ
     // ============================================================
 
     /**
@@ -202,33 +199,33 @@ object PurchaseFolderHelper {
      * Что делает:
      *  1. Находит/создаёт системную папку «🛒 Покупки».
      *  2. Создаёт внутри неё папку «Покупка DD.MM.YYYY #N»
-     *     (с номером по сегодняшней дате).
+     *     (номер — по сегодняшней дате).
      *  3. Перемещает предмет (itemId) в эту папку:
-     *     `parentId = <новая папка>`, `parentItemId = null`.
+     *     parentId = <новая папка>, parentItemId = null.
      *  4. Пишет в outbox (ACTION_UPDATE на item).
      *
-     * Не пишет в историю — это делает вызывающий (ShoppingListViewModel),
-     * чтобы держать текст истории в одном месте.
+     * 🆕 v16.0.15: возвращает FolderEntity созданной папки покупки —
+     * чтобы вызывающий мог открыть карточку предмета в edit-режиме.
      *
-     * @return true — если предмет переехал, иначе false.
+     * @return FolderEntity — если предмет переехал, иначе null.
      */
     suspend fun moveItemToPurchases(
         db: AppDatabase,
         itemId: String,
         changedBy: String,
         date: Long = System.currentTimeMillis()
-    ): Boolean {
+    ): FolderEntity? {
         return try {
             val item = db.itemDao().getItemById(itemId)
             if (item == null) {
                 Logger.log(TAG, "moveItemToPurchases: item not found $itemId")
-                return false
+                return null
             }
 
             val purchases = getOrCreatePurchasesFolder(db)
             if (purchases == null) {
                 Logger.log(TAG, "moveItemToPurchases: cannot ensure purchases folder")
-                return false
+                return null
             }
 
             val purchaseFolder = createPurchaseFolder(
@@ -239,7 +236,7 @@ object PurchaseFolderHelper {
             )
             if (purchaseFolder == null) {
                 Logger.log(TAG, "moveItemToPurchases: cannot create purchase folder")
-                return false
+                return null
             }
 
             val now = System.currentTimeMillis()
@@ -257,11 +254,11 @@ object PurchaseFolderHelper {
                 TAG,
                 "moveItemToPurchases: item $itemId '${item.name}' → ${purchaseFolder.name}"
             )
-            true
+            purchaseFolder
 
         } catch (e: Exception) {
             Logger.log(TAG, "moveItemToPurchases error for $itemId: ${e.message}", e)
-            false
+            null
         }
     }
 }
