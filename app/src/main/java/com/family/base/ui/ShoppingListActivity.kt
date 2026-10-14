@@ -6,17 +6,17 @@ import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
-import com.family.base.ui.adapter.CatalogAdapter
+import com.family.base.ui.adapter.ShoppingListAdapter
 import com.family.base.ui.viewmodel.ShoppingListViewModel
 import com.family.base.util.Logger
 import com.google.android.material.chip.Chip
@@ -29,16 +29,19 @@ import kotlinx.coroutines.withContext
 /**
  * Экран «🛒 Список покупок».
  *
- * Показывает:
+ * UX-клон «🏠 Домашних дел»:
  *  - Купить   — предметы в корне системной папки «🛒 Список покупок»;
- *  - Куплено  — предметы в подпапках «🛒 Покупок»;
+ *  - Куплено  — предметы внутри подпапок «Покупок» (зачёркнуты и бледные);
  *  - Все      — оба списка.
  *
- * Чекбокс на карточке = «куплено» → перемещает предмет
- * в свежую папку «Покупка DD.MM.YYYY #N» внутри «🛒 Покупок».
+ * Чекбокс:
+ *  - в «Купить»   → отметить куплено (переместить в /Покупки/Покупка дата #N
+ *                   + открыть карточку в edit-режиме);
+ *  - в «Куплено»  → снять отметку (вернуть в корень «Списка покупок»).
  *
- * Тап по карточке → ItemDetailActivity.
- * FAB «+» → AddItemActivity с parent_id = «🛒 Список покупок».
+ * Тап по строке → открыть карточку в edit-режиме.
+ * Меню (⋮)     → редактировать / удалить.
+ * FAB «+»      → AddItemActivity с parent_id = «🛒 Список покупок».
  */
 class ShoppingListActivity : AppCompatActivity() {
 
@@ -47,7 +50,7 @@ class ShoppingListActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var tokenStorage: TokenStorage
     private lateinit var viewModel: ShoppingListViewModel
-    private lateinit var adapter: CatalogAdapter
+    private lateinit var adapter: ShoppingListAdapter
 
     private lateinit var rvItems: RecyclerView
     private lateinit var layoutEmpty: View
@@ -74,8 +77,6 @@ class ShoppingListActivity : AppCompatActivity() {
     private val addItemLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        // После возврата из AddItemActivity / ItemDetailActivity
-        // всегда перезагружаем список, что-то могло поменяться.
         loadItems()
     }
 
@@ -83,7 +84,6 @@ class ShoppingListActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            // ItemDetail может вернуть просьбу перейти в папку — пробросим в MainActivity
             val folderId = result.data?.getStringExtra("navigate_to_folder_id")
             if (!folderId.isNullOrEmpty()) {
                 setResult(RESULT_OK, Intent().apply {
@@ -127,20 +127,10 @@ class ShoppingListActivity : AppCompatActivity() {
         val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
         toolbar?.setNavigationOnClickListener { finish() }
 
-        adapter = CatalogAdapter(
-            onFolderClick = { folder ->
-                // В «Списке покупок» папок в корне быть не должно.
-                // Но если пользователь каким-то образом их создал —
-                // открываем как обычную папку (не наш кейс сейчас).
-                Logger.log(TAG, "onFolderClick: unexpected folder ${folder.name}")
-            },
-            onItemClick = { item -> openItemDetail(item) },
-            onFolderLongClick = {
-                // no-op
-            },
-            onItemLongClick = { item ->
-                showItemContextMenu(item)
-            }
+        adapter = ShoppingListAdapter(
+            onToggleBought = { item -> onToggleBought(item) },
+            onEdit = { item -> openItemDetailEdit(item) },
+            onDelete = { item -> confirmDelete(item) }
         )
 
         rvItems.layoutManager = LinearLayoutManager(this)
@@ -179,6 +169,7 @@ class ShoppingListActivity : AppCompatActivity() {
                 val result = withContext(Dispatchers.IO) {
                     viewModel.load(currentFilter)
                 }
+                adapter.setBoughtIds(result.boughtIds)
                 adapter.submitList(result.items)
 
                 if (result.items.isEmpty()) {
@@ -213,70 +204,82 @@ class ShoppingListActivity : AppCompatActivity() {
     // ДЕЙСТВИЯ
     // ============================================================
 
-    private fun openItemDetail(item: ItemEntity) {
-        val intent = Intent(this, ItemDetailActivity::class.java)
-        intent.putExtra("item_id", item.id)
-        itemDetailLauncher.launch(intent)
-    }
-
     /**
-     * Контекстное меню по долгому тапу на предмете.
-     *  - «Куплено» — только для предметов в корне «Списка покупок»;
-     *  - «Открыть карточку»;
-     *  - «Удалить».
+     * Чекбокс:
+     *  - если предмет был «Купить» → пометить куплено + открыть карточку в edit.
+     *  - если предмет был «Куплено» → снять отметку (вернуть в корень).
      */
-    private fun showItemContextMenu(item: ItemEntity) {
-        val inToBuyList = (item.parentId == FolderEntity.SYSTEM_ID_SHOPPING_LIST)
-        val actions = mutableListOf<String>()
-        if (inToBuyList) actions.add("✅ Куплено")
-        actions.add("✏️ Открыть карточку")
-        actions.add("🗑 Удалить")
+    private fun onToggleBought(item: ItemEntity) {
+        val wasBought = item.parentId != FolderEntity.SYSTEM_ID_SHOPPING_LIST
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(item.name)
-            .setItems(actions.toTypedArray()) { _, which ->
-                when (actions[which]) {
-                    "✅ Куплено" -> markBought(item)
-                    "✏️ Открыть карточку" -> openItemDetail(item)
-                    "🗑 Удалить" -> confirmDelete(item)
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun markBought(item: ItemEntity) {
         lifecycleScope.launch {
             try {
-                val ok = withContext(Dispatchers.IO) {
-                    viewModel.markBought(item.id, currentUser)
-                }
-                if (ok) {
-                    Toast.makeText(
-                        this@ShoppingListActivity,
-                        "Куплено: ${item.name}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    // обновим счётчики в MainActivity, когда вернёмся
-                    setResult(RESULT_OK)
-                    loadItems()
+                if (wasBought) {
+                    // Снять «куплено» → вернуть в корень «Списка покупок».
+                    val ok = withContext(Dispatchers.IO) {
+                        viewModel.unmarkBought(item.id, currentUser)
+                    }
+                    if (ok) {
+                        Toast.makeText(
+                            this@ShoppingListActivity,
+                            "Вернули в список: ${item.name}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        setResult(RESULT_OK)
+                        loadItems()
+                    } else {
+                        Toast.makeText(
+                            this@ShoppingListActivity,
+                            "Не удалось вернуть в список",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        loadItems()
+                    }
                 } else {
-                    Toast.makeText(
-                        this@ShoppingListActivity,
-                        "Не удалось отметить как купленное",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    // Пометить куплено + открыть карточку в edit-режиме.
+                    val purchaseFolder = withContext(Dispatchers.IO) {
+                        viewModel.markBought(item.id, currentUser)
+                    }
+                    if (purchaseFolder != null) {
+                        Toast.makeText(
+                            this@ShoppingListActivity,
+                            "Куплено: ${item.name}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        setResult(RESULT_OK)
+                        // Открываем карточку в edit-режиме,
+                        // чтобы пользователь сразу заполнил цену / срок / фото.
+                        openItemDetailEdit(item)
+                    } else {
+                        Toast.makeText(
+                            this@ShoppingListActivity,
+                            "Не удалось отметить как купленное",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        loadItems()
+                    }
                 }
             } catch (e: Exception) {
-                Logger.log(TAG, "markBought error: ${e.message}", e)
+                Logger.log(TAG, "onToggleBought error: ${e.message}", e)
                 Toast.makeText(this@ShoppingListActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+                loadItems()
             }
         }
     }
 
+    /**
+     * Открыть карточку предмета в edit-режиме (как в делах: тап по строке = редактирование).
+     */
+    private fun openItemDetailEdit(item: ItemEntity) {
+        val intent = Intent(this, ItemDetailActivity::class.java)
+        intent.putExtra("item_id", item.id)
+        intent.putExtra("edit_mode", true)
+        itemDetailLauncher.launch(intent)
+    }
+
     private fun confirmDelete(item: ItemEntity) {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Удалить предмет?")
+        AlertDialog.Builder(this)
+            .setTitle("Удалить покупку?")
             .setMessage("«${item.name}»")
             .setPositiveButton("Удалить") { _, _ ->
                 lifecycleScope.launch {
