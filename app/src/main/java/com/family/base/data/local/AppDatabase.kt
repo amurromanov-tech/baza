@@ -22,7 +22,7 @@ import com.family.base.data.local.entity.*
         OutboxEntity::class,
         ProcessedChangelogEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -236,7 +236,121 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_processedAt ON processed_changelogs(processedAt)")
             }
         }
+                // ============================================================
+        // 🆕 v16 → v17: системные папки «Покупки» и «Список покупок»
+        //
+        // Задача: превратить уже существующую папку «🛒 Покупки»
+        // (если есть) в системную с фиксированным id, и создать
+        // системную папку «🛒 Список покупок».
+        //
+        // ⚠️ Миграция НЕ пишет в outbox — иначе первый синк зальёт
+        // псевдо-изменения. Changelog подхватит эти папки позже —
+        // при следующем штатном изменении или через mergeData.
+        // ============================================================
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
 
+                // ── Шаг 1. Найти существующую «🛒 Покупки» (корневую) ──
+                val oldId: String? = run {
+                    val cursor = db.query(
+                        "SELECT id FROM folders " +
+                            "WHERE name = ? AND parentId IS NULL AND parentItemId IS NULL " +
+                            "LIMIT 1",
+                        arrayOf("🛒 Покупки")
+                    )
+                    var result: String? = null
+                    if (cursor.moveToFirst()) {
+                        result = cursor.getString(0)
+                    }
+                    cursor.close()
+                    result
+                }
+
+                if (oldId != null && oldId != "system-folder-purchases") {
+                    // Обновить id папки «Покупки» → фиксированный
+                    db.execSQL(
+                        "UPDATE folders SET id = 'system-folder-purchases', " +
+                            "isSystem = 1, systemKey = 'purchases' " +
+                            "WHERE id = ?",
+                        arrayOf(oldId)
+                    )
+
+                    // Обновить parentId у детей: подпапки «Покупка DD.MM.YYYY #N»
+                    db.execSQL(
+                        "UPDATE folders SET parentId = 'system-folder-purchases' " +
+                            "WHERE parentId = ?",
+                        arrayOf(oldId)
+                    )
+
+                    // Обновить parentId у предметов внутри «Покупок»
+                    db.execSQL(
+                        "UPDATE items SET parentId = 'system-folder-purchases' " +
+                            "WHERE parentId = ?",
+                        arrayOf(oldId)
+                    )
+
+                } else if (oldId != null && oldId == "system-folder-purchases") {
+                    // Уже системная — на всякий случай выставим флаги
+                    db.execSQL(
+                        "UPDATE folders SET isSystem = 1, systemKey = 'purchases' " +
+                            "WHERE id = 'system-folder-purchases'"
+                    )
+                }
+                // Если oldId == null — папки «Покупки» нет, создадим ниже пустую.
+
+                // ── Шаг 2. Убедиться, что системная «🛒 Покупки» существует ──
+                val purchasesExists: Boolean = run {
+                    val cursor = db.query(
+                        "SELECT 1 FROM folders WHERE id = 'system-folder-purchases' LIMIT 1"
+                    )
+                    val exists = cursor.moveToFirst()
+                    cursor.close()
+                    exists
+                }
+
+                if (!purchasesExists) {
+                    val now = System.currentTimeMillis()
+                    db.execSQL(
+                        "INSERT INTO folders (" +
+                            "id, name, parentId, parentItemId, createdAt, createdBy, updatedAt, " +
+                            "path, iconUrl, iconThumbnailUrl, isSystem, systemKey, syncStatus" +
+                            ") VALUES (" +
+                            "'system-folder-purchases', '🛒 Покупки', NULL, NULL, ?, 'system', ?, " +
+                            "'🛒 Покупки', NULL, NULL, 1, 'purchases', 'synced'" +
+                            ")",
+                        arrayOf(now, now)
+                    )
+                }
+
+                // ── Шаг 3. Создать системную «🛒 Список покупок» (если нет) ──
+                val shoppingExists: Boolean = run {
+                    val cursor = db.query(
+                        "SELECT 1 FROM folders WHERE id = 'system-folder-shopping-list' LIMIT 1"
+                    )
+                    val exists = cursor.moveToFirst()
+                    cursor.close()
+                    exists
+                }
+
+                if (!shoppingExists) {
+                    val now = System.currentTimeMillis()
+                    db.execSQL(
+                        "INSERT INTO folders (" +
+                            "id, name, parentId, parentItemId, createdAt, createdBy, updatedAt, " +
+                            "path, iconUrl, iconThumbnailUrl, isSystem, systemKey, syncStatus" +
+                            ") VALUES (" +
+                            "'system-folder-shopping-list', '🛒 Список покупок', NULL, NULL, ?, 'system', ?, " +
+                            "'🛒 Список покупок', NULL, NULL, 1, 'shopping_list', 'synced'" +
+                            ")",
+                        arrayOf(now, now)
+                    )
+                }
+            }
+        }
+
+        // ============================================================
+        // ЦЕПОЧКИ «ЕСЛИ ПРОПУСТИЛИ» (старые)
+        // ============================================================
         // ============================================================
         // ЦЕПОЧКИ «ЕСЛИ ПРОПУСТИЛИ» (старые)
         // ============================================================
@@ -1187,10 +1301,114 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_14_16 = object : Migration(14, 16) {
+               private val MIGRATION_14_16 = object : Migration(14, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 MIGRATION_14_15.migrate(db)
                 migrateTo16(db)
+            }
+        }
+
+        // ============================================================
+        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 16 (сразу в 17)
+        //
+        // Для каждой старой версии X: сначала применяем существующую
+        // цепочку до 16, потом MIGRATION_16_17.
+        // ============================================================
+        private val MIGRATION_2_17 = object : Migration(2, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_3_17 = object : Migration(3, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_4_17 = object : Migration(4, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_5_17 = object : Migration(5, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_6_17 = object : Migration(6, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_7_17 = object : Migration(7, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_8_17 = object : Migration(8, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_9_17 = object : Migration(9, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_10_17 = object : Migration(10, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_11_17 = object : Migration(11, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_12_17 = object : Migration(12, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_13_17 = object : Migration(13, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_14_17 = object : Migration(14, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
+            }
+        }
+
+        private val MIGRATION_15_17 = object : Migration(15, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_15_16.migrate(db)
+                MIGRATION_16_17.migrate(db)
             }
         }
 
@@ -1261,7 +1479,26 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_11_16,
                         MIGRATION_12_16,
                         MIGRATION_13_16,
-                        MIGRATION_14_16
+                        MIGRATION_14_16,
+
+                        // 🆕 v16 → v17: системные «Покупки» и «Список покупок»
+                        MIGRATION_16_17,
+
+                        // 🆕 Цепочки с пропуском 16 (сразу в 17)
+                        MIGRATION_2_17,
+                        MIGRATION_3_17,
+                        MIGRATION_4_17,
+                        MIGRATION_5_17,
+                        MIGRATION_6_17,
+                        MIGRATION_7_17,
+                        MIGRATION_8_17,
+                        MIGRATION_9_17,
+                        MIGRATION_10_17,
+                        MIGRATION_11_17,
+                        MIGRATION_12_17,
+                        MIGRATION_13_17,
+                        MIGRATION_14_17,
+                        MIGRATION_15_17
                     )
                     .build()
                     .also { INSTANCE = it }
