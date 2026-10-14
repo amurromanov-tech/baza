@@ -567,6 +567,35 @@ interface ItemDao {
           AND isArchived = 0
     """)
     suspend fun countItemsInFolderShallow(folderId: String): Int
+
+    /**
+     * 🆕 v16.0.15: неархивные предметы НЕПОСРЕДСТВЕННО в папке.
+     * Используется на экране «🛒 Список покупок»:
+     *  - фильтр «Купить» — корень системной «Списка покупок»;
+     *  - фильтр «Куплено» — набор подпапок «Покупок».
+     */
+    @Query("""
+        SELECT * FROM items
+        WHERE parentId = :folderId
+          AND parentItemId IS NULL
+          AND isArchived = 0
+        ORDER BY name COLLATE NOCASE ASC
+    """)
+    suspend fun getItemsInFolderShallow(folderId: String): List<ItemEntity>
+
+    /**
+     * 🆕 v16.0.15: неархивные предметы, у которых parentId — один из переданных.
+     * Нужно для фильтра «Куплено» (несколько подпапок «Покупок» сразу).
+     * Возвращает плоский список, сортировка по имени.
+     */
+    @Query("""
+        SELECT * FROM items
+        WHERE parentId IN (:folderIds)
+          AND parentItemId IS NULL
+          AND isArchived = 0
+        ORDER BY name COLLATE NOCASE ASC
+    """)
+    suspend fun getItemsByParentIds(folderIds: List<String>): List<ItemEntity>
 }
 
 // ============================================================
