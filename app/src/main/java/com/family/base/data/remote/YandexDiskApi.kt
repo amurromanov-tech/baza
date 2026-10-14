@@ -101,11 +101,24 @@ interface YandexDiskApi {
 
     /**
      * Получение информации о ресурсе (файле или папке) на диске пользователя.
+     *
+     * 🆕 v17.0.7: добавлены параметры `limit` и `offset`.
+     *
+     * ВАЖНО: Яндекс.Диск возвращает по умолчанию только 20 элементов.
+     * Если в папке больше 20 файлов — новые НЕ попадут в выдачу, и всё,
+     * что за 20-м элементом, будет невидимым. Именно из-за этого ломался
+     * changelog: файлы физически лежали на Диске, но list их не видел.
+     *
+     * @param limit максимум элементов в выдаче (default 200 — с запасом
+     *              для нашего changelog; Яндекс допускает до 10000).
+     * @param offset сдвиг для пагинации (default 0 — берём с начала).
      */
     @GET("disk/resources")
     suspend fun getDiskResources(
         @Header("Authorization") authorization: String,
-        @Query("path") path: String
+        @Query("path") path: String,
+        @Query("limit") limit: Int = 200,
+        @Query("offset") offset: Int = 0
     ): retrofit2.Response<DiskResourcesResponse>
 
     /**
@@ -131,11 +144,6 @@ interface YandexDiskApi {
         /**
          * Таймауты подобраны так, чтобы «плохая сеть» отваливалась
          * за 10-20 секунд, а не висела на дефолтных 10 / 60 / 60.
-         *
-         *  - connectTimeout  — установка TCP-соединения;
-         *  - readTimeout     — ожидание тела ответа;
-         *  - writeTimeout    — отправка тела запроса (у нас — JSON/фото);
-         *  - callTimeout     — общий бюджет на весь вызов, включая ретраи OkHttp.
          */
         private const val CONNECT_TIMEOUT_SEC = 10L
         private const val READ_TIMEOUT_SEC = 15L
