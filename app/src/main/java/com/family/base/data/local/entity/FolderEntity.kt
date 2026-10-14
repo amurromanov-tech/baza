@@ -41,14 +41,16 @@ data class FolderEntity(
      * Системные папки нельзя удалять, перемещать, переименовывать,
      * архивировать. В UI скрываются соответствующие кнопки.
      *
-     * Пример: «🏠 Домашние дела».
+     * Примеры: «🏠 Домашние дела», «🛒 Покупки», «🛒 Список покупок».
      */
     val isSystem: Boolean = false,
 
     /**
      * Ключ системной папки.
      * NULL — для обычных папок.
-     * "home_tasks" — для папки «🏠 Домашние дела».
+     * "home_tasks"    — для папки «🏠 Домашние дела».
+     * "purchases"     — для папки «🛒 Покупки» (чеки).
+     * "shopping_list" — для папки «🛒 Список покупок».
      *
      * Используется для поиска системной папки при старте приложения
      * (upsert, если её нет) и для перехвата клика в MainActivity.
@@ -69,6 +71,7 @@ data class FolderEntity(
     val syncStatus: String = SYNC_STATUS_SYNCED
 ) {
     companion object {
+        // ===== «🏠 Домашние дела» =====
         const val SYSTEM_KEY_HOME_TASKS = "home_tasks"
 
         /**
@@ -77,6 +80,14 @@ data class FolderEntity(
          * и синк через folders.json не создавал дубликатов.
          */
         const val SYSTEM_ID_HOME_TASKS = "system-folder-home-tasks"
+
+        // ===== «🛒 Покупки» =====
+        const val SYSTEM_KEY_PURCHASES = "purchases"
+        const val SYSTEM_ID_PURCHASES = "system-folder-purchases"
+
+        // ===== «🛒 Список покупок» =====
+        const val SYSTEM_KEY_SHOPPING_LIST = "shopping_list"
+        const val SYSTEM_ID_SHOPPING_LIST = "system-folder-shopping-list"
 
         const val SYNC_STATUS_SYNCED = "synced"
         const val SYNC_STATUS_PENDING = "pending"
