@@ -541,11 +541,32 @@ interface ItemDao {
     // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
     // ============================================================
 
-    @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != ''")
+      @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun getAllItemsWithImageUrl(): List<ItemEntity>
 
     @Query("UPDATE items SET imageUrl = NULL WHERE id = :itemId")
     suspend fun clearImageUrl(itemId: String)
+
+    // ============================================================
+    // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
+    // ============================================================
+
+    /**
+     * Количество неархивных предметов НЕПОСРЕДСТВЕННО в папке.
+     * Не считает предметы в подпапках и не считает вложенные в предметы.
+     *
+     * Используется:
+     *  - для счётчика «🛒 N покупок» на плитке «🛒 Покупки»
+     *    (в подпапках «Покупка DD.MM.YYYY #N»);
+     *  - для счётчика «🛒 N купить» на плитке «🛒 Список покупок».
+     */
+    @Query("""
+        SELECT COUNT(*) FROM items
+        WHERE parentId = :folderId
+          AND parentItemId IS NULL
+          AND isArchived = 0
+    """)
+    suspend fun countItemsInFolderShallow(folderId: String): Int
 }
 
 // ============================================================
