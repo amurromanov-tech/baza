@@ -11,6 +11,8 @@ import com.family.base.data.remote.YandexDiskApi
 import com.family.base.data.remote.model.UserModel
 import com.family.base.data.remote.model.UsersFile
 import com.family.base.util.Logger
+import com.family.base.util.NetworkCallExecutor
+import com.family.base.util.NetworkCallExecutor.NetworkException
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -625,67 +627,105 @@ class CatalogRepository(private val db: AppDatabase) {
     // ЧТЕНИЕ С ДИСКА
     // ============================================================
 
+    /**
+     * Читает timestamp из /BAZA/.last_modified.
+     *
+     * 🆕 B1.1: переписано через NetworkCallExecutor.
+     *  - Больше НЕ делает getDiskResources (это был лишний запрос).
+     *  - Сразу запрашивает download URL:
+     *      * 404 → 0L (файла нет — это валидный ответ, не ошибка);
+     *      * 200 → скачивает тело и парсит timestamp;
+     *      * 5xx/DNS/timeout → retry до 3 попыток.
+     *  - Возвращает:
+     *      * Long (>= 0) — успешное чтение;
+     *      * null — ошибка сети после всех ретраев.
+     *
+     * Раньше делал 3 запроса (getResources + getDownloadUrl + download)
+     * и мог висеть 30+ секунд на плохой сети. Теперь — 1-2 запроса
+     * и ограниченный бюджет по времени.
+     */
     suspend fun getDiskLastModified(): Long? {
-        return withContext(Dispatchers.IO) {
-            try {
-                if (isDnsBlocked()) {
-                    Logger.log(TAG, "getDiskLastModified: DNS blocked")
-                    return@withContext null
-                }
-                val auth = getAuthHeader()
-                if (auth == null) {
-                    Logger.log(TAG, "No auth header, cannot get last_modified")
-                    return@withContext null
-                }
-                val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/.last_modified"
+        if (isDnsBlocked()) {
+            Logger.log(TAG, "getDiskLastModified: DNS blocked")
+            return null
+        }
+        val auth = getAuthHeader()
+        if (auth == null) {
+            Logger.log(TAG, "getDiskLastModified: no auth header")
+            return null
+        }
+        val api = YandexDiskApi.getInstance()
+        val rootPath = getRootPath()
+        val path = "$rootPath/.last_modified"
 
-                val response = api.getDiskResources(auth, path)
-                if (!response.isSuccessful) {
-                    if (response.code() == 404) {
-                        return@withContext 0L
-                    }
-                    return@withContext null
-                }
+        val result = NetworkCallExecutor.runHttpSafely<Long>(
+            label = "getDiskLastModified",
+            treat404AsSuccess = true
+        ) {
+            // Шаг 1: получить ссылку на скачивание.
+            // getDiskResources НЕ вызываем — 404 тут обрабатывается тем же кодом.
+            val urlResponse = api.getDiskDownloadUrl(auth, path)
+            val urlCode = urlResponse.code()
 
-                val urlResponse = api.getDiskDownloadUrl(auth, path)
-                if (!urlResponse.isSuccessful) {
-                    return@withContext null
-                }
-                val href = urlResponse.body()?.href ?: return@withContext null
-                val downloadResponse = api.downloadFile(href)
-                if (!downloadResponse.isSuccessful) {
-                    return@withContext null
-                }
-                val json = downloadResponse.body()?.string()
-                if (json.isNullOrEmpty()) {
-                    return@withContext 0L
-                }
+            if (urlCode == 404) {
+                // Файла нет — валидный ответ. Значение null, код 404.
+                return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, 404)
+            }
+            if (!urlResponse.isSuccessful) {
+                // Пробрасываем код наружу — executor решит (retry для 5xx).
+                return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, urlCode)
+            }
 
-                val jsonObject = gson.fromJson(json, Map::class.java)
-                val raw = jsonObject["timestamp"]
-                val timestamp: Long? = when (raw) {
-                    is Number -> raw.toLong()
-                    is String -> raw.toLongOrNull()
-                    else -> null
-                }
-                if (timestamp != null && timestamp > 0L) {
-                    Logger.log(TAG, "Last_modified: $timestamp")
-                    return@withContext timestamp
-                }
+            val href = urlResponse.body()?.href
+            if (href == null) {
+                // Странный ответ 200 без href — считаем как 5xx (retry).
+                return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, 500)
+            }
+
+            // Шаг 2: скачать тело.
+            val downloadResponse = api.downloadFile(href)
+            val dlCode = downloadResponse.code()
+            if (!downloadResponse.isSuccessful) {
+                return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, dlCode)
+            }
+
+            val json = downloadResponse.body()?.string()
+            if (json.isNullOrEmpty()) {
+                // Пустой файл — валидный ответ, timestamp = 0.
+                return@runHttpSafely NetworkCallExecutor.HttpOutcome(0L, 200)
+            }
+
+            val jsonObject = gson.fromJson(json, Map::class.java)
+            val raw = jsonObject["timestamp"]
+            val timestamp: Long? = when (raw) {
+                is Number -> raw.toLong()
+                is String -> raw.toLongOrNull()
+                else -> null
+            }
+            if (timestamp != null && timestamp > 0L) {
+                Logger.log(TAG, "Last_modified: $timestamp")
+                NetworkCallExecutor.HttpOutcome(timestamp, 200)
+            } else {
                 Logger.log(TAG, "Last_modified parsed but empty/invalid: raw=$raw")
-                return@withContext 0L
-            } catch (e: Exception) {
-                if (isDnsError(e)) {
-                    noteDnsFailure()
-                    Logger.log(TAG, "DNS failure in getDiskLastModified: ${e.message}")
-                    return@withContext null
-                }
-                Logger.log(TAG, "Error getDiskLastModified: ${e.message}")
-                null
+                NetworkCallExecutor.HttpOutcome(0L, 200)
             }
         }
+
+        return result.fold(
+            onSuccess = { value -> value ?: 0L },
+            onFailure = { err ->
+                when (err) {
+                    is NetworkException -> {
+                        if (err.kind == NetworkCallExecutor.Kind.DNS) {
+                            noteDnsFailure()
+                        }
+                        Logger.log(TAG, "getDiskLastModified FAILED: kind=${err.kind} msg=${err.message}")
+                    }
+                    else -> Logger.log(TAG, "getDiskLastModified FAILED: ${err.message}")
+                }
+                null
+            }
+        )
     }
 
     data class DownloadResult(
