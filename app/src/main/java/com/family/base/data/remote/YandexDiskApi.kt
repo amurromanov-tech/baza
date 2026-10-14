@@ -128,6 +128,20 @@ interface YandexDiskApi {
     companion object {
         private var INSTANCE: YandexDiskApi? = null
 
+        /**
+         * Таймауты подобраны так, чтобы «плохая сеть» отваливалась
+         * за 10-20 секунд, а не висела на дефолтных 10 / 60 / 60.
+         *
+         *  - connectTimeout  — установка TCP-соединения;
+         *  - readTimeout     — ожидание тела ответа;
+         *  - writeTimeout    — отправка тела запроса (у нас — JSON/фото);
+         *  - callTimeout     — общий бюджет на весь вызов, включая ретраи OkHttp.
+         */
+        private const val CONNECT_TIMEOUT_SEC = 10L
+        private const val READ_TIMEOUT_SEC = 15L
+        private const val WRITE_TIMEOUT_SEC = 20L
+        private const val CALL_TIMEOUT_SEC = 45L
+
         fun getInstance(): YandexDiskApi {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: create().also { INSTANCE = it }
@@ -141,9 +155,11 @@ interface YandexDiskApi {
 
             val client = OkHttpClient.Builder()
                 .addInterceptor(logging)
-                .connectTimeout(60, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .writeTimeout(WRITE_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
                 .addInterceptor { chain ->
                     val request = chain.request()
                     val newRequest = request.newBuilder()
