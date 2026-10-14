@@ -4,6 +4,8 @@ import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.util.Logger
+import com.family.base.util.NetworkCallExecutor
+import com.family.base.util.NetworkCallExecutor.NetworkException
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.UnknownHostException
@@ -65,39 +67,78 @@ class SyncManagerApi {
 
     /**
      * Гарантирует существование /BAZA/changelog/.
+     *
+     * 🆕 B1.3: обёрнуто в NetworkCallExecutor с 2 попытками.
+     *  - 5xx/DNS/timeout → один retry через 500 мс;
+     *  - 4xx (кроме 404) → без retry, сразу false;
+     *  - 404 → создаём папку (это не ошибка).
+     *
+     * Не бросает исключений. Возвращает true/false.
      */
     suspend fun ensureChangelogFolder(): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
         val folderPath = getChangelogPath()
+        val rootPath = getRootPath()
 
-        return try {
+        val result = NetworkCallExecutor.runHttpSafely<Boolean>(
+            label = "ensureChangelogFolder",
+            maxAttempts = 2,
+            treat404AsSuccess = false
+        ) {
+            // Шаг 1: проверить существование changelog-папки.
             val check = api.getDiskResources(auth, folderPath)
-            when (check.code()) {
-                200 -> true
-                404 -> {
-                    // Папки нет — создаём. Также убедимся, что есть корень.
-                    val rootPath = getRootPath()
+            val checkCode = check.code()
+
+            when {
+                checkCode == 200 -> {
+                    // Папка есть — успех.
+                    return@runHttpSafely NetworkCallExecutor.HttpOutcome(true, 200)
+                }
+                checkCode == 404 -> {
+                    // Папки нет — надо создать. Сначала убедимся, что есть корень.
                     val rootCheck = api.getDiskResources(auth, rootPath)
-                    if (rootCheck.code() == 404) {
-                        api.createFolder(auth, rootPath)
+                    val rootCode = rootCheck.code()
+                    if (rootCode == 404) {
+                        val createRoot = api.createFolder(auth, rootPath)
+                        // 409 = уже существует — не ошибка.
+                        if (!createRoot.isSuccessful && createRoot.code() != 409) {
+                            return@runHttpSafely NetworkCallExecutor.HttpOutcome(
+                                null,
+                                createRoot.code().takeIf { it >= 400 } ?: 500
+                            )
+                        }
+                    } else if (rootCode != 200) {
+                        return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, rootCode)
                     }
+
                     val create = api.createFolder(auth, folderPath)
-                    create.isSuccessful || create.code() == 409
+                    if (create.isSuccessful || create.code() == 409) {
+                        return@runHttpSafely NetworkCallExecutor.HttpOutcome(true, 200)
+                    }
+                    return@runHttpSafely NetworkCallExecutor.HttpOutcome(
+                        null,
+                        create.code().takeIf { it >= 400 } ?: 500
+                    )
                 }
                 else -> {
-                    Logger.log(TAG, "ensureChangelogFolder: unexpected code ${check.code()}")
-                    false
+                    // Прочий код (5xx и т.п.) — пусть executor решит про retry.
+                    return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, checkCode)
                 }
             }
-        } catch (e: Exception) {
-            if (isDnsError(e)) {
-                Logger.log(TAG, "ensureChangelogFolder: DNS failure: ${e.message}")
-            } else {
-                Logger.log(TAG, "ensureChangelogFolder error: ${e.message}")
-            }
-            false
         }
+
+        return result.fold(
+            onSuccess = { value -> value == true },
+            onFailure = { err ->
+                if (err is NetworkException && err.kind == NetworkCallExecutor.Kind.DNS) {
+                    Logger.log(TAG, "ensureChangelogFolder: DNS failure after retries: ${err.message}")
+                } else {
+                    Logger.log(TAG, "ensureChangelogFolder FAILED: ${err.message}")
+                }
+                false
+            }
+        )
     }
 
     // ============================================================
