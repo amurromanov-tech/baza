@@ -943,7 +943,8 @@ class MainActivity : AppCompatActivity() {
 
         val minusBtn = Button(this).apply {
             text = "−"
-            textSize = 22f            minWidth = 0
+            textSize = 22f            
+            minWidth = 0
             minimumWidth = 0
             width = 120
             height = 120
