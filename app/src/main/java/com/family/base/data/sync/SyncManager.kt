@@ -68,6 +68,16 @@ class SyncManager(
     /**
      * Полный цикл синхронизации changelog.
      * Возвращает SyncResult. Не бросает исключений.
+     *
+     * 🆕 B1.3: при неудачном ensureChangelogFolder больше НЕ прерываем
+     * весь синк. Логика:
+     *  - папка не готова → PUSH откладываем (pushFailed = true),
+     *    outbox НЕ чистим (попробуем в следующий раз);
+     *  - PULL всё равно пробуем (вдруг папка есть, просто getResources мигнул);
+     *  - CLEANUP тоже пробуем — не критичен.
+     *
+     * Так пользователь хотя бы получает чужие изменения и не залипает
+     * на 30+ секунд из-за одного 500 от Яндекса.
      */
     suspend fun syncChangelogs(): SyncResult {
         val deviceId: String = try {
@@ -80,19 +90,32 @@ class SyncManager(
 
         Logger.log(TAG, "syncChangelogs: START, deviceId=$deviceId")
 
-        // Гарантируем папку /BAZA/changelog/
-        if (!api.ensureChangelogFolder()) {
-            Logger.log(TAG, "syncChangelogs: cannot ensure changelog folder, aborting")
-            return SyncResult(0, 0, 0, 0, 0, 0, pullFailed = true, pushFailed = true)
+        // Проверяем, готова ли папка changelog.
+        // Если нет — не abort, а помечаем push как failed и идём дальше.
+        val folderReady = try {
+            api.ensureChangelogFolder()
+        } catch (e: Exception) {
+            Logger.log(TAG, "syncChangelogs: ensureChangelogFolder threw: ${e.message}")
+            false
         }
 
-        // 1. PUSH
-        val pushResult = pushPendingChanges(deviceId)
+        if (!folderReady) {
+            Logger.log(TAG, "syncChangelogs: changelog folder not ready, push will be skipped")
+        }
 
-        // 2. PULL
+        // 1. PUSH — только если папка готова.
+        val pushResult: Triple<Int, Int, Boolean> = if (folderReady) {
+            pushPendingChanges(deviceId)
+        } else {
+            Triple(0, 0, true)
+        }
+
+        // 2. PULL — пробуем в любом случае.
+        // Если папки нет, listChangelogFiles вернёт emptyList (404 → empty),
+        // и это корректно: просто нечего тянуть.
         val pullResult = pullIncomingChanges(deviceId)
 
-        // 3. CLEANUP
+        // 3. CLEANUP — не критичен, но пусть работает.
         cleanup(deviceId)
 
         val result = SyncResult(
@@ -110,7 +133,8 @@ class SyncManager(
             TAG,
             "syncChangelogs: DONE — pushed batches=${result.pushedBatches} entries=${result.pushedEntries}, " +
                 "pulled batches=${result.pulledBatches} applied=${result.pulledEntriesApplied} " +
-                "skipped=${result.pulledEntriesSkipped} errors=${result.pulledErrors}"
+                "skipped=${result.pulledEntriesSkipped} errors=${result.pulledErrors} " +
+                "pushFailed=${result.pushFailed} pullFailed=${result.pullFailed}"
         )
         return result
     }
