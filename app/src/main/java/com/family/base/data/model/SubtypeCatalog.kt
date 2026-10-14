@@ -21,6 +21,10 @@ import java.util.Locale
  *           - lighting   💡 Освещение
  *           - hygiene    🧼 Личная гигиена
  *           - jewelry    💍 Украшения
+ *
+ * 🆕 v16.0.12: добавлены подтипы:
+ *           food:  cookies, pasta, vegetable_oil, grains, meat_frozen, fish_frozen
+ *           thing: plumbing, sport
  */
 object SubtypeCatalog {
 
@@ -33,23 +37,30 @@ object SubtypeCatalog {
     // 🍎 ЕДА
     // ============================================================
     private val FOOD = listOf(
-        Subtype("dairy",         "🥛 Молочка"),
-        Subtype("bakery",        "🍞 Хлебобулочные"),
-        Subtype("canned",        "🥫 Консервы"),
-        Subtype("meat_fresh",    "🥩 Мясо свежее"),
-        Subtype("fish_fresh",    "🐟 Рыба свежая"),
-        Subtype("vegetables",    "🥦 Овощи"),
-        Subtype("fruits",        "🍎 Фрукты"),
-        Subtype("grocery",       "🍝 Бакалея"),
-        Subtype("sweets",        "🍬 Сладости"),
-        Subtype("drinks",        "🥤 Напитки"),
-        Subtype("spices",        "🧂 Приправы"),
-        Subtype("frozen",        "🧊 Заморозка"),
-        Subtype("semi_finished", "🍱 Полуфабрикаты"),
-        Subtype("salad",         "🥗 Салаты"),
-        Subtype("soup",          "🍲 Супы"),
-        Subtype("hot_appetizer", "🍢 Горячие закуски"),
-        Subtype("food_other",    "🍽 Прочее (еда)")
+        Subtype("dairy",          "🥛 Молочка"),
+        Subtype("bakery",         "🍞 Хлебобулочные"),
+        Subtype("canned",         "🥫 Консервы"),
+        Subtype("meat_fresh",     "🥩 Мясо свежее"),
+        Subtype("fish_fresh",     "🐟 Рыба свежая"),
+        Subtype("vegetables",     "🥦 Овощи"),
+        Subtype("fruits",         "🍎 Фрукты"),
+        Subtype("grocery",        "🍝 Бакалея"),
+        Subtype("sweets",         "🍬 Сладости"),
+        Subtype("drinks",         "🥤 Напитки"),
+        Subtype("spices",         "🧂 Приправы"),
+        Subtype("frozen",         "🧊 Заморозка"),
+        Subtype("semi_finished",  "🍱 Полуфабрикаты"),
+        Subtype("salad",          "🥗 Салаты"),
+        Subtype("soup",           "🍲 Супы"),
+        Subtype("hot_appetizer",  "🍢 Горячие закуски"),
+        // 🆕 v16.0.12
+        Subtype("cookies",        "🍪 Печенье"),
+        Subtype("pasta",          "🍝 Макароны"),
+        Subtype("vegetable_oil",  "🫒 Растительные масла"),
+        Subtype("grains",         "🌾 Крупы"),
+        Subtype("meat_frozen",    "🥩 Мясо заморозка"),
+        Subtype("fish_frozen",    "🐟 Рыба заморозка"),
+        Subtype("food_other",     "🍽 Прочее (еда)")
     )
 
     // ============================================================
@@ -96,6 +107,9 @@ object SubtypeCatalog {
         Subtype("lighting",      "💡 Освещение"),
         Subtype("hygiene",       "🧼 Личная гигиена"),
         Subtype("jewelry",       "💍 Украшения"),
+        // 🆕 v16.0.12
+        Subtype("plumbing",      "🚿 Сантехника"),
+        Subtype("sport",         "🏋️ Спорт"),
         Subtype("thing_other",   "📦 Прочее (предметы)")
     )
 
