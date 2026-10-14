@@ -25,6 +25,14 @@ import java.util.Locale
  *  - тап по чекбоксу → markDone / markUndone;
  *  - тап по карточке → редактирование;
  *  - меню (⋮) → редактировать / удалить.
+ *
+ * 🆕 v16.0.12: в мета-строке показываем:
+ *  - кто создал задачу и когда (➕ Имя · 📅 дд.мм.гггг);
+ *  - срок (⏰ дд.мм.гггг, с пометкой «просрочено»);
+ *  - повтор (🔁 …);
+ *  - кто выполнил и когда (✅ Имя · 🗓 дд.мм.гггг).
+ *
+ * Формат меты: части соединяются через « · », пустые — не показываются.
  */
 class TaskAdapter(
     private val onToggleDone: (TaskEntity) -> Unit,
@@ -76,23 +84,48 @@ class TaskAdapter(
             // Название
             textTitle.text = task.title
 
-            // Мета: дедлайн + повтор
+            // ============================================================
+            // Мета-строка: собираем части по порядку
+            // ============================================================
             val metaParts = mutableListOf<String>()
 
+            // 1. Кто и когда создал задачу.
+            //    Формат: «➕ Имя · 📅 дд.мм.гггг»
+            //    Если createdBy пустой — не показываем «➕».
+            val createdDateStr = DATE_FMT.format(Date(task.createdAt))
+            if (!task.createdBy.isNullOrBlank()) {
+                metaParts.add("➕ ${task.createdBy} · 📅 $createdDateStr")
+            } else {
+                metaParts.add("📅 $createdDateStr")
+            }
+
+            // 2. Срок (дедлайн).
             task.dueDate?.let { due ->
                 val dateStr = DATE_FMT.format(Date(due))
                 val overdue = !task.isDone && due < System.currentTimeMillis()
                 metaParts.add(if (overdue) "⏰ $dateStr (просрочено)" else "⏰ $dateStr")
             }
 
+            // 3. Повтор.
             when (task.recurrence) {
                 TaskEntity.RECURRENCE_DAILY -> metaParts.add("🔁 ежедневно")
                 TaskEntity.RECURRENCE_WEEKLY -> metaParts.add("🔁 еженедельно")
                 TaskEntity.RECURRENCE_MONTHLY -> metaParts.add("🔁 ежемесячно")
             }
 
-            if (task.isDone && task.doneBy != null) {
-                metaParts.add("✓ ${task.doneBy}")
+            // 4. Факт выполнения: кто и когда.
+            //    Формат: «✅ Имя · 🗓 дд.мм.гггг»
+            if (task.isDone) {
+                val doneParts = mutableListOf<String>()
+                if (!task.doneBy.isNullOrBlank()) {
+                    doneParts.add("✅ ${task.doneBy}")
+                } else {
+                    doneParts.add("✅ выполнено")
+                }
+                task.doneAt?.let { dt ->
+                    doneParts.add("🗓 ${DATE_FMT.format(Date(dt))}")
+                }
+                metaParts.add(doneParts.joinToString(" · "))
             }
 
             if (metaParts.isEmpty()) {
