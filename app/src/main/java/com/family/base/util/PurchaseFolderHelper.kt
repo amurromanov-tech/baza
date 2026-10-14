@@ -1,7 +1,10 @@
 package com.family.base.util
 
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.FolderEntity
+import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.OutboxEntity
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -10,17 +13,25 @@ import java.util.*
  *
  * Структура:
  *   BAZA (корень)
- *     └── 🛒 Покупки
+ *     └── 🛒 Покупки (системная, id=system-folder-purchases)
  *          ├── Покупка 25.09.2026 #1
  *          ├── Покупка 25.09.2026 #2
  *          └── Покупка 26.09.2026 #1
+ *
+ *     └── 🛒 Список покупок (системная, id=system-folder-shopping-list)
+ *
+ * 🆕 v16.0.15: «🛒 Покупки» — системная папка с фиксированным id.
+ * Создаётся миграцией 16→17, а не здесь. Здесь только ensure/навигация.
  */
 object PurchaseFolderHelper {
 
     private const val TAG = "PurchaseFolderHelper"
 
-    /** Название корневой папки */
+    /** Название корневой папки «Покупки» (для отображения) */
     const val PURCHASES_FOLDER_NAME = "🛒 Покупки"
+
+    /** Название системной папки «Список покупок» (для отображения) */
+    const val SHOPPING_LIST_FOLDER_NAME = "🛒 Список покупок"
 
     /** Шаблон имени папки покупки (без номера) */
     private const val PURCHASE_DATE_PREFIX = "Покупка"
@@ -33,27 +44,37 @@ object PurchaseFolderHelper {
     )
 
     // ============================================================
-    // 1. ПОИСК ИЛИ СОЗДАНИЕ КОРНЕВОЙ ПАПКИ «🛒 Покупки»
+    // 1. СИСТЕМНАЯ ПАПКА «🛒 ПОКУПКИ»
     // ============================================================
+
+    /**
+     * Возвращает системную папку «🛒 Покупки» (по фиксированному id).
+     * Если её нет — создаёт (страховка на случай, если миграция почему-то не отработала).
+     *
+     * 🆕 v16.0.15: id — фиксированный (`FolderEntity.SYSTEM_ID_PURCHASES`).
+     * `isSystem = true`, `systemKey = "purchases"`.
+     */
     suspend fun getOrCreatePurchasesFolder(db: AppDatabase): FolderEntity? {
         return try {
-            val rootFolders = db.folderDao().getRootFolders()
-            val existing = rootFolders.firstOrNull { it.name == PURCHASES_FOLDER_NAME }
-
+            val existing = db.folderDao()
+                .getFolderById(FolderEntity.SYSTEM_ID_PURCHASES)
             if (existing != null) {
                 Logger.log(TAG, "Purchases folder exists: id=${existing.id}")
                 return existing
             }
 
-            // Создаём новую корневую папку
             val folder = FolderEntity(
+                id = FolderEntity.SYSTEM_ID_PURCHASES,
                 name = PURCHASES_FOLDER_NAME,
                 parentId = null,
-                createdBy = "user",
-                path = PURCHASES_FOLDER_NAME
+                parentItemId = null,
+                createdBy = "system",
+                path = PURCHASES_FOLDER_NAME,
+                isSystem = true,
+                systemKey = FolderEntity.SYSTEM_KEY_PURCHASES
             )
             db.folderDao().insertFolder(folder)
-            Logger.log(TAG, "Purchases folder created: id=${folder.id}")
+            Logger.log(TAG, "Purchases folder created (fallback): id=${folder.id}")
             folder
 
         } catch (e: Exception) {
@@ -63,12 +84,56 @@ object PurchaseFolderHelper {
     }
 
     // ============================================================
+    // 1б. СИСТЕМНАЯ ПАПКА «🛒 СПИСОК ПОКУПОК»
+    // ============================================================
+
+    /**
+     * Возвращает системную папку «🛒 Список покупок» (по фиксированному id).
+     * Если её нет — создаёт (страховка).
+     */
+    suspend fun getOrCreateShoppingListFolder(db: AppDatabase): FolderEntity? {
+        return try {
+            val existing = db.folderDao()
+                .getFolderById(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+            if (existing != null) {
+                Logger.log(TAG, "ShoppingList folder exists: id=${existing.id}")
+                return existing
+            }
+
+            val folder = FolderEntity(
+                id = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                name = SHOPPING_LIST_FOLDER_NAME,
+                parentId = null,
+                parentItemId = null,
+                createdBy = "system",
+                path = SHOPPING_LIST_FOLDER_NAME,
+                isSystem = true,
+                systemKey = FolderEntity.SYSTEM_KEY_SHOPPING_LIST
+            )
+            db.folderDao().insertFolder(folder)
+            Logger.log(TAG, "ShoppingList folder created (fallback): id=${folder.id}")
+            folder
+
+        } catch (e: Exception) {
+            Logger.log(TAG, "getOrCreateShoppingListFolder error: ${e.message}", e)
+            null
+        }
+    }
+
+    // ============================================================
     // 2. СОЗДАНИЕ ПАПКИ ПОКУПКИ «Покупка DD.MM.YYYY #N»
     // ============================================================
+
+    /**
+     * Создаёт папку «Покупка DD.MM.YYYY #N» внутри родителя.
+     * Родитель — как правило, `system-folder-purchases`.
+     * Номер N подбирается как max+1 для этой даты.
+     */
     suspend fun createPurchaseFolder(
         db: AppDatabase,
         parentId: String,
-        date: Long = System.currentTimeMillis()
+        date: Long = System.currentTimeMillis(),
+        changedBy: String = "user"
     ): FolderEntity? {
         return try {
             val dateStr = dateFormat.format(Date(date))
@@ -79,11 +144,11 @@ object PurchaseFolderHelper {
             val folder = FolderEntity(
                 name = name,
                 parentId = parentId,
-                createdBy = "user",
-                path = name,
-                // iconUrl не ставим — будет дефолтная иконка
+                createdBy = changedBy,
+                path = name
             )
             db.folderDao().insertFolder(folder)
+            OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_CREATE, changedBy)
             Logger.log(TAG, "Purchase folder created: $name (id=${folder.id})")
             folder
 
@@ -94,7 +159,7 @@ object PurchaseFolderHelper {
     }
 
     // ============================================================
-    // 3. ОПРЕДЕЛЕНИЕ НОМЕРА: максимальный #N для конкретной даты +1
+    // 3. НОМЕР: max #N для конкретной даты +1
     // ============================================================
     private suspend fun getNextNumberForDate(
         db: AppDatabase,
@@ -124,6 +189,79 @@ object PurchaseFolderHelper {
         } catch (e: Exception) {
             Logger.log(TAG, "getNextNumberForDate error: ${e.message}", e)
             1
+        }
+    }
+
+    // ============================================================
+    // 4. 🆕 ПЕРЕМЕЩЕНИЕ ПРЕДМЕТА В СВЕЖУЮ ПАПКУ ПОКУПКИ
+    // ============================================================
+
+    /**
+     * «Купить → куплено».
+     *
+     * Что делает:
+     *  1. Находит/создаёт системную папку «🛒 Покупки».
+     *  2. Создаёт внутри неё папку «Покупка DD.MM.YYYY #N»
+     *     (с номером по сегодняшней дате).
+     *  3. Перемещает предмет (itemId) в эту папку:
+     *     `parentId = <новая папка>`, `parentItemId = null`.
+     *  4. Пишет в outbox (ACTION_UPDATE на item).
+     *
+     * Не пишет в историю — это делает вызывающий (ShoppingListViewModel),
+     * чтобы держать текст истории в одном месте.
+     *
+     * @return true — если предмет переехал, иначе false.
+     */
+    suspend fun moveItemToPurchases(
+        db: AppDatabase,
+        itemId: String,
+        changedBy: String,
+        date: Long = System.currentTimeMillis()
+    ): Boolean {
+        return try {
+            val item = db.itemDao().getItemById(itemId)
+            if (item == null) {
+                Logger.log(TAG, "moveItemToPurchases: item not found $itemId")
+                return false
+            }
+
+            val purchases = getOrCreatePurchasesFolder(db)
+            if (purchases == null) {
+                Logger.log(TAG, "moveItemToPurchases: cannot ensure purchases folder")
+                return false
+            }
+
+            val purchaseFolder = createPurchaseFolder(
+                db = db,
+                parentId = purchases.id,
+                date = date,
+                changedBy = changedBy
+            )
+            if (purchaseFolder == null) {
+                Logger.log(TAG, "moveItemToPurchases: cannot create purchase folder")
+                return false
+            }
+
+            val now = System.currentTimeMillis()
+            val updated: ItemEntity = item.copy(
+                parentId = purchaseFolder.id,
+                parentItemId = null,
+                updatedDate = now,
+                updatedBy = changedBy
+            )
+            updated.computeExpiryFields()
+            db.itemDao().updateItem(updated)
+            OutboxLogger.itemChanged(db, updated, OutboxEntity.ACTION_UPDATE, changedBy)
+
+            Logger.log(
+                TAG,
+                "moveItemToPurchases: item $itemId '${item.name}' → ${purchaseFolder.name}"
+            )
+            true
+
+        } catch (e: Exception) {
+            Logger.log(TAG, "moveItemToPurchases error for $itemId: ${e.message}", e)
+            false
         }
     }
 }
