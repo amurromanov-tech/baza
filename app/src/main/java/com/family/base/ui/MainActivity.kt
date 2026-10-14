@@ -219,13 +219,28 @@ class MainActivity : AppCompatActivity() {
         supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
         adapter = CatalogAdapter(
-            onFolderClick = { folder ->
-                if (folder.isSystem) {
-                    // 🆕 v14: системная папка → TaskListActivity
-                    Logger.log(TAG, "onFolderClick: opening TaskListActivity for system folder")
-                    startActivity(Intent(this, TaskListActivity::class.java))
-                } else {
-                    navigateToFolder(folder)
+                      onFolderClick = { folder ->
+                when (folder.systemKey) {
+                    FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
+                        // «🏠 Домашние дела» → TaskListActivity
+                        Logger.log(TAG, "onFolderClick: opening TaskListActivity for home_tasks")
+                        startActivity(Intent(this, TaskListActivity::class.java))
+                    }
+                    FolderEntity.SYSTEM_KEY_PURCHASES -> {
+                        // «🛒 Покупки» — обычная навигация внутрь папки
+                        Logger.log(TAG, "onFolderClick: navigating into purchases folder")
+                        navigateToFolder(folder)
+                    }
+                    FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
+                        // «🛒 Список покупок» — пока открываем как обычную папку.
+                        // Экран ShoppingListActivity появится в сессии 4.2.
+                        Logger.log(TAG, "onFolderClick: navigating into shopping_list folder (temp)")
+                        navigateToFolder(folder)
+                    }
+                    else -> {
+                        // Не системная — обычная навигация
+                        navigateToFolder(folder)
+                    }
                 }
             },
             onItemClick = { item -> openItemDetail(item) },
