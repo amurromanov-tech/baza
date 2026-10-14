@@ -86,7 +86,7 @@
                 android:clipToPadding="false"
                 android:paddingTop="4dp"
                 android:paddingBottom="88dp"
-                tools:listitem="@layout/item_catalog_entry" />
+                tools:listitem="@layout/item_shopping_list" />
 
             <!-- Empty state -->
             <LinearLayout
