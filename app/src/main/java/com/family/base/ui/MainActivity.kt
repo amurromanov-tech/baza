@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val itemDetailLauncher = registerForActivityResult(
+       private val itemDetailLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -144,6 +144,26 @@ class MainActivity : AppCompatActivity() {
                 Logger.log(TAG, "Navigate to folder from ItemDetail: $folderId")
                 viewModel.navigateToFolder(folderId)
             }
+        }
+    }
+
+    /**
+     * 🆕 v16.0.15: возврат из «🛒 Список покупок».
+     * Обновляем счётчики системных папок и, если нужно, переходим в каталог.
+     */
+    private val shoppingListLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+            if (!folderId.isNullOrEmpty()) {
+                Logger.log(TAG, "Navigate to folder from ShoppingList: $folderId")
+                viewModel.navigateToFolder(folderId)
+            } else {
+                loadSystemFolderCounters()
+            }
+        } else {
+            loadSystemFolderCounters()
         }
     }
 
@@ -230,10 +250,11 @@ class MainActivity : AppCompatActivity() {
                         navigateToFolder(folder)
                     }
                     FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
-                        // 🆕 v16.0.14: пока открываем как обычную папку.
-                        // Экран ShoppingListActivity появится в сессии 4.3.
-                        Logger.log(TAG, "onFolderClick: navigating into shopping_list folder (temp)")
-                        navigateToFolder(folder)
+                        // 🆕 v16.0.15: «Список покупок» → отдельный экран
+                        Logger.log(TAG, "onFolderClick: opening ShoppingListActivity")
+                        shoppingListLauncher.launch(
+                            Intent(this, ShoppingListActivity::class.java)
+                        )
                     }
                     else -> navigateToFolder(folder)
                 }
