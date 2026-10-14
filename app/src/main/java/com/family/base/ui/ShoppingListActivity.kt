@@ -22,12 +22,14 @@ import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.ui.adapter.ShoppingListAdapter
 import com.family.base.ui.viewmodel.ShoppingListViewModel
 import com.family.base.util.Logger
+import com.family.base.util.ShoppingListSortPreferences
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Экран «🛒 Список покупок».
@@ -37,18 +39,10 @@ import kotlinx.coroutines.withContext
  *  - Куплено  — предметы внутри подпапок «Покупок» (зачёркнуты и бледные);
  *  - Все      — оба списка.
  *
- * Чекбокс:
- *  - в «Купить»   → отметить куплено (переместить в /Покупки/Покупка дата #N
- *                   + открыть карточку в edit-режиме);
- *  - в «Куплено»  → снять отметку (вернуть в корень «Списка покупок»).
- *
- * 🆕 v16.0.16: FAB «+» открывает ЛЁГКИЙ ДИАЛОГ с одним полем «Название».
- * Никаких карточек — тип и подтип проставляются автоматически (other/other_other).
- * Полную карточку (цена, срок, фото) пользователь заполнит позже,
- * когда нажмёт «Куплено».
- *
- * Тап по строке → открыть карточку в edit-режиме.
- * Меню (⋮)     → редактировать / удалить.
+ * 🆕 v17.0.8: сортировка в тулбаре.
+ *  - кнопка в тулбаре → PopupMenu с 4 режимами + сброс;
+ *  - режим хранится в ShoppingListSortPreferences;
+ *  - DEFAULT — порядок как отдаёт ViewModel.
  */
 class ShoppingListActivity : AppCompatActivity() {
 
@@ -127,6 +121,16 @@ class ShoppingListActivity : AppCompatActivity() {
 
         val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
         toolbar?.setNavigationOnClickListener { finish() }
+        toolbar?.inflateMenu(R.menu.menu_shopping_list)
+        toolbar?.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_sort -> {
+                    showSortDialog()
+                    true
+                }
+                else -> false
+            }
+        }
 
         adapter = ShoppingListAdapter(
             onToggleBought = { item -> onToggleBought(item) },
@@ -157,14 +161,77 @@ class ShoppingListActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // СОРТИРОВКА
+    // ============================================================
+
+    private fun showSortDialog() {
+        val current = ShoppingListSortPreferences.getMode(this)
+
+        val labels = arrayOf(
+            "📅 Дата ↓ (сначала новые)",
+            "📅 Дата ↑ (сначала старые)",
+            "🔤 Имя ↑ (А → Я)",
+            "🔤 Имя ↓ (Я → А)",
+            "↩️ По умолчанию"
+        )
+
+        val checkedIndex = when (current) {
+            ShoppingListSortPreferences.Mode.DEFAULT   -> 4
+            ShoppingListSortPreferences.Mode.DATE_DESC -> 0
+            ShoppingListSortPreferences.Mode.DATE_ASC  -> 1
+            ShoppingListSortPreferences.Mode.NAME_ASC  -> 2
+            ShoppingListSortPreferences.Mode.NAME_DESC -> 3
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Сортировка")
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                val mode = when (which) {
+                    0 -> ShoppingListSortPreferences.Mode.DATE_DESC
+                    1 -> ShoppingListSortPreferences.Mode.DATE_ASC
+                    2 -> ShoppingListSortPreferences.Mode.NAME_ASC
+                    3 -> ShoppingListSortPreferences.Mode.NAME_DESC
+                    else -> ShoppingListSortPreferences.Mode.DEFAULT
+                }
+                ShoppingListSortPreferences.setMode(this, mode)
+                dialog.dismiss()
+                loadItems()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Применяет выбранный режим сортировки к списку.
+     * DEFAULT — оставляем как отдал ViewModel (по name COLLATE NOCASE ASC,
+     *            внутри фильтра — toBuyItems + boughtItems).
+     *
+     * Сортировка по дате — по addedDate (когда добавили покупку).
+     * Сортировка по имени — регистронезависимая.
+     */
+    private fun applySort(items: List<ItemEntity>): List<ItemEntity> {
+        return when (ShoppingListSortPreferences.getMode(this)) {
+            ShoppingListSortPreferences.Mode.DEFAULT ->
+                items
+
+            ShoppingListSortPreferences.Mode.DATE_DESC ->
+                items.sortedByDescending { it.addedDate }
+
+            ShoppingListSortPreferences.Mode.DATE_ASC ->
+                items.sortedBy { it.addedDate }
+
+            ShoppingListSortPreferences.Mode.NAME_ASC ->
+                items.sortedBy { it.name.lowercase(Locale.getDefault()) }
+
+            ShoppingListSortPreferences.Mode.NAME_DESC ->
+                items.sortedByDescending { it.name.lowercase(Locale.getDefault()) }
+        }
+    }
+
+    // ============================================================
     // БЫСТРОЕ ДОБАВЛЕНИЕ
     // ============================================================
 
-    /**
-     * 🆕 v16.0.16: диалог с одним полем «Название».
-     * Создаёт предмет с типом other / подтипом other_other
-     * сразу в корне системной папки «🛒 Список покупок».
-     */
     private fun showQuickAddDialog() {
         val container = android.widget.FrameLayout(this).apply {
             val pad = (16 * resources.displayMetrics.density).toInt()
@@ -203,10 +270,6 @@ class ShoppingListActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /**
-     * Создаёт предмет «на скорую руку» и перезагружает список.
-     * Тип other, подтип other_other, parentId = «🛒 Список покупок».
-     */
     private fun createQuickItem(name: String) {
         lifecycleScope.launch {
             try {
@@ -256,10 +319,12 @@ class ShoppingListActivity : AppCompatActivity() {
                 val result = withContext(Dispatchers.IO) {
                     viewModel.load(currentFilter)
                 }
-                adapter.setBoughtIds(result.boughtIds)
-                adapter.submitList(result.items)
+                val sorted = applySort(result.items)
 
-                if (result.items.isEmpty()) {
+                adapter.setBoughtIds(result.boughtIds)
+                adapter.submitList(sorted)
+
+                if (sorted.isEmpty()) {
                     layoutEmpty.visibility = View.VISIBLE
                     rvItems.visibility = View.GONE
                     textEmpty.text = when (currentFilter) {
@@ -291,11 +356,6 @@ class ShoppingListActivity : AppCompatActivity() {
     // ДЕЙСТВИЯ
     // ============================================================
 
-    /**
-     * Чекбокс:
-     *  - если предмет был «Купить» → пометить куплено + открыть карточку в edit.
-     *  - если предмет был «Куплено» → снять отметку (вернуть в корень).
-     */
     private fun onToggleBought(item: ItemEntity) {
         val wasBought = item.parentId != FolderEntity.SYSTEM_ID_SHOPPING_LIST
 
@@ -350,9 +410,6 @@ class ShoppingListActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Открыть карточку предмета в edit-режиме.
-     */
     private fun openItemDetailEdit(item: ItemEntity) {
         val intent = Intent(this, ItemDetailActivity::class.java)
         intent.putExtra("item_id", item.id)
