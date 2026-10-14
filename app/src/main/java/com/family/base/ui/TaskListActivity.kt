@@ -21,6 +21,7 @@ import com.family.base.ui.adapter.TaskAdapter
 import com.family.base.util.Logger
 import com.family.base.util.TaskReminderPreferences
 import com.family.base.util.TaskReminderScheduler
+import com.family.base.util.TaskSortPreferences
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -40,8 +41,12 @@ import java.util.Locale
  * позволяет создавать, редактировать, удалять, отмечать выполненными.
  * Повторяющиеся задачи при выполнении автоматически создают клон.
  *
- * v14.1.0: возвращены напоминания — через WorkManager, глобальная настройка
- * (одно время для всех задач). Секция «Напоминание» встроена в диалог задачи.
+ * v14.1.0: возвращены напоминания — через WorkManager, глобальная настройка.
+ *
+ * 🆕 v16.0.12: сортировка списка.
+ *  - кнопка в тулбаре (меню) → PopupMenu с 4 режимами + сброс;
+ *  - режим хранится в TaskSortPreferences (SharedPreferences);
+ *  - если режим DEFAULT — сортировка отдаётся на откуп TaskDao.
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -87,9 +92,19 @@ class TaskListActivity : AppCompatActivity() {
         chipDone = findViewById(R.id.chipDone)
         chipAll = findViewById(R.id.chipAll)
 
-        // Toolbar: кнопка «назад» = finish
+        // Toolbar: навигация «назад» + меню сортировки
         val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
         toolbar?.setNavigationOnClickListener { finish() }
+        toolbar?.inflateMenu(R.menu.menu_task_list)
+        toolbar?.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_sort -> {
+                    showSortDialog()
+                    true
+                }
+                else -> false
+            }
+        }
 
         adapter = TaskAdapter(
             onToggleDone = { task -> toggleDone(task) },
@@ -120,17 +135,89 @@ class TaskListActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // СОРТИРОВКА
+    // ============================================================
+
+    /**
+     * Показывает диалог выбора режима сортировки.
+     * 5 пунктов: 4 режима + «По умолчанию» (сброс).
+     */
+    private fun showSortDialog() {
+        val current = TaskSortPreferences.getMode(this)
+
+        val labels = arrayOf(
+            "📅 Дата ↓ (сначала новые)",
+            "📅 Дата ↑ (сначала старые)",
+            "🔤 Имя ↑ (А → Я)",
+            "🔤 Имя ↓ (Я → А)",
+            "↩️ По умолчанию"
+        )
+
+        val checkedIndex = when (current) {
+            TaskSortPreferences.Mode.DEFAULT   -> 4
+            TaskSortPreferences.Mode.DATE_DESC -> 0
+            TaskSortPreferences.Mode.DATE_ASC  -> 1
+            TaskSortPreferences.Mode.NAME_ASC  -> 2
+            TaskSortPreferences.Mode.NAME_DESC -> 3
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Сортировка")
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                val mode = when (which) {
+                    0 -> TaskSortPreferences.Mode.DATE_DESC
+                    1 -> TaskSortPreferences.Mode.DATE_ASC
+                    2 -> TaskSortPreferences.Mode.NAME_ASC
+                    3 -> TaskSortPreferences.Mode.NAME_DESC
+                    else -> TaskSortPreferences.Mode.DEFAULT
+                }
+                TaskSortPreferences.setMode(this, mode)
+                dialog.dismiss()
+                loadTasks()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Применяет выбранный режим сортировки к списку.
+     * DEFAULT — оставляем как отдал DAO.
+     *
+     * Сортировка по дате — по createdAt (когда задача создана).
+     * Сортировка по имени — регистронезависимая.
+     */
+    private fun applySort(tasks: List<TaskEntity>): List<TaskEntity> {
+        return when (TaskSortPreferences.getMode(this)) {
+            TaskSortPreferences.Mode.DEFAULT ->
+                tasks
+
+            TaskSortPreferences.Mode.DATE_DESC ->
+                tasks.sortedByDescending { it.createdAt }
+
+            TaskSortPreferences.Mode.DATE_ASC ->
+                tasks.sortedBy { it.createdAt }
+
+            TaskSortPreferences.Mode.NAME_ASC ->
+                tasks.sortedBy { it.title.lowercase(Locale.getDefault()) }
+
+            TaskSortPreferences.Mode.NAME_DESC ->
+                tasks.sortedByDescending { it.title.lowercase(Locale.getDefault()) }
+        }
+    }
+
+    // ============================================================
     // ЗАГРУЗКА
     // ============================================================
     private fun loadTasks() {
         lifecycleScope.launch {
-            val tasks = withContext(Dispatchers.IO) {
+            val raw = withContext(Dispatchers.IO) {
                 when (currentFilter) {
                     Filter.ACTIVE -> repository.getActiveSorted()
                     Filter.DONE -> repository.getDoneSorted()
                     Filter.ALL -> repository.getAllSorted()
                 }
             }
+            val tasks = applySort(raw)
             adapter.submitList(tasks)
 
             if (tasks.isEmpty()) {
@@ -301,7 +388,6 @@ class TaskListActivity : AppCompatActivity() {
             textReminderHint.visibility = if (visible) View.VISIBLE else View.GONE
         }
 
-        // Инициализация из глобальных настроек
         switchReminder.isChecked = TaskReminderPreferences.isEnabled(this)
         updateReminderTimeLabel()
         updateReminderVisibility()
@@ -380,7 +466,6 @@ class TaskListActivity : AppCompatActivity() {
                             }
                         }
 
-                        // v14.1.0: применить настройку напоминаний
                         applyReminderSetting(switchReminder.isChecked)
 
                         dialog.dismiss()
