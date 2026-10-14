@@ -20,11 +20,21 @@ import java.net.UnknownHostException
  *  - удаление одного файла.
  *
  * Всё общение с Яндекс.Диском — через YandexDiskApi.
+ *
+ * 🆕 v17.0.7: при запросе списка файлов явно передаём `limit = 1000`.
+ * Яндекс.Диск по умолчанию отдаёт только 20 элементов, из-за чего
+ * новые changelog-файлы были невидимыми, и синк «залипал».
  */
 class SyncManagerApi {
 
     private val TAG = "SyncManagerApi"
     private val CHANGELOG_FOLDER = "changelog"
+
+    /**
+     * Максимум файлов в одном ответе list.
+     * У Яндекса допустимо до 10000. 1000 — с огромным запасом.
+     */
+    private val LIST_LIMIT = 1000
 
     private fun getAuth(): String? {
         return try {
@@ -68,12 +78,14 @@ class SyncManagerApi {
     /**
      * Гарантирует существование /BAZA/changelog/.
      *
-     * 🆕 B1.3: обёрнуто в NetworkCallExecutor с 2 попытками.
+     * Обёрнуто в NetworkCallExecutor с 2 попытками.
      *  - 5xx/DNS/timeout → один retry через 500 мс;
      *  - 4xx (кроме 404) → без retry, сразу false;
      *  - 404 → создаём папку (это не ошибка).
      *
-     * Не бросает исключений. Возвращает true/false.
+     * 🆕 v17.0.7: явно передаём limit в getDiskResources.
+     * Хотя для проверки существования папки нам нужно только одно поле,
+     * явный limit защищает от скрытых кэшей и странных ответов.
      */
     suspend fun ensureChangelogFolder(): Boolean {
         val auth = getAuth() ?: return false
@@ -86,22 +98,18 @@ class SyncManagerApi {
             maxAttempts = 2,
             treat404AsSuccess = false
         ) {
-            // Шаг 1: проверить существование changelog-папки.
-            val check = api.getDiskResources(auth, folderPath)
+            val check = api.getDiskResources(auth, folderPath, limit = LIST_LIMIT)
             val checkCode = check.code()
 
             when {
                 checkCode == 200 -> {
-                    // Папка есть — успех.
                     return@runHttpSafely NetworkCallExecutor.HttpOutcome(true, 200)
                 }
                 checkCode == 404 -> {
-                    // Папки нет — надо создать. Сначала убедимся, что есть корень.
-                    val rootCheck = api.getDiskResources(auth, rootPath)
+                    val rootCheck = api.getDiskResources(auth, rootPath, limit = LIST_LIMIT)
                     val rootCode = rootCheck.code()
                     if (rootCode == 404) {
                         val createRoot = api.createFolder(auth, rootPath)
-                        // 409 = уже существует — не ошибка.
                         if (!createRoot.isSuccessful && createRoot.code() != 409) {
                             return@runHttpSafely NetworkCallExecutor.HttpOutcome(
                                 null,
@@ -122,7 +130,6 @@ class SyncManagerApi {
                     )
                 }
                 else -> {
-                    // Прочий код (5xx и т.п.) — пусть executor решит про retry.
                     return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, checkCode)
                 }
             }
@@ -150,8 +157,9 @@ class SyncManagerApi {
      * Пустой список — если папки нет, или она пуста.
      * null — если сетевая ошибка (важно: НЕ пустой список!).
      *
-     * ⚠️ API getDiskResources не поддерживает limit/offset —
-     * Яндекс отдаёт все элементы папки разом.
+     * 🆕 v17.0.7: явно передаём limit = 1000.
+     * Это ГЛАВНЫЙ фикс: без limit Яндекс отдавал только 20 файлов,
+     * и всё, что старше, было невидимым → синк «залипал».
      */
     suspend fun listChangelogFiles(): List<String>? {
         val auth = getAuth() ?: return null
@@ -159,7 +167,7 @@ class SyncManagerApi {
         val folderPath = getChangelogPath()
 
         return try {
-            val response = api.getDiskResources(auth, folderPath)
+            val response = api.getDiskResources(auth, folderPath, limit = LIST_LIMIT)
 
             if (response.code() == 404) {
                 Logger.log(TAG, "listChangelogFiles: folder not found, returning empty")
@@ -171,8 +179,6 @@ class SyncManagerApi {
             }
 
             val body = response.body() ?: return emptyList()
-            // Поле _embedded — стандартное для Яндекс.Диска.
-            // Если модель не содержит — вернём пустой список.
             val items = body.embedded?.items ?: run {
                 Logger.log(TAG, "listChangelogFiles: _embedded.items is null")
                 return emptyList()
@@ -183,7 +189,7 @@ class SyncManagerApi {
                 .mapNotNull { it.name }
                 .filter { it.endsWith(".json") }
 
-            Logger.log(TAG, "listChangelogFiles: found ${files.size} files")
+            Logger.log(TAG, "listChangelogFiles: found ${files.size} files (limit=$LIST_LIMIT)")
             files
         } catch (e: Exception) {
             if (isDnsError(e)) {
