@@ -124,28 +124,22 @@ class ShoppingListViewModel(
                 return@withContext null
             }
 
-            val ok = PurchaseFolderHelper.moveItemToPurchases(
+                    val purchaseFolder = PurchaseFolderHelper.moveItemToPurchases(
                 db = db,
                 itemId = itemId,
                 changedBy = changedBy
             )
 
-            if (!ok) {
-                Logger.log(TAG, "markBought: moveItemToPurchases returned false for $itemId")
+            if (purchaseFolder == null) {
+                Logger.log(TAG, "markBought: moveItemToPurchases returned null for $itemId")
                 return@withContext null
             }
 
-            // Узнаём id свежей папки — она имеет максимальный createdAt среди детей «Покупок».
-            val purchasesFolderId = FolderEntity.SYSTEM_ID_PURCHASES
-            val latestFolder = db.folderDao()
-                .getFoldersByParent(purchasesFolderId)
-                .maxByOrNull { it.createdAt }
-
             Logger.log(
                 TAG,
-                "markBought: item '${item.name}' → '${latestFolder?.name}' (id=${latestFolder?.id})"
+                "markBought: item '${item.name}' → '${purchaseFolder.name}' (id=${purchaseFolder.id})"
             )
-            latestFolder
+            purchaseFolder    
 
         } catch (e: Exception) {
             Logger.log(TAG, "markBought error for $itemId: ${e.message}", e)
