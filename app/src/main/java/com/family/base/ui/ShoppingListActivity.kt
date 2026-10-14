@@ -3,6 +3,7 @@ package com.family.base.ui
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,8 +15,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.ui.adapter.ShoppingListAdapter
 import com.family.base.ui.viewmodel.ShoppingListViewModel
 import com.family.base.util.Logger
@@ -39,9 +42,13 @@ import kotlinx.coroutines.withContext
  *                   + открыть карточку в edit-режиме);
  *  - в «Куплено»  → снять отметку (вернуть в корень «Списка покупок»).
  *
+ * 🆕 v16.0.16: FAB «+» открывает ЛЁГКИЙ ДИАЛОГ с одним полем «Название».
+ * Никаких карточек — тип и подтип проставляются автоматически (other/other_other).
+ * Полную карточку (цена, срок, фото) пользователь заполнит позже,
+ * когда нажмёт «Куплено».
+ *
  * Тап по строке → открыть карточку в edit-режиме.
  * Меню (⋮)     → редактировать / удалить.
- * FAB «+»      → AddItemActivity с parent_id = «🛒 Список покупок».
  */
 class ShoppingListActivity : AppCompatActivity() {
 
@@ -73,12 +80,6 @@ class ShoppingListActivity : AppCompatActivity() {
     // ============================================================
     // LAUNCHERS
     // ============================================================
-
-    private val addItemLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        loadItems()
-    }
 
     private val itemDetailLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -145,11 +146,7 @@ class ShoppingListActivity : AppCompatActivity() {
             loadItems()
         }
 
-        fabAddItem.setOnClickListener {
-            val intent = Intent(this, AddItemActivity::class.java)
-            intent.putExtra("parent_id", FolderEntity.SYSTEM_ID_SHOPPING_LIST)
-            addItemLauncher.launch(intent)
-        }
+        fabAddItem.setOnClickListener { showQuickAddDialog() }
 
         loadItems()
     }
@@ -157,6 +154,96 @@ class ShoppingListActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadItems()
+    }
+
+    // ============================================================
+    // БЫСТРОЕ ДОБАВЛЕНИЕ
+    // ============================================================
+
+    /**
+     * 🆕 v16.0.16: диалог с одним полем «Название».
+     * Создаёт предмет с типом other / подтипом other_other
+     * сразу в корне системной папки «🛒 Список покупок».
+     */
+    private fun showQuickAddDialog() {
+        val container = android.widget.FrameLayout(this).apply {
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, 0)
+        }
+        val editText = EditText(this).apply {
+            hint = "Что купить?"
+            isSingleLine = true
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        container.addView(editText)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Новая покупка")
+            .setView(container)
+            .setPositiveButton("Добавить", null)
+            .setNegativeButton("Отмена", null)
+            .create()
+
+        dialog.setOnShowListener {
+            editText.requestFocus()
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = editText.text?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    editText.error = "Введите название"
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                createQuickItem(name)
+            }
+        }
+
+        dialog.show()
+    }
+
+    /**
+     * Создаёт предмет «на скорую руку» и перезагружает список.
+     * Тип other, подтип other_other, parentId = «🛒 Список покупок».
+     */
+    private fun createQuickItem(name: String) {
+        lifecycleScope.launch {
+            try {
+                val item = withContext(Dispatchers.IO) {
+                    val now = System.currentTimeMillis()
+                    val newItem = ItemEntity(
+                        name = name,
+                        parentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                        parentItemId = null,
+                        quantity = 1,
+                        addedDate = now,
+                        addedBy = currentUser,
+                        updatedDate = now,
+                        updatedBy = currentUser,
+                        itemType = "other",
+                        itemSubtype = "other_other"
+                    )
+                    db.itemDao().insertItem(newItem)
+                    OutboxLogger.itemChanged(
+                        db = db,
+                        item = newItem,
+                        action = OutboxEntity.ACTION_CREATE,
+                        changedBy = currentUser
+                    )
+                    newItem
+                }
+
+                Logger.log(TAG, "createQuickItem: '${item.name}' (id=${item.id})")
+                Toast.makeText(this@ShoppingListActivity, "Добавлено: $name", Toast.LENGTH_SHORT).show()
+                setResult(RESULT_OK)
+                loadItems()
+
+            } catch (e: Exception) {
+                Logger.log(TAG, "createQuickItem error: ${e.message}", e)
+                Toast.makeText(this@ShoppingListActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // ============================================================
@@ -215,7 +302,6 @@ class ShoppingListActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 if (wasBought) {
-                    // Снять «куплено» → вернуть в корень «Списка покупок».
                     val ok = withContext(Dispatchers.IO) {
                         viewModel.unmarkBought(item.id, currentUser)
                     }
@@ -236,7 +322,6 @@ class ShoppingListActivity : AppCompatActivity() {
                         loadItems()
                     }
                 } else {
-                    // Пометить куплено + открыть карточку в edit-режиме.
                     val purchaseFolder = withContext(Dispatchers.IO) {
                         viewModel.markBought(item.id, currentUser)
                     }
@@ -247,8 +332,6 @@ class ShoppingListActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT
                         ).show()
                         setResult(RESULT_OK)
-                        // Открываем карточку в edit-режиме,
-                        // чтобы пользователь сразу заполнил цену / срок / фото.
                         openItemDetailEdit(item)
                     } else {
                         Toast.makeText(
@@ -268,7 +351,7 @@ class ShoppingListActivity : AppCompatActivity() {
     }
 
     /**
-     * Открыть карточку предмета в edit-режиме (как в делах: тап по строке = редактирование).
+     * Открыть карточку предмета в edit-режиме.
      */
     private fun openItemDetailEdit(item: ItemEntity) {
         val intent = Intent(this, ItemDetailActivity::class.java)
