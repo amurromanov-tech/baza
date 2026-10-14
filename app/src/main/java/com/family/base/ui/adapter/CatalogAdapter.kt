@@ -21,13 +21,23 @@ class CatalogAdapter(
     private val onItemLongClick: (ItemEntity) -> Unit
 ) : RecyclerView.Adapter<CatalogAdapter.ViewHolder>() {
 
+    /**
+     * 🆕 v16.0.14: счётчики для системных папок.
+     * Один общий объект вместо одного Int — чтобы каждая системная папка
+     * показывала СВОЁ число:
+     *  - home_tasks     → активные задачи;
+     *  - purchases      → предметы в корне «Покупок» (обычно 0);
+     *  - shopping_list  → предметы в корне «Списка покупок» («купить»).
+     */
+    data class SystemFolderCounters(
+        val homeTasksActive: Int = 0,
+        val purchasesItems: Int = 0,
+        val shoppingListItems: Int = 0
+    )
+
     private var items: List<Any> = emptyList()
 
-    /**
-     * 🆕 v14: количество активных задач в системной папке «🏠 Домашние дела».
-     * Устанавливается из MainActivity после loadContents().
-     */
-    private var systemFolderTaskCount: Int = 0
+    private var systemFolderCounters: SystemFolderCounters = SystemFolderCounters()
 
     fun submitList(newItems: List<Any>) {
         items = newItems
@@ -35,12 +45,22 @@ class CatalogAdapter(
     }
 
     /**
-     * 🆕 v14: обновить счётчик активных задач для системной папки.
+     * 🆕 v16.0.14: обновить счётчики системных папок.
+     * Если ничего не изменилось — не перерисовываем.
      */
-    fun setSystemFolderTaskCount(count: Int) {
-        if (systemFolderTaskCount == count) return
-        systemFolderTaskCount = count
+    fun setSystemFolderCounters(counters: SystemFolderCounters) {
+        if (systemFolderCounters == counters) return
+        systemFolderCounters = counters
         notifyDataSetChanged()
+    }
+
+    /**
+     * Устаревший метод — оставлен для совместимости.
+     * Обновляет только счётчик задач (home_tasks), остальные сохраняет.
+     */
+    @Deprecated("Используй setSystemFolderCounters")
+    fun setSystemFolderTaskCount(count: Int) {
+        setSystemFolderCounters(systemFolderCounters.copy(homeTasksActive = count))
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -54,144 +74,226 @@ class CatalogAdapter(
         val context = holder.itemView.context
 
         when (entry) {
-            is FolderEntity -> {
-                // ===== ПАПКА =====
-                holder.icon.load(null)
-                holder.icon.setOnClickListener(null)   // сброс обработчика от предыдущего bind
+            is FolderEntity -> bindFolder(holder, entry)
+            is ItemEntity -> bindItem(holder, entry)
+        }
+    }
 
-                if (entry.isSystem) {
-                    // ===== СИСТЕМНАЯ ПАПКА «🏠 Домашние дела» =====
-                    // Всегда иконка 🏠, никакой локальной картинки
-                    holder.icon.load(R.drawable.ic_home) {
-                        placeholder(R.drawable.ic_home)
-                        error(R.drawable.ic_home)
-                    }
+    // ============================================================
+    // ПАПКА
+    // ============================================================
 
-                    holder.name.text = entry.name
-                    holder.info.text = if (systemFolderTaskCount > 0) {
-                        "📋 $systemFolderTaskCount активных"
-                    } else {
-                        "📋 Нет активных задач"
-                    }
-                    holder.expiryInfo.visibility = View.GONE
-                    holder.lentInfo.visibility = View.GONE
+    private fun bindFolder(holder: ViewHolder, entry: FolderEntity) {
+        val context = holder.itemView.context
 
-                    // Свой цвет полосы — colorPrimary
-                    holder.colorBar.setBackgroundColor(
-                        context.resources.getColor(R.color.colorPrimary, context.theme)
-                    )
-                } else {
-                    // ===== ОБЫЧНАЯ ПАПКА =====
-                    val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
-                    if (iconFile != null && iconFile.exists()) {
-                        holder.icon.load(iconFile) {
-                            crossfade(true)
-                            placeholder(R.drawable.ic_folder_default)
-                            error(R.drawable.ic_folder_default)
-                        }
-                    } else {
-                        holder.icon.load(R.drawable.ic_folder_default)
-                    }
+        holder.icon.load(null)
+        holder.icon.setOnClickListener(null)
 
-                    holder.name.text = entry.name
-                    holder.info.text = ""
-                    holder.expiryInfo.visibility = View.GONE
-                    holder.lentInfo.visibility = View.GONE
-
-                    holder.colorBar.setBackgroundColor(
-                        context.resources.getColor(R.color.colorNormal, context.theme)
-                    )
+        if (entry.isSystem) {
+            bindSystemFolder(holder, entry)
+        } else {
+            // ===== ОБЫЧНАЯ ПАПКА =====
+            val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
+            if (iconFile != null && iconFile.exists()) {
+                holder.icon.load(iconFile) {
+                    crossfade(true)
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
                 }
-
-                holder.itemView.setOnClickListener { onFolderClick(entry) }
-                holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
+            } else {
+                holder.icon.load(R.drawable.ic_folder_default)
             }
-            is ItemEntity -> {
-                // ===== ПРЕДМЕТ =====
-                holder.icon.load(null)
 
-                val localFile = ImageUtils.getLocalImageFile(context, entry.id)
-                if (localFile != null && localFile.exists()) {
-                    holder.icon.load(localFile) {
-                        crossfade(true)
-                        placeholder(R.drawable.ic_item_default)
-                        error(R.drawable.ic_item_default)
-                    }
+            holder.name.text = entry.name
+            holder.info.text = ""
+            holder.expiryInfo.visibility = View.GONE
+            holder.lentInfo.visibility = View.GONE
 
-                    // ===== КЛИК ПО ИКОНКЕ → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
-                    holder.icon.setOnClickListener {
-                        val intent = Intent(context, FullscreenImageActivity::class.java).apply {
-                            putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
-                            putExtra(FullscreenImageActivity.EXTRA_TITLE, entry.name)
-                        }
-                        context.startActivity(intent)
-                    }
-                } else {
-                    holder.icon.load(R.drawable.ic_item_default)
-                    holder.icon.setOnClickListener(null)
+            holder.colorBar.setBackgroundColor(
+                context.resources.getColor(R.color.colorNormal, context.theme)
+            )
+        }
+
+        holder.itemView.setOnClickListener { onFolderClick(entry) }
+        holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
+    }
+
+    /**
+     * 🆕 v16.0.14: отрисовка системной папки по её systemKey.
+     *  - home_tasks     → 🏠 + «📋 N активных»
+     *  - purchases      → 🛒 + «🛒 N покупок»
+     *  - shopping_list  → 🛒 + «🛒 N купить»
+     */
+    private fun bindSystemFolder(holder: ViewHolder, entry: FolderEntity) {
+        val context = holder.itemView.context
+
+        when (entry.systemKey) {
+            FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
+                holder.icon.load(R.drawable.ic_home) {
+                    placeholder(R.drawable.ic_home)
+                    error(R.drawable.ic_home)
                 }
-
                 holder.name.text = entry.name
 
-                // ===== ИНФО: количество + цена =====
-                val infoParts = mutableListOf<String>()
-                if (entry.quantity > 1) {
-                    infoParts.add("×${entry.quantity}")
-                }
-                if (entry.price != null && entry.price != 0.0) {
-                    val priceStr = if (entry.price % 1.0 == 0.0) {
-                        entry.price.toInt().toString()
-                    } else {
-                        String.format("%.2f", entry.price)
-                    }
-                    infoParts.add("${priceStr} ₽")
-                }
-                holder.info.text = infoParts.joinToString("  •  ")
-
-                // ===== СРОК ГОДНОСТИ =====
-                if (entry.isExpired) {
-                    holder.expiryInfo.visibility = View.VISIBLE
-                    holder.expiryInfo.text = "⚠️ Просрочен"
-                    holder.expiryInfo.setTextColor(
-                        context.resources.getColor(android.R.color.holo_red_dark, context.theme)
-                    )
-                } else if (entry.daysUntilExpiry != Int.MAX_VALUE && entry.daysUntilExpiry <= 7) {
-                    holder.expiryInfo.visibility = View.VISIBLE
-                    holder.expiryInfo.text = "⏰ Осталось ${entry.daysUntilExpiry} дн."
-                    holder.expiryInfo.setTextColor(
-                        context.resources.getColor(android.R.color.holo_orange_dark, context.theme)
-                    )
+                val n = systemFolderCounters.homeTasksActive
+                holder.info.text = if (n > 0) {
+                    "📋 $n активных"
                 } else {
-                    holder.expiryInfo.visibility = View.GONE
+                    "📋 Нет активных задач"
                 }
+            }
 
-                // ===== ЗАЙМ =====
-                if (entry.isLent && !entry.lentTo.isNullOrEmpty()) {
-                    holder.lentInfo.visibility = View.VISIBLE
-                    var text = "🤝 У ${entry.lentTo}"
-                    if (!entry.lentNote.isNullOrEmpty()) {
-                        text += " (${entry.lentNote})"
-                    }
-                    holder.lentInfo.text = text
+            FolderEntity.SYSTEM_KEY_PURCHASES -> {
+                holder.icon.load(R.drawable.ic_folder_default) {
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
+                }
+                holder.name.text = entry.name
+
+                val n = systemFolderCounters.purchasesItems
+                holder.info.text = if (n > 0) {
+                    "🛒 $n ${pluralItems(n)}"
                 } else {
-                    holder.lentInfo.visibility = View.GONE
+                    "🛒 Пусто"
                 }
+            }
 
-                // ===== ЦВЕТНАЯ ПОЛОСА =====
-                val colorRes = when {
-                    entry.isLent -> android.R.color.holo_orange_light  // выдан — оранжевый
-                    entry.isExpired -> R.color.colorExpired
-                    entry.daysUntilExpiry in 0..3 -> R.color.colorWarning
-                    else -> R.color.colorNormal
+            FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
+                holder.icon.load(R.drawable.ic_folder_default) {
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
                 }
-                holder.colorBar.setBackgroundColor(
-                    context.resources.getColor(colorRes, context.theme)
-                )
+                holder.name.text = entry.name
 
-                holder.itemView.setOnClickListener { onItemClick(entry) }
-                holder.itemView.setOnLongClickListener { onItemLongClick(entry); true }
+                val n = systemFolderCounters.shoppingListItems
+                holder.info.text = if (n > 0) {
+                    "🛒 $n ${pluralItems(n)}"
+                } else {
+                    "🛒 Пусто"
+                }
+            }
+
+            else -> {
+                // Неизвестная системная папка — общий вид
+                holder.icon.load(R.drawable.ic_home) {
+                    placeholder(R.drawable.ic_home)
+                    error(R.drawable.ic_home)
+                }
+                holder.name.text = entry.name
+                holder.info.text = ""
             }
         }
+
+        holder.expiryInfo.visibility = View.GONE
+        holder.lentInfo.visibility = View.GONE
+
+        holder.colorBar.setBackgroundColor(
+            context.resources.getColor(R.color.colorPrimary, context.theme)
+        )
+    }
+
+    /**
+     * «1 предмет», «2 предмета», «5 предметов».
+     */
+    private fun pluralItems(n: Int): String {
+        val mod10 = n % 10
+        val mod100 = n % 100
+        return when {
+            mod10 == 1 && mod100 != 11 -> "предмет"
+            mod10 in 2..4 && mod100 !in 12..14 -> "предмета"
+            else -> "предметов"
+        }
+    }
+
+    // ============================================================
+    // ПРЕДМЕТ
+    // ============================================================
+
+    private fun bindItem(holder: ViewHolder, entry: ItemEntity) {
+        val context = holder.itemView.context
+
+        holder.icon.load(null)
+
+        val localFile = ImageUtils.getLocalImageFile(context, entry.id)
+        if (localFile != null && localFile.exists()) {
+            holder.icon.load(localFile) {
+                crossfade(true)
+                placeholder(R.drawable.ic_item_default)
+                error(R.drawable.ic_item_default)
+            }
+
+            // ===== КЛИК ПО ИКОНКЕ → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
+            holder.icon.setOnClickListener {
+                val intent = Intent(context, FullscreenImageActivity::class.java).apply {
+                    putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
+                    putExtra(FullscreenImageActivity.EXTRA_TITLE, entry.name)
+                }
+                context.startActivity(intent)
+            }
+        } else {
+            holder.icon.load(R.drawable.ic_item_default)
+            holder.icon.setOnClickListener(null)
+        }
+
+        holder.name.text = entry.name
+
+        // ===== ИНФО: количество + цена =====
+        val infoParts = mutableListOf<String>()
+        if (entry.quantity > 1) {
+            infoParts.add("×${entry.quantity}")
+        }
+        if (entry.price != null && entry.price != 0.0) {
+            val priceStr = if (entry.price % 1.0 == 0.0) {
+                entry.price.toInt().toString()
+            } else {
+                String.format("%.2f", entry.price)
+            }
+            infoParts.add("${priceStr} ₽")
+        }
+        holder.info.text = infoParts.joinToString("  •  ")
+
+        // ===== СРОК ГОДНОСТИ =====
+        if (entry.isExpired) {
+            holder.expiryInfo.visibility = View.VISIBLE
+            holder.expiryInfo.text = "⚠️ Просрочен"
+            holder.expiryInfo.setTextColor(
+                context.resources.getColor(android.R.color.holo_red_dark, context.theme)
+            )
+        } else if (entry.daysUntilExpiry != Int.MAX_VALUE && entry.daysUntilExpiry <= 7) {
+            holder.expiryInfo.visibility = View.VISIBLE
+            holder.expiryInfo.text = "⏰ Осталось ${entry.daysUntilExpiry} дн."
+            holder.expiryInfo.setTextColor(
+                context.resources.getColor(android.R.color.holo_orange_dark, context.theme)
+            )
+        } else {
+            holder.expiryInfo.visibility = View.GONE
+        }
+
+        // ===== ЗАЙМ =====
+        if (entry.isLent && !entry.lentTo.isNullOrEmpty()) {
+            holder.lentInfo.visibility = View.VISIBLE
+            var text = "🤝 У ${entry.lentTo}"
+            if (!entry.lentNote.isNullOrEmpty()) {
+                text += " (${entry.lentNote})"
+            }
+            holder.lentInfo.text = text
+        } else {
+            holder.lentInfo.visibility = View.GONE
+        }
+
+        // ===== ЦВЕТНАЯ ПОЛОСА =====
+        val colorRes = when {
+            entry.isLent -> android.R.color.holo_orange_light
+            entry.isExpired -> R.color.colorExpired
+            entry.daysUntilExpiry in 0..3 -> R.color.colorWarning
+            else -> R.color.colorNormal
+        }
+        holder.colorBar.setBackgroundColor(
+            context.resources.getColor(colorRes, context.theme)
+        )
+
+        holder.itemView.setOnClickListener { onItemClick(entry) }
+        holder.itemView.setOnLongClickListener { onItemLongClick(entry); true }
     }
 
     override fun getItemCount(): Int = items.size
