@@ -187,7 +187,6 @@ class MainActivity : AppCompatActivity() {
         tokenStorage = TokenStorage(this)
         viewModel = BaseApplication.mainViewModel
 
-        // 🆕 Extra для открытия корневой папки типа (Продукты/Лекарства/Вещи)
         pendingRootFolderType = intent.getStringExtra("open_root_folder")
         if (pendingRootFolderType != null) {
             Logger.log(TAG, "onCreate: requested open_root_folder=$pendingRootFolderType")
@@ -219,34 +218,29 @@ class MainActivity : AppCompatActivity() {
         supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
         adapter = CatalogAdapter(
-                      onFolderClick = { folder ->
+            onFolderClick = { folder ->
                 when (folder.systemKey) {
                     FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
-                        // «🏠 Домашние дела» → TaskListActivity
                         Logger.log(TAG, "onFolderClick: opening TaskListActivity for home_tasks")
                         startActivity(Intent(this, TaskListActivity::class.java))
                     }
                     FolderEntity.SYSTEM_KEY_PURCHASES -> {
-                        // «🛒 Покупки» — обычная навигация внутрь папки
+                        // 🆕 v16.0.14: «Покупки» открываем как обычную папку
                         Logger.log(TAG, "onFolderClick: navigating into purchases folder")
                         navigateToFolder(folder)
                     }
                     FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
-                        // «🛒 Список покупок» — пока открываем как обычную папку.
-                        // Экран ShoppingListActivity появится в сессии 4.2.
+                        // 🆕 v16.0.14: пока открываем как обычную папку.
+                        // Экран ShoppingListActivity появится в сессии 4.3.
                         Logger.log(TAG, "onFolderClick: navigating into shopping_list folder (temp)")
                         navigateToFolder(folder)
                     }
-                    else -> {
-                        // Не системная — обычная навигация
-                        navigateToFolder(folder)
-                    }
+                    else -> navigateToFolder(folder)
                 }
             },
             onItemClick = { item -> openItemDetail(item) },
             onFolderLongClick = { folder ->
                 if (folder.isSystem) {
-                    // 🆕 Системную папку нельзя переименовать/удалить/переместить
                     Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
                     Toast.makeText(
                         this,
@@ -267,8 +261,7 @@ class MainActivity : AppCompatActivity() {
         viewModel.currentEntries.observe(this) { entries ->
             adapter.submitList(entries)
             updatePathTitle()
-            // 🆕 v14: подгружаем счётчик активных задач для системной папки
-            loadSystemFolderTaskCount()
+            loadSystemFolderCounters()
         }
         viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
         viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
@@ -317,7 +310,6 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         } else {
             applyGuestModeIfNeeded()
-            // handlePendingRootFolder будет вызван в onResume
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -336,21 +328,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v14: СЧЁТЧИК АКТИВНЫХ ЗАДАЧ
+    // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
     // ============================================================
-    private fun loadSystemFolderTaskCount() {
+    /**
+     * Загружает три счётчика:
+     *  - home_tasks     → активные задачи (taskDao.getActiveCount);
+     *  - purchases      → предметы в корне «Покупок» (itemDao.countItemsInFolderShallow);
+     *  - shopping_list  → предметы в корне «Списка покупок».
+     */
+    private fun loadSystemFolderCounters() {
         lifecycleScope.launch {
             try {
-                val count = withContext(Dispatchers.IO) { db.taskDao().getActiveCount() }
-                adapter.setSystemFolderTaskCount(count)
+                val counters = withContext(Dispatchers.IO) {
+                    val homeTasks = db.taskDao().getActiveCount()
+                    val purchases = db.itemDao()
+                        .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_PURCHASES)
+                    val shoppingList = db.itemDao()
+                        .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+                    CatalogAdapter.SystemFolderCounters(
+                        homeTasksActive = homeTasks,
+                        purchasesItems = purchases,
+                        shoppingListItems = shoppingList
+                    )
+                }
+                adapter.setSystemFolderCounters(counters)
             } catch (e: Exception) {
-                Logger.log(TAG, "loadSystemFolderTaskCount error: ${e.message}")
+                Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
             }
         }
     }
 
     // ============================================================
-    // 🆕 onNewIntent: обработка повторного запуска (singleTop + CLEAR_TOP)
+    // onNewIntent
     // ============================================================
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -366,7 +375,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 ОТКРЫТИЕ КОРНЕВОЙ ПАПКИ ПО ТИПУ (Продукты/Лекарства/Вещи)
+    // ОТКРЫТИЕ КОРНЕВОЙ ПАПКИ ПО ТИПУ
     // ============================================================
     private fun handlePendingRootFolder() {
         val type = pendingRootFolderType ?: return
@@ -384,7 +393,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                delay(300) // дать каталогу загрузиться
+                delay(300)
                 val rootFolders = withContext(Dispatchers.IO) {
                     db.folderDao().getRootFolders()
                 }
@@ -408,8 +417,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         viewModel.loadContents()
         applyGuestModeIfNeeded()
-        // 🆕 Обрабатываем отложенный переход в корневую папку (после onCreate или onNewIntent)
         handlePendingRootFolder()
+        loadSystemFolderCounters()
     }
 
     override fun onPause() {
@@ -535,7 +544,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 ПОИСК: диалог с полем ввода и кнопкой сканирования штрих-кода
+    // ПОИСК
     // ============================================================
     private fun showSearchDialog() {
         val container = LinearLayout(this).apply {
@@ -691,7 +700,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showFolderContextMenu(folder: FolderEntity) {
-        // 🆕 v14: страховка — системную папку не трогаем
         if (folder.isSystem) {
             Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
             return
@@ -749,7 +757,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // СПИСАНИЕ / АРХИВ ИЗ КОНТЕКСТНОГО МЕНЮ
+    // СПИСАНИЕ / АРХИВ
     // ============================================================
 
     private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
@@ -935,8 +943,7 @@ class MainActivity : AppCompatActivity() {
 
         val minusBtn = Button(this).apply {
             text = "−"
-            textSize = 22f
-            minWidth = 0
+            textSize = 22f            minWidth = 0
             minimumWidth = 0
             width = 120
             height = 120
@@ -1048,7 +1055,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ (с проверкой детей)
+    // АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ
     // ============================================================
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
@@ -1098,7 +1105,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameFolderDialog(folder: FolderEntity) {
-        // 🆕 v14: страховка
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя переименовать", Toast.LENGTH_SHORT).show()
             return
@@ -1115,10 +1121,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // УДАЛЕНИЕ ПАПКИ С ЖЁСТКИМ ЗАПРЕТОМ
+    // УДАЛЕНИЕ ПАПКИ
     // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
-        // 🆕 v14: страховка — системную папку не удаляем
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя удалить", Toast.LENGTH_SHORT).show()
             return
@@ -1164,7 +1169,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun changeFolderImage(folder: FolderEntity) {
-        // 🆕 v14: страховка
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя менять", Toast.LENGTH_SHORT).show()
             return
@@ -1174,7 +1178,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showFolderStats(folder: FolderEntity) {
-        // 🆕 v14: для системной папки — статистика задач
         if (folder.isSystem) {
             lifecycleScope.launch {
                 try {
@@ -1185,8 +1188,8 @@ class MainActivity : AppCompatActivity() {
                         .setTitle("Статистика «${folder.name}»")
                         .setMessage(
                             "📋 Активных: $active\n" +
-                            "✅ Выполненных: ${done.coerceAtLeast(0)}\n" +
-                            "📊 Всего: $all"
+                                "✅ Выполненных: ${done.coerceAtLeast(0)}\n" +
+                                "📊 Всего: $all"
                         )
                         .setPositiveButton("OK", null)
                         .show()
@@ -1210,10 +1213,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // B-6: ПЕРЕМЕЩЕНИЕ ПАПКИ (полное дерево, пара id)
+    // ПЕРЕМЕЩЕНИЕ ПАПКИ
     // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
-        // 🆕 v14: страховка
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя переместить", Toast.LENGTH_SHORT).show()
             return
@@ -1280,7 +1282,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // УДАЛЕНИЕ ПРЕДМЕТА С ЖЁСТКИМ ЗАПРЕТОМ
+    // УДАЛЕНИЕ ПРЕДМЕТА
     // ============================================================
     private fun confirmDeleteItem(item: ItemEntity) {
         viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
