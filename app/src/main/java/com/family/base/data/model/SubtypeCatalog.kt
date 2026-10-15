@@ -25,6 +25,13 @@ import java.util.Locale
  * 🆕 v16.0.12: добавлены подтипы:
  *           food:  cookies, pasta, vegetable_oil, grains, meat_frozen, fish_frozen
  *           thing: plumbing, sport
+ *
+ * 🆕 v17.2.5: добавлены подтипы thing:
+ *           - books          📚 Книга/Аудиокниги
+ *           - pool           🏊 Для бассейна
+ *           - health_devices 🩺 Приборы для здоровья
+ *           переименован:
+ *           - sport: "🏋️ Спорт" → "🏋️ Спорт/Зарядка"
  */
 object SubtypeCatalog {
 
@@ -109,8 +116,12 @@ object SubtypeCatalog {
         Subtype("jewelry",       "💍 Украшения"),
         // 🆕 v16.0.12
         Subtype("plumbing",      "🚿 Сантехника"),
-        Subtype("sport",         "🏋️ Спорт"),
-        Subtype("thing_other",   "📦 Прочее (предметы)")
+        Subtype("sport",         "🏋️ Спорт/Зарядка"),
+        // 🆕 v17.2.5
+        Subtype("books",          "📚 Книга/Аудиокниги"),
+        Subtype("pool",           "🏊 Для бассейна"),
+        Subtype("health_devices", "🩺 Приборы для здоровья"),
+        Subtype("thing_other",    "📦 Прочее (предметы)")
     )
 
     // ============================================================
