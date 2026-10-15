@@ -560,13 +560,35 @@ interface ItemDao {
      *    (в подпапках «Покупка DD.MM.YYYY #N»);
      *  - для счётчика «🛒 N купить» на плитке «🛒 Список покупок».
      */
-    @Query("""
-        SELECT COUNT(*) FROM items
-        WHERE parentId = :folderId
-          AND parentItemId IS NULL
-          AND isArchived = 0
-    """)
-    suspend fun countItemsInFolderShallow(folderId: String): Int
+     @Query("""
+     SELECT COUNT(*) FROM items
+     WHERE parentId = :folderId
+       AND parentItemId IS NULL
+       AND isArchived = 0
+ """)
+ suspend fun countItemsInFolderShallow(folderId: String): Int
+
+ /**
+  * 🆕 v17.0.9: количество неархивных предметов в папке И ВСЕХ её подпапках (рекурсивно).
+  * Не считает вложенные предметы (parentItemId IS NULL).
+  *
+  * Используется:
+  *  - для счётчика «🛒 N покупок» на плитке «🛒 Покупки»
+  *    (предметы лежат в подпапках «Покупка DD.MM.YYYY #N»).
+  */
+ @Query("""
+     WITH RECURSIVE folder_tree(id) AS (
+         SELECT :folderId
+         UNION ALL
+         SELECT f.id FROM folders f
+         INNER JOIN folder_tree ft ON f.parentId = ft.id
+     )
+     SELECT COUNT(*) FROM items
+     WHERE parentId IN (SELECT id FROM folder_tree)
+       AND parentItemId IS NULL
+       AND isArchived = 0
+ """)
+ suspend fun countItemsInFolderRecursive(folderId: String): Int
 
     /**
      * 🆕 v16.0.15: неархивные предметы НЕПОСРЕДСТВЕННО в папке.
