@@ -358,26 +358,27 @@ class MainActivity : AppCompatActivity() {
      *  - shopping_list  → предметы в корне «Списка покупок».
      */
     private fun loadSystemFolderCounters() {
-        lifecycleScope.launch {
-            try {
-                val counters = withContext(Dispatchers.IO) {
-                    val homeTasks = db.taskDao().getActiveCount()
-                    val purchases = db.itemDao()
-                        .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_PURCHASES)
-                    val shoppingList = db.itemDao()
-                        .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
-                    CatalogAdapter.SystemFolderCounters(
-                        homeTasksActive = homeTasks,
-                        purchasesItems = purchases,
-                        shoppingListItems = shoppingList
-                    )
-                }
-                adapter.setSystemFolderCounters(counters)
-            } catch (e: Exception) {
-                Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
-            }
-        }
-    }
+     lifecycleScope.launch {
+         try {
+             val counters = withContext(Dispatchers.IO) {
+                 val homeTasks = db.taskDao().getActiveCount()
+                 // 🆕 v17.0.9: считаем предметы в «Покупках» рекурсивно (включая подпапки «Покупка DD.MM.YYYY #N»)
+                 val purchases = db.itemDao()
+                     .countItemsInFolderRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
+                 val shoppingList = db.itemDao()
+                     .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+                 CatalogAdapter.SystemFolderCounters(
+                     homeTasksActive = homeTasks,
+                     purchasesItems = purchases,
+                     shoppingListItems = shoppingList
+                 )
+             }
+             adapter.setSystemFolderCounters(counters)
+         } catch (e: Exception) {
+             Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
+         }
+     }
+ }
 
     // ============================================================
     // onNewIntent
