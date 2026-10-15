@@ -1107,7 +1107,8 @@ class CatalogViewModel(
      *
      * Для всех остальных папок поведение прежнее — всё в корень (null).
      */
-    suspend fun deleteFolder(folderId: String) {
+   
+           suspend fun deleteFolder(folderId: String) {
         try {
             val folder = db.folderDao().getFolderById(folderId)
 
@@ -1123,6 +1124,7 @@ class CatalogViewModel(
                 return
             }
 
+            val folderName = folder?.name
             val isPurchaseSubfolder = folder?.parentId == FolderEntity.SYSTEM_ID_PURCHASES
             val now = System.currentTimeMillis()
 
@@ -1150,11 +1152,11 @@ class CatalogViewModel(
                 }
 
                 db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folderName)
 
                 writeHistory(
                     itemId = folderId,
-                    itemName = folder?.name,
+                    itemName = folderName,
                     action = "delete_folder",
                     oldValue = "Папка покупки (содержимое → корень «Списка покупок»)",
                     newValue = null
@@ -1167,11 +1169,11 @@ class CatalogViewModel(
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
                 db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folderName)
 
                 writeHistory(
                     itemId = folderId,
-                    itemName = folder?.name,
+                    itemName = folderName,
                     action = "delete_folder",
                     oldValue = "Папка (содержимое поднято в корень)",
                     newValue = null
@@ -1183,7 +1185,6 @@ class CatalogViewModel(
             Logger.log(TAG, "Error deleting folder: ${e.message}")
         }
     }
-
     // ============================================================
     // ПЕРЕМЕЩЕНИЯ
     // ============================================================
