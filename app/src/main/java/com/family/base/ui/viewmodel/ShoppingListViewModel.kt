@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
  *  - загрузка списка предметов по трём фильтрам: Купить / Куплено / Все;
  *  - перенос предмета из «Купить» в «Куплено»
  *    (через PurchaseFolderHelper.moveItemToPurchases);
- *  - возврат предмета из «Куплено» в «Купить» (unmarkBought).
+ *  - возврат предмета из «Куплено» в «Купить» (unmarkBought)
+ *    с автоудалением опустевшей папки покупки (v17.0.9).
  *
  * Понятие «куплено» = предмет НЕ лежит в корне системной папки «🛒 Список покупок».
  * Понятие «купить»   = предмет лежит в корне этой папки.
@@ -155,8 +156,13 @@ class ShoppingListViewModel(
      * Снять отметку «куплено»: вернуть предмет в корень
      * системной папки «🛒 Список покупок».
      *
+     * 🆕 v17.0.9: если папка, из которой предмет уехал, опустела
+     * (нет активных предметов и подпапок) — она удаляется.
+     * Архивные предметы из неё переносятся в корень «Списка покупок».
+     *
      * Используется, когда пользователь в фильтре «Куплено» снимает чекбокс.
-     * Пустые папки покупок не удаляем — оставляем как есть.
+     *
+     * @return true — если предмет успешно возвращён.
      */
     suspend fun unmarkBought(
         itemId: String,
@@ -168,6 +174,10 @@ class ShoppingListViewModel(
                 Logger.log(TAG, "unmarkBought: item not found $itemId")
                 return@withContext false
             }
+
+            // 🆕 v17.0.9: запоминаем папку, из которой уезжает предмет,
+            // чтобы после переноса проверить её на пустоту и, если что, удалить.
+            val oldParentId = item.parentId
 
             val updated = item.copy(
                 parentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
@@ -183,6 +193,22 @@ class ShoppingListViewModel(
                 TAG,
                 "unmarkBought: item '${item.name}' → корень «Списка покупок»"
             )
+
+            // 🆕 v17.0.9: автоудаление опустевшей папки покупки
+            if (!oldParentId.isNullOrBlank()) {
+                val deleted = PurchaseFolderHelper.deletePurchaseFolderIfEmpty(
+                    db = db,
+                    folderId = oldParentId,
+                    changedBy = changedBy
+                )
+                if (deleted) {
+                    Logger.log(
+                        TAG,
+                        "unmarkBought: опустевшая папка покупки $oldParentId удалена"
+                    )
+                }
+            }
+
             true
 
         } catch (e: Exception) {
