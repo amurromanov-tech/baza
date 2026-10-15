@@ -22,6 +22,9 @@ import java.util.*
  *
  * 🆕 v16.0.15: «🛒 Покупки» — системная папка с фиксированным id.
  * Создаётся миграцией 16→17, а не здесь. Здесь только ensure/навигация.
+ *
+ * 🆕 v17.0.9: добавлено автоудаление пустых папок покупок
+ * (при unmarkBought — см. deletePurchaseFolderIfEmpty).
  */
 object PurchaseFolderHelper {
 
@@ -259,6 +262,124 @@ object PurchaseFolderHelper {
         } catch (e: Exception) {
             Logger.log(TAG, "moveItemToPurchases error for $itemId: ${e.message}", e)
             null
+        }
+    }
+
+    // ============================================================
+    // 5. 🆕 v17.0.9: АВТОУДАЛЕНИЕ ПУСТОЙ ПАПКИ ПОКУПКИ
+    // ============================================================
+
+    /**
+     * Удаляет папку покупки, если она опустела после unmarkBought.
+     *
+     * Условия удаления (все три):
+     *  1. Папка лежит ВНУТРИ системной «🛒 Покупки» (parentId == SYSTEM_ID_PURCHASES)
+     *     и её имя матчится паттерну «Покупка DD.MM.YYYY #N».
+     *  2. В папке НЕТ активных предметов (countItemsInFolderShallow == 0).
+     *  3. В папке НЕТ подпапок (getSubfolderCountInFolder == 0).
+     *
+     * Что делает при удалении:
+     *  - архивные предметы (если есть) переносит в корень «🛒 Списка покупок»
+     *    (parentId = SYSTEM_ID_SHOPPING_LIST) и логирует ACTION_UPDATE;
+     *  - удаляет папку из БД;
+     *  - пишет ACTION_DELETE в outbox (чтобы папка уехала на Диск).
+     *
+     * @return true — если папка была удалена; false — если не выполнены условия или ошибка.
+     */
+    suspend fun deletePurchaseFolderIfEmpty(
+        db: AppDatabase,
+        folderId: String,
+        changedBy: String
+    ): Boolean {
+        return try {
+            if (folderId.isBlank()) return false
+
+            // 1. Это точно папка покупки внутри «🛒 Покупок»?
+            if (!isPurchaseSubfolder(db, folderId)) {
+                Logger.log(TAG, "deletePurchaseFolderIfEmpty: $folderId — не папка покупки, пропускаем")
+                return false
+            }
+
+            // 2. Нет активных предметов?
+            val activeCount = db.itemDao().countItemsInFolderShallow(folderId)
+            if (activeCount > 0) {
+                Logger.log(TAG, "deletePurchaseFolderIfEmpty: $folderId — активных=$activeCount, не удаляем")
+                return false
+            }
+
+            // 3. Нет подпапок?
+            val subfolderCount = db.folderDao().getSubfolderCountInFolder(folderId)
+            if (subfolderCount > 0) {
+                Logger.log(TAG, "deletePurchaseFolderIfEmpty: $folderId — подпапок=$subfolderCount, не удаляем")
+                return false
+            }
+
+            val folder = db.folderDao().getFolderById(folderId)
+            if (folder == null) {
+                Logger.log(TAG, "deletePurchaseFolderIfEmpty: $folderId — папка не найдена")
+                return false
+            }
+
+            // 4. Переносим архивные предметы в корень «Списка покупок»
+            val now = System.currentTimeMillis()
+            val totalCount = db.itemDao().countItemsInFolderIncludingArchived(folderId)
+            if (totalCount > 0) {
+                db.itemDao().moveArchivedItemsFromFolder(
+                    folderId = folderId,
+                    newParentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                    date = now
+                )
+                Logger.log(
+                    TAG,
+                    "deletePurchaseFolderIfEmpty: из '${folder.name}' перенесено архивных=$totalCount → корень «Списка покупок»"
+                )
+
+                // Логируем в outbox каждый перенесённый предмет — чтобы changelog увёз
+                val archivedItems = db.itemDao()
+                    .getItemsByParentRaw(folderId)
+                    .filter { it.isArchived }
+
+                archivedItems.forEach { item ->
+                    val moved = item.copy(
+                        parentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                        parentItemId = null,
+                        updatedDate = now,
+                        updatedBy = changedBy
+                    )
+                    OutboxLogger.itemChanged(db, moved, OutboxEntity.ACTION_UPDATE, changedBy)
+                }
+            }
+
+            // 5. Удаляем папку
+            db.folderDao().deleteFolderById(folderId)
+            OutboxLogger.folderChanged(db, folder, OutboxEntity.ACTION_DELETE, changedBy)
+
+            Logger.log(TAG, "deletePurchaseFolderIfEmpty: '${folder.name}' (id=$folderId) удалена")
+            true
+
+        } catch (e: Exception) {
+            Logger.log(TAG, "deletePurchaseFolderIfEmpty error for $folderId: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Проверяет, что папка — подпапка системной «🛒 Покупки»
+     * и её имя соответствует шаблону «Покупка DD.MM.YYYY #N».
+     *
+     * Защита от случайного удаления чужой папки.
+     */
+    private suspend fun isPurchaseSubfolder(
+        db: AppDatabase,
+        folderId: String
+    ): Boolean {
+        return try {
+            val folder = db.folderDao().getFolderById(folderId) ?: return false
+            if (folder.parentId != FolderEntity.SYSTEM_ID_PURCHASES) return false
+            PURCHASE_PATTERN.matchEntire(folder.name) != null
+        } catch (e: Exception) {
+            Logger.log(TAG, "isPurchaseSubfolder error for $folderId: ${e.message}", e)
+            false
         }
     }
 }
