@@ -348,21 +348,22 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // ============================================================
-    // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
-    // ============================================================
-    /**
-     * Загружает три счётчика:
-     *  - home_tasks     → активные задачи (taskDao.getActiveCount);
-     *  - purchases      → предметы в корне «Покупок» (itemDao.countItemsInFolderShallow);
-     *  - shopping_list  → предметы в корне «Списка покупок».
-     */
-    private fun loadSystemFolderCounters() {
+ // ============================================================
+ // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
+ // ============================================================
+ /**
+  * Загружает три счётчика:
+  *  - home_tasks     → активные задачи (taskDao.getActiveCount);
+  *  - purchases      → 🆕 v17.0.9: предметы в «Покупках» РЕКУРСИВНО
+  *                     (включая подпапки «Покупка DD.MM.YYYY #N»);
+  *  - shopping_list  → предметы в корне «Списка покупок» (shallow).
+  */
+ private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
          try {
              val counters = withContext(Dispatchers.IO) {
                  val homeTasks = db.taskDao().getActiveCount()
-                 // 🆕 v17.0.9: считаем предметы в «Покупках» рекурсивно (включая подпапки «Покупка DD.MM.YYYY #N»)
+                 // 🆕 v17.0.9: считаем рекурсивно — предметы лежат в подпапках «Покупка DD.MM.YYYY #N»
                  val purchases = db.itemDao()
                      .countItemsInFolderRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
                  val shoppingList = db.itemDao()
@@ -379,7 +380,6 @@ class MainActivity : AppCompatActivity() {
          }
      }
  }
-
     // ============================================================
     // onNewIntent
     // ============================================================
