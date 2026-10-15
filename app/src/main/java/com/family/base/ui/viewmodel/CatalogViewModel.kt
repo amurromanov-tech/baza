@@ -3,6 +3,7 @@ package com.family.base.ui.viewmodel
 import android.content.Context
 import android.widget.Toast
 import com.family.base.util.ImageUtils
+import com.family.base.util.PurchaseFolderHelper
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.ItemEntity
@@ -31,6 +32,12 @@ import java.util.UUID
  *
  * НЕ знает про LiveData / UI, кроме Toast-уведомлений о циклах и системных папках.
  * Живёт в MainViewModel как обычное поле.
+ *
+ * 🆕 v17.0.10:
+ *  - writeOffItem: автоудаление опустевшей папки покупки;
+ *  - deleteFolder: содержимое подпапки «🛒 Покупок» уезжает
+ *    в корень «🛒 Списка покупок», а не в корень базы;
+ *  - unarchiveItem: страховка от «битого» parentId.
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -507,6 +514,13 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v17.0.10: восстановление из архива.
+     *
+     * Страховка: если parentId предмета битый (папки нет) —
+     * вернуть предмет в корень «🛒 Списка покупок»,
+     * а не оставлять с висячим parentId.
+     */
     suspend fun unarchiveItem(itemId: String) {
         try {
             val item = db.itemDao().getItemById(itemId)
@@ -517,9 +531,18 @@ class CatalogViewModel(
 
             val originalId = item.originalId
 
+            // 🆕 v17.0.10: если parentId битый — подменяем на «Список покупок»
+            val safeParentId: String? = resolveSafeParentId(item.parentId)
+
             if (originalId == null) {
                 db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                db.itemDao().getItemById(itemId)?.let { fresh ->
+                // после unarchive — выставляем безопасный parentId, если он отличался
+                val fresh = db.itemDao().getItemById(itemId)
+                if (fresh != null && fresh.parentId != safeParentId) {
+                    val fixed = fresh.copy(parentId = safeParentId)
+                    db.itemDao().updateItem(fixed)
+                    OutboxLogger.itemChanged(db, fixed, OutboxEntity.ACTION_UPDATE, currentUser)
+                } else if (fresh != null) {
                     OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                 }
 
@@ -531,7 +554,7 @@ class CatalogViewModel(
                     newValue = "Вернули в базу"
                 )
 
-                Logger.log(TAG, "unarchiveItem: обычный возврат $itemId")
+                Logger.log(TAG, "unarchiveItem: обычный возврат $itemId (parentId=$safeParentId)")
             } else {
                 val original = db.itemDao().getItemById(originalId)
 
@@ -567,6 +590,7 @@ class CatalogViewModel(
                         archivedDate = null,
                         archivedNote = null,
                         originalId = null,
+                        parentId = safeParentId,
                         updatedDate = System.currentTimeMillis(),
                         updatedBy = currentUser
                     )
@@ -582,7 +606,7 @@ class CatalogViewModel(
                         newValue = "Вернули в базу (оригинал не найден)"
                     )
 
-                    Logger.log(TAG, "unarchiveItem: оригинал не найден, часть становится активной $itemId")
+                    Logger.log(TAG, "unarchiveItem: оригинал не найден, часть становится активной $itemId (parentId=$safeParentId)")
                 }
             }
 
@@ -590,6 +614,22 @@ class CatalogViewModel(
         } catch (e: Exception) {
             Logger.log(TAG, "Error unarchiving item: ${e.message}", e)
         }
+    }
+
+    /**
+     * 🆕 v17.0.10: если parentId == null → null (корень базы — валидно).
+     * Если parentId задан, но папки нет → «🛒 Список покупок».
+     * Иначе — исходный parentId.
+     */
+    private suspend fun resolveSafeParentId(parentId: String?): String? {
+        if (parentId == null) return null
+        val exists = try {
+            db.itemDao().folderExists(parentId)
+        } catch (e: Exception) {
+            Logger.log(TAG, "resolveSafeParentId: folderExists error for $parentId: ${e.message}")
+            true
+        }
+        return if (exists) parentId else FolderEntity.SYSTEM_ID_SHOPPING_LIST
     }
 
     suspend fun getArchivedItems(): List<ItemEntity> {
@@ -642,6 +682,10 @@ class CatalogViewModel(
             val now = System.currentTimeMillis()
             val reasonKey = reason ?: "used_up"
 
+            // 🆕 v17.0.10: запоминаем папку, из которой списываем —
+            // если это папка покупки и она опустеет, удалим её.
+            val oldParentId = item.parentId
+
             if (count == item.quantity) {
                 db.itemDao().archiveItem(itemId, reasonKey, now, note)
                 db.itemDao().getItemById(itemId)?.let { fresh ->
@@ -657,6 +701,19 @@ class CatalogViewModel(
                 )
 
                 Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
+
+                // 🆕 v17.0.10: если списали из папки покупки — проверить её на пустоту.
+                // Удаляем ТОЛЬКО если в ней не осталось ни активных, ни архивных.
+                if (!oldParentId.isNullOrBlank()) {
+                    val deleted = PurchaseFolderHelper.deletePurchaseFolderIfEmpty(
+                        db = db,
+                        folderId = oldParentId,
+                        changedBy = currentUser
+                    )
+                    if (deleted) {
+                        Logger.log(TAG, "writeOffItem: опустевшая папка покупки $oldParentId удалена")
+                    }
+                }
 
             } else {
                 val newId = UUID.randomUUID().toString()
@@ -1041,6 +1098,15 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v17.0.10: удаление папки.
+     *
+     * Если папка — подпапка системной «🛒 Покупки» (например,
+     * «Покупка DD.MM.YYYY #N»), то её содержимое (активные + архивные)
+     * уезжает в корень «🛒 Списка покупок», а не в корень базы.
+     *
+     * Для всех остальных папок поведение прежнее — всё в корень (null).
+     */
     suspend fun deleteFolder(folderId: String) {
         try {
             val folder = db.folderDao().getFolderById(folderId)
@@ -1057,21 +1123,60 @@ class CatalogViewModel(
                 return
             }
 
-            db.itemDao().moveItemsToRoot(folderId)
-            db.folderDao().moveSubfoldersToRoot(folderId)
+            val isPurchaseSubfolder = folder?.parentId == FolderEntity.SYSTEM_ID_PURCHASES
+            val now = System.currentTimeMillis()
 
-            Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
+            if (isPurchaseSubfolder) {
+                // 🆕 v17.0.10: содержимое подпапки «🛒 Покупок» → в корень «🛒 Списка покупок»
+                val moved = db.itemDao().moveAllItemsToFolder(
+                    folderId = folderId,
+                    newParentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                    date = now
+                )
+                Logger.log(
+                    TAG,
+                    "deleteFolder: purchase subfolder $folderId → moved $moved items to ShoppingList root"
+                )
 
-            db.folderDao().deleteFolderById(folderId)
-            OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
+                // подпапок у папки покупки быть не должно, но на всякий случай поднимем в корень
+                db.folderDao().moveSubfoldersToRoot(folderId)
 
-            writeHistory(
-                itemId = folderId,
-                itemName = folder?.name,
-                action = "delete_folder",
-                oldValue = "Папка (содержимое поднято в корень)",
-                newValue = null
-            )
+                // логируем перенос каждого предмета в outbox (для changelog)
+                val movedItems = db.itemDao().getItemsByParentRaw(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+                movedItems.forEach { item ->
+                    if (item.updatedDate == now) {
+                        OutboxLogger.itemChanged(db, item, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
+                }
+
+                db.folderDao().deleteFolderById(folderId)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
+
+                writeHistory(
+                    itemId = folderId,
+                    itemName = folder?.name,
+                    action = "delete_folder",
+                    oldValue = "Папка покупки (содержимое → корень «Списка покупок»)",
+                    newValue = null
+                )
+            } else {
+                // Прежнее поведение — всё в корень базы (null)
+                db.itemDao().moveItemsToRoot(folderId)
+                db.folderDao().moveSubfoldersToRoot(folderId)
+
+                Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
+
+                db.folderDao().deleteFolderById(folderId)
+                OutboxLogger.folderDeleted(db, folderId, currentUser, folder?.name)
+
+                writeHistory(
+                    itemId = folderId,
+                    itemName = folder?.name,
+                    action = "delete_folder",
+                    oldValue = "Папка (содержимое поднято в корень)",
+                    newValue = null
+                )
+            }
 
             onContentsChanged()
         } catch (e: Exception) {
