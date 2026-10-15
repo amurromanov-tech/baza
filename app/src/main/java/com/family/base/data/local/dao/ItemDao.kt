@@ -618,6 +618,47 @@ interface ItemDao {
         ORDER BY name COLLATE NOCASE ASC
     """)
     suspend fun getItemsByParentIds(folderIds: List<String>): List<ItemEntity>
+
+    // ============================================================
+    // 🆕 v17.0.9: ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
+    // ============================================================
+
+    /**
+     * 🆕 v17.0.9: количество ВСЕХ предметов в папке — включая архивные.
+     * Используется при удалении пустой папки покупки:
+     * если по активным папка пуста, но есть архивные — их надо
+     * перенести в корень «Списка покупок», а папку удалить.
+     */
+    @Query("""
+        SELECT COUNT(*) FROM items
+        WHERE parentId = :folderId
+          AND parentItemId IS NULL
+    """)
+    suspend fun countItemsInFolderIncludingArchived(folderId: String): Int
+
+    /**
+     * 🆕 v17.0.9: перенести ВСЕ архивные предметы из папки в нового родителя
+     * и пометить их как pending (чтобы уехали через changelog).
+     *
+     * Возвращает количество перенесённых предметов.
+     * Используется при удалении пустой папки покупки:
+     * архивные предметы «переезжают» в корень «Списка покупок»,
+     * чтобы не остаться с висячим parentId.
+     */
+    @Query("""
+        UPDATE items
+        SET parentId = :newParentId,
+            parentItemId = NULL,
+            updatedDate = :date,
+            syncStatus = 'pending'
+        WHERE parentId = :folderId
+          AND isArchived = 1
+    """)
+    suspend fun moveArchivedItemsFromFolder(
+        folderId: String,
+        newParentId: String,
+        date: Long
+    ): Int
 }
 
 // ============================================================
