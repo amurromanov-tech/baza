@@ -51,6 +51,15 @@ class BackupActivity : AppCompatActivity() {
             exportBackup(local = true)
         }
 
+        // 🆕 v17.2.9: «Экспорт в облако» — только для мастера (Алексей).
+        // У Римы, Димы, Гостя кнопка серая и некликабельная.
+        // Локальный экспорт — работает у всех.
+        val currentUser = tokenStorage.getCurrentUser()
+        val isMaster = currentUser == "Алексей"
+        binding.btnExportCloud.isEnabled = isMaster
+        binding.btnExportCloud.alpha = if (isMaster) 1.0f else 0.5f
+        Logger.log(TAG, "Export to cloud enabled=$isMaster (user=$currentUser)")
+
         binding.btnExportCloud.setOnClickListener {
             Logger.log(TAG, "Export cloud clicked")
             exportBackup(local = false)
