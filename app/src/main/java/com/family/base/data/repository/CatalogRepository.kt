@@ -1029,6 +1029,137 @@ class CatalogRepository(private val db: AppDatabase) {
     // ЛОГИ
     // ============================================================
 
+        // ============================================================
+    // 🆕 v17.2.7: ВОССТАНОВЛЕНИЕ (RESTORE)
+    // ============================================================
+
+    /**
+     * 🆕 v17.2.7: скачать restore-файл с Яндекс.Диска.
+     *
+     * Файлы лежат в /BAZA/restore/ и имеют имена:
+     *   - restore_items.json
+     *   - restore_folders.json
+     *   - restore_history.json
+     *   - restore_tasks.json
+     *
+     * Возвращает:
+     *   - String — сырой JSON, если файл есть и скачался;
+     *   - null — если файла нет (404), нет сети, нет токена или ошибка.
+     *
+     * Используется в DiagnosticsActivity → RestoreManager.
+     */
+    suspend fun downloadRestoreFile(fileName: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "downloadRestoreFile: DNS blocked, skip $fileName")
+                    return@withContext null
+                }
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "downloadRestoreFile: no auth, skip $fileName")
+                    return@withContext null
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val path = "$rootPath/restore/$fileName"
+
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadRestoreFile: no file on disk $fileName (code=${urlResponse.code()})")
+                    return@withContext null
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "downloadRestoreFile: href null for $fileName")
+                    return@withContext null
+                }
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    Logger.log(TAG, "downloadRestoreFile: download failed for $fileName (code=${downloadResponse.code()})")
+                    return@withContext null
+                }
+                val text = downloadResponse.body()?.string()
+                if (text.isNullOrEmpty()) {
+                    Logger.log(TAG, "downloadRestoreFile: empty body for $fileName")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadRestoreFile: OK $fileName (${text.length} chars)")
+                return@withContext text
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "downloadRestoreFile: DNS failure for $fileName: ${e.message}")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadRestoreFile error for $fileName: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * 🆕 v17.2.7: загрузить restore-файл на Яндекс.Диск.
+     *
+     * Кладёт JSON в /BAZA/restore/{fileName}.
+     * Используется, если restore-файлы формируются на телефоне.
+     *
+     * Возвращает true при успехе, false при ошибке.
+     */
+    suspend fun uploadRestoreFile(fileName: String, json: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "uploadRestoreFile: DNS blocked, skip $fileName")
+                    return@withContext false
+                }
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "uploadRestoreFile: no auth, skip $fileName")
+                    return@withContext false
+                }
+                val api = YandexDiskApi.getInstance()
+                val rootPath = getRootPath()
+                val restoreFolder = "$rootPath/restore"
+                val path = "$restoreFolder/$fileName"
+
+                createFolderIfNotExists(restoreFolder)
+
+                val body = json.toRequestBody("application/json".toMediaType())
+                val urlResponse = api.getUploadUrl(auth, path, true)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadRestoreFile: failed to get upload URL for $fileName: code=${urlResponse.code()}")
+                    return@withContext false
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "uploadRestoreFile: href null for $fileName")
+                    return@withContext false
+                }
+                val uploadResponse = api.uploadFileToUrl(href, body)
+                if (uploadResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadRestoreFile: uploaded $path (${json.length} chars)")
+                    return@withContext true
+                } else {
+                    Logger.log(TAG, "uploadRestoreFile: upload failed for $fileName: code=${uploadResponse.code()}")
+                    return@withContext false
+                }
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "uploadRestoreFile: DNS failure for $fileName: ${e.message}")
+                    return@withContext false
+                }
+                Logger.log(TAG, "uploadRestoreFile error for $fileName: ${e.message}")
+                false
+            }
+        }
+    }
+
+    // ============================================================
+    // ЛОГИ
+    // ============================================================
+
     suspend fun uploadLogToDisk(fileName: String, bytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
