@@ -40,6 +40,15 @@ import kotlinx.coroutines.withContext
  *
  * applicationScope создаётся здесь — синк живёт независимо от
  * жизненного цикла активити.
+ *
+ * 🆕 v17.2.7 (после инцидента «пропали предметы»):
+ *   - В mergeData() добавлен флаг foldersAreMissing: если с Диска пришло
+ *     0 folders, а локально они есть — БЛОКИРУЕМ не только merge folders,
+ *     но и merge items/history/tasks. Иначе получается рассинхрон:
+ *     folders защищены, а items удаляются как «local-only».
+ *   - Добавлена проверка «данные с Диска старше локальных»:
+ *     если max(diskItems.updatedDate) < max(localItems.updatedDate),
+ *     НЕ удаляем local-only items. Это защита от старого items.json.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -667,11 +676,53 @@ class SyncViewModel(
             val localLastModified = syncInfoDao.getLastModified()
             val diskIsNewer = diskLastModified > localLastModified && diskLastModified > 0L
 
+            // ================================================================
+            // 🆕 v17.2.7: ФЛАГ «folders отсутствуют на Диске»
+            //
+            // Если с Диска пришло 0 folders, а локально они есть —
+            // это признак того, что folders.json на Диске отсутствует
+            // или битый. В этом случае НЕЛЬЗЯ применять items:
+            // items без папок-родителей потеряют parentId и превратятся
+            // в «осиротевшие», а алгоритм удаления local-only снесёт
+            // всё, что не попало в неполный items.json с Диска.
+            //
+            // ⚠️ Раньше этот флаг защищал только folders — и именно это
+            // привело к инциденту 16.10.2026, когда пропало ~190 предметов.
+            // Теперь флаг блокирует весь merge.
+            // ================================================================
+            val foldersAreMissing = diskFolders.isEmpty() && localFoldersCount > 0
+
+            if (foldersAreMissing) {
+                Logger.log(
+                    TAG,
+                    "mergeData: !!! FOLDERS MISSING ON DISK (disk=0, local=$localFoldersCount) — " +
+                        "SKIP ALL merge (folders + items + history + tasks) to protect local data"
+                )
+                return@withContext
+            }
+
+            // ================================================================
+            // 🆕 v17.2.7: ЗАЩИТА ОТ СТАРОГО items.json
+            //
+            // Если max(updatedDate) на Диске < max(updatedDate) локально —
+            // значит items.json на Диске устарел. Не удаляем local-only items.
+            // ================================================================
+            val diskItemsMaxUpdated = diskItems.maxOfOrNull { it.updatedDate } ?: 0L
+            val localItemsMaxUpdated = db.itemDao().getAllItemsRaw().maxOfOrNull { it.updatedDate } ?: 0L
+            val diskItemsAreOlder = diskItems.isNotEmpty() && diskItemsMaxUpdated < localItemsMaxUpdated
+
+            if (diskItemsAreOlder) {
+                Logger.log(
+                    TAG,
+                    "mergeData: disk items are OLDER than local " +
+                        "(disk max=$diskItemsMaxUpdated, local max=$localItemsMaxUpdated) — " +
+                        "will merge but NOT delete local-only items"
+                )
+            }
+
             // ---------- ПАПКИ ----------
             if (foldersError && localFoldersCount > 0) {
-                Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP to protect data")
-            } else if (diskFolders.isEmpty() && localFoldersCount > 0) {
-                Logger.log(TAG, "mergeData: disk folders empty but local has $localFoldersCount — SKIP to protect data")
+                Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP folders merge")
             } else {
                 diskFolders.forEach { diskFolder ->
                     val local = db.folderDao().getFolderById(diskFolder.id)
@@ -704,9 +755,7 @@ class SyncViewModel(
 
             // ---------- ПРЕДМЕТЫ ----------
             if (itemsError && localItemsCount > 0) {
-                Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP to protect data")
-            } else if (diskItems.isEmpty() && localItemsCount > 0) {
-                Logger.log(TAG, "mergeData: disk items empty but local has $localItemsCount — SKIP to protect data")
+                Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP items merge")
             } else {
                 diskItems.forEach { diskItem ->
                     val local = db.itemDao().getItemById(diskItem.id)
@@ -721,7 +770,8 @@ class SyncViewModel(
                     }
                 }
 
-                if (diskIsNewer) {
+                // 🆕 v17.2.7: не удаляем local-only items, если diskItemsAreOlder
+                if (diskIsNewer && !diskItemsAreOlder) {
                     val ctx = appContext()
                     val diskItemIds = diskItems.map { it.id }.toSet()
                     val localOnlyItems = db.itemDao().getAllItemsRaw().filter { it.id !in diskItemIds }
@@ -732,12 +782,14 @@ class SyncViewModel(
                             ImageUtils.deleteLocalImage(ctx, item.id)
                         }
                     }
+                } else if (diskItemsAreOlder) {
+                    Logger.log(TAG, "mergeData: skipping local-only items deletion (disk items are older)")
                 }
             }
 
             // ---------- ИСТОРИЯ ----------
             if (historyError && diskHistory.isEmpty()) {
-                Logger.log(TAG, "mergeData: history download error — SKIP")
+                Logger.log(TAG, "mergeData: history download error — SKIP history merge")
             } else if (diskHistory.isEmpty()) {
                 Logger.log(TAG, "mergeData: disk history empty — nothing to merge")
             } else {
@@ -753,7 +805,7 @@ class SyncViewModel(
 
             // ---------- ЗАДАЧИ ----------
             if (tasksError && diskTasks.isEmpty()) {
-                Logger.log(TAG, "mergeData: tasks download error — SKIP")
+                Logger.log(TAG, "mergeData: tasks download error — SKIP tasks merge")
             } else if (diskTasks.isEmpty()) {
                 Logger.log(TAG, "mergeData: disk tasks empty — nothing to merge")
             } else {
