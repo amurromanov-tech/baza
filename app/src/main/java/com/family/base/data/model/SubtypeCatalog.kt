@@ -32,6 +32,9 @@ import java.util.Locale
  *           - health_devices 🩺 Приборы для здоровья
  *           переименован:
  *           - sport: "🏋️ Спорт" → "🏋️ Спорт/Зарядка"
+ *
+ * 🆕 v17.2.6: добавлен подтип thing:
+ *           - dishes         🥣 Посуда
  */
 object SubtypeCatalog {
 
@@ -121,6 +124,8 @@ object SubtypeCatalog {
         Subtype("books",          "📚 Книга/Аудиокниги"),
         Subtype("pool",           "🏊 Для бассейна"),
         Subtype("health_devices", "🩺 Приборы для здоровья"),
+        // 🆕 v17.2.6
+        Subtype("dishes",         "🥣 Посуда"),
         Subtype("thing_other",    "📦 Прочее (предметы)")
     )
 
