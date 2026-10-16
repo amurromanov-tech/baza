@@ -13,6 +13,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityDiagnosticsBinding
 import com.family.base.util.Logger
+import com.family.base.util.RestoreManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,8 +29,10 @@ class DiagnosticsActivity : AppCompatActivity() {
 
     private lateinit var tokenStorage: TokenStorage
     private lateinit var repository: CatalogRepository
+    private lateinit var restoreManager: RestoreManager
 
     private var isUploading = false
+    private var isRestoring = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,8 +47,10 @@ class DiagnosticsActivity : AppCompatActivity() {
             return
         }
 
+        val db = AppDatabase.getInstance(this)
         tokenStorage = TokenStorage(this)
-        repository = CatalogRepository(AppDatabase.getInstance(this))
+        repository = CatalogRepository(db)
+        restoreManager = RestoreManager(db, repository)
 
         binding.btnBack.setOnClickListener { finish() }
 
@@ -75,6 +80,12 @@ class DiagnosticsActivity : AppCompatActivity() {
         binding.btnHistory.setOnClickListener {
             Logger.log(TAG, "History clicked")
             startActivity(Intent(this, HistoryActivity::class.java))
+        }
+
+        // ===== 🆕 v17.2.7: ВОССТАНОВЛЕНИЕ БД =====
+        binding.btnRestore.setOnClickListener {
+            Logger.log(TAG, "Restore clicked")
+            showRestoreConfirmDialog()
         }
 
         Logger.log(TAG, "=== DiagnosticsActivity onCreate FINISHED ===")
@@ -261,6 +272,122 @@ class DiagnosticsActivity : AppCompatActivity() {
             .setView(container)
             .setCancelable(false)
             .create()
+    }
+
+    // ============================================================
+    // 🆕 v17.2.7: ВОССТАНОВЛЕНИЕ БД ИЗ RESTORE-ФАЙЛОВ
+    // ============================================================
+
+    private fun showRestoreConfirmDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Восстановление БД")
+            .setMessage(
+                "Будут скачаны 4 restore-файла с Яндекс.Диска:\n" +
+                    "• restore_items.json\n" +
+                    "• restore_folders.json\n" +
+                    "• restore_history.json\n" +
+                    "• restore_tasks.json\n\n" +
+                    "Затем они будут залиты в БД.\n\n" +
+                    "Существующие объекты с теми же id будут ОБНОВЛЕНЫ. " +
+                    "Новые объекты будут ДОБАВЛЕНЫ. Ничего не удаляется.\n\n" +
+                    "Рекомендуется делать это в авиарежиме, чтобы случайно не запустить синк."
+            )
+            .setPositiveButton("Восстановить") { _, _ ->
+                doRestore()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun doRestore() {
+        if (isRestoring) {
+            Toast.makeText(this, "Восстановление уже идёт…", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val token = tokenStorage.getAccessToken()
+        if (token.isNullOrEmpty()) {
+            Toast.makeText(this, "Требуется вход в аккаунт Яндекс", Toast.LENGTH_LONG).show()
+            Logger.log(TAG, "doRestore: no token, aborting")
+            return
+        }
+
+        isRestoring = true
+
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 48, 48, 48)
+        }
+        val progressBar = ProgressBar(this).apply {
+            isIndeterminate = true
+        }
+        val stageText = TextView(this).apply {
+            text = "Подготовка…"
+            setPadding(0, 24, 0, 0)
+            textSize = 15f
+        }
+        val messageText = TextView(this).apply {
+            text = ""
+            setPadding(0, 8, 0, 0)
+            textSize = 13f
+        }
+        container.addView(progressBar)
+        container.addView(stageText)
+        container.addView(messageText)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Восстановление БД")
+            .setView(container)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                Logger.log(TAG, "doRestore: starting…")
+
+                val result = restoreManager.restoreFromDisk { stage, message ->
+                    runOnUiThread {
+                        stageText.text = stage
+                        messageText.text = message
+                    }
+                }
+
+                dialog.dismiss()
+                isRestoring = false
+
+                showRestoreResultDialog(result)
+
+            } catch (e: Exception) {
+                dialog.dismiss()
+                isRestoring = false
+                Logger.log(TAG, "doRestore error: ${e.message}", e)
+                AlertDialog.Builder(this@DiagnosticsActivity)
+                    .setTitle("❌ Ошибка восстановления")
+                    .setMessage("${e.message}")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showRestoreResultDialog(result: RestoreManager.RestoreResult) {
+        val message = result.summary()
+        val title = if (result.hasErrors) "⚠️ Восстановление (с ошибками)" else "✅ Восстановление завершено"
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK") { _, _ ->
+                if (!result.hasErrors && !result.isEmpty) {
+                    Toast.makeText(
+                        this,
+                        "Перезапустите приложение, чтобы увидеть изменения",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            .show()
     }
 
     override fun onDestroy() {
