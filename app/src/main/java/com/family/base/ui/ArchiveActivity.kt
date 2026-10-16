@@ -1,6 +1,7 @@
 package com.family.base.ui
 
 import android.os.Bundle
+import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -43,6 +44,7 @@ class ArchiveActivity : AppCompatActivity() {
     private var currentFolder: ArchiveFolder = ArchiveFolder.THINGS
     private var currentReasonKey: String? = null
     private var currentSort: Sort = Sort.ARCHIVED_DESC
+    private var currentSearchQuery: String? = null
 
     private var allArchivedItems: List<ItemEntity> = emptyList()
 
@@ -68,6 +70,7 @@ class ArchiveActivity : AppCompatActivity() {
         binding.rvArchive.adapter = adapter
 
         binding.btnBack.setOnClickListener { finish() }
+        binding.btnSearch.setOnClickListener { showSearchDialog() }
         binding.btnSort.setOnClickListener { showSortDialog() }
 
         setupFolderChips()
@@ -76,6 +79,7 @@ class ArchiveActivity : AppCompatActivity() {
         // 🆕 Extra: стартовая папка архива
         applyStartFolderFromIntent()
 
+        updateSearchIcon()
         loadAllArchive()
 
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
@@ -157,13 +161,19 @@ class ArchiveActivity : AppCompatActivity() {
 
     private fun applyFilters() {
         val byFolder = allArchivedItems.filter { matchesFolder(it, currentFolder) }
-        val filtered = if (currentReasonKey == null) {
+        val byReason = if (currentReasonKey == null) {
             byFolder
         } else {
             byFolder.filter { it.archivedReason == currentReasonKey }
         }
+        val bySearch = if (currentSearchQuery.isNullOrEmpty()) {
+            byReason
+        } else {
+            val q = currentSearchQuery!!
+            byReason.filter { it.name.contains(q, ignoreCase = true) }
+        }
 
-        val result = applySort(filtered)
+        val result = applySort(bySearch)
 
         adapter.submitList(result)
 
@@ -205,6 +215,49 @@ class ArchiveActivity : AppCompatActivity() {
             }
             .setNegativeButton("Отмена", null)
             .show()
+    }
+
+    // ==================== ПОИСК ====================
+
+    private fun showSearchDialog() {
+        val editText = EditText(this).apply {
+            hint = "Поиск по названию..."
+            setText(currentSearchQuery ?: "")
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Поиск в архиве")
+            .setView(editText)
+            .setPositiveButton("Искать") { _, _ ->
+                val q = editText.text.toString().trim()
+                currentSearchQuery = if (q.isEmpty()) null else q
+                updateSearchIcon()
+                applyFilters()
+            }
+            .setNegativeButton("Сбросить") { _, _ ->
+                currentSearchQuery = null
+                updateSearchIcon()
+                applyFilters()
+            }
+            .setNeutralButton("Отмена", null)
+            .show()
+    }
+
+    private fun updateSearchIcon() {
+        if (currentSearchQuery.isNullOrEmpty()) {
+            binding.btnSearch.setImageResource(R.drawable.ic_search)
+            binding.btnSearch.contentDescription = "Поиск"
+            binding.btnSearch.setOnClickListener { showSearchDialog() }
+        } else {
+            binding.btnSearch.setImageResource(R.drawable.ic_close)
+            binding.btnSearch.contentDescription = "Сбросить поиск"
+            binding.btnSearch.setOnClickListener {
+                currentSearchQuery = null
+                updateSearchIcon()
+                applyFilters()
+            }
+        }
     }
 
     private fun matchesFolder(item: ItemEntity, folder: ArchiveFolder): Boolean {
