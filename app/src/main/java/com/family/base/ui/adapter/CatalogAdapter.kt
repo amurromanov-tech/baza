@@ -121,8 +121,13 @@ class CatalogAdapter(
     /**
      * 🆕 v16.0.14: отрисовка системной папки по её systemKey.
      *  - home_tasks     → 🏠 + «📋 N активных»
-     *  - purchases      → 🛒 + «🛒 N покупок»
+     *  - purchases      → 🧾 + «🛒 N покупок»
      *  - shopping_list  → 🛒 + «🛒 N купить»
+     *
+     * 🆕 v17.2.8: иконки системных папок:
+     *  - home_tasks     → ic_home (как было);
+     *  - purchases      → ic_purchases_receipt (чек);
+     *  - shopping_list  → ic_shopping_list_cart (тележка).
      */
     private fun bindSystemFolder(holder: ViewHolder, entry: FolderEntity) {
         val context = holder.itemView.context
@@ -144,9 +149,9 @@ class CatalogAdapter(
             }
 
             FolderEntity.SYSTEM_KEY_PURCHASES -> {
-                holder.icon.load(R.drawable.ic_folder_default) {
-                    placeholder(R.drawable.ic_folder_default)
-                    error(R.drawable.ic_folder_default)
+                holder.icon.load(R.drawable.ic_purchases_receipt) {
+                    placeholder(R.drawable.ic_purchases_receipt)
+                    error(R.drawable.ic_purchases_receipt)
                 }
                 holder.name.text = entry.name
 
@@ -159,9 +164,9 @@ class CatalogAdapter(
             }
 
             FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
-                holder.icon.load(R.drawable.ic_folder_default) {
-                    placeholder(R.drawable.ic_folder_default)
-                    error(R.drawable.ic_folder_default)
+                holder.icon.load(R.drawable.ic_shopping_list_cart) {
+                    placeholder(R.drawable.ic_shopping_list_cart)
+                    error(R.drawable.ic_shopping_list_cart)
                 }
                 holder.name.text = entry.name
 
