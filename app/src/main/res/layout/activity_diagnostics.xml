@@ -131,32 +131,6 @@
             android:layout_marginBottom="24dp" />
 
         <!-- ============================================================ -->
-        <!-- 🆕 v17.2.7: СЕКЦИЯ: ВОССТАНОВЛЕНИЕ БД -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ВОССТАНОВЛЕНИЕ БД"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnRestore"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🔄 Восстановление БД" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Скачать restore_items/folders/history/tasks.json с Яндекс.Диска и залить в БД. Существующие объекты с теми же id обновятся, новые добавятся. Ничего не удаляется. Рекомендуется запускать в авиарежиме."
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="24dp" />
-
-        <!-- ============================================================ -->
         <!-- ИНФОРМАЦИЯ -->
         <!-- ============================================================ -->
         <androidx.cardview.widget.CardView
