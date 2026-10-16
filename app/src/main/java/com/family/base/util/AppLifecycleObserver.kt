@@ -7,35 +7,34 @@ import com.family.base.ui.viewmodel.MainViewModel
 /**
  * Наблюдатель жизненного цикла приложения.
  *
- * Синхронизация запускается ТОЛЬКО ОДИН РАЗ — при первом запуске
- * приложения (холодный старт). Больше никаких автосинков:
- *  - при сворачивании приложения,
- *  - при разблокировке экрана,
- *  - при переключении между приложениями.
+ * 🆕 v17.2.8: АВТОСИНК ПОЛНОСТЬЮ ОТКЛЮЧЁН.
  *
- * Синк по кнопке "Синхронизировать сейчас" — через SettingsActivity.
- * Синк при выходе из аккаунта — через SettingsActivity (logout).
+ * Раньше: при холодном старте запускался syncWithDisk() — это приводило
+ * к удалению локальных данных, если items.json на Диске был неполным
+ * или folders.json отсутствовал (инцидент 16.10.2026, потеряно ~190 предметов).
+ *
+ * Теперь:
+ *  - Синк запускается ТОЛЬКО по явной команде пользователя:
+ *      • кнопка «🔄» в тулбаре MainActivity (viewModel.forceSync());
+ *      • кнопка «Синхронизировать сейчас» в SettingsActivity.
+ *  - Никаких автосинков при:
+ *      • холодном старте,
+ *      • сворачивании/разворачивании,
+ *      • разблокировке экрана,
+ *      • переключении между приложениями.
+ *
+ * Класс оставлен как заглушка для логов и на случай будущих
+ * «безопасных» действий по onStart (например, локальная проверка целостности
+ * БД без сети).
  */
 class AppLifecycleObserver(
-    private val viewModel: MainViewModel
+    @Suppress("unused") private val viewModel: MainViewModel
 ) : DefaultLifecycleObserver {
 
     private val TAG = "AppLifecycleObserver"
 
-    /**
-     * Флаг: был ли уже синк при холодном старте.
-     * Живёт, пока жив процесс приложения. Сбрасывается только при перезапуске.
-     */
-    private var hasSyncedOnColdStart = false
-
     override fun onStart(owner: LifecycleOwner) {
-        if (!hasSyncedOnColdStart) {
-            hasSyncedOnColdStart = true
-            Logger.log(TAG, "Cold start detected, syncing...")
-            viewModel.syncWithDisk()
-        } else {
-            Logger.log(TAG, "onStart: skip sync (already synced on cold start)")
-        }
+        Logger.log(TAG, "onStart: auto-sync disabled (v17.2.8). Use toolbar 🔄 to sync manually.")
     }
 
     // onStop НЕ переопределяем — синк при уходе в фон не нужен
