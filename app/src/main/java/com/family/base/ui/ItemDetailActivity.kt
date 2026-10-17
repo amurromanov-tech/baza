@@ -12,7 +12,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.family.base.BaseApplication
 import com.family.base.R
-import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.repository.CatalogRepository
@@ -41,7 +40,6 @@ class ItemDetailActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var repository: CatalogRepository
     private lateinit var viewModel: MainViewModel
-    private lateinit var tokenStorage: TokenStorage
 
     private var itemId: String? = null
     private var isEditMode = false
@@ -139,7 +137,6 @@ class ItemDetailActivity : AppCompatActivity() {
             db = AppDatabase.getInstance(this)
             repository = CatalogRepository(db)
             viewModel = BaseApplication.mainViewModel
-            tokenStorage = TokenStorage(this)
         } catch (e: Exception) {
             Logger.log(TAG, "CRITICAL: Failed to initialize", e)
             return
@@ -210,7 +207,6 @@ class ItemDetailActivity : AppCompatActivity() {
             itemIdProvider = { itemId },
             currentItemProvider = { currentItem },
             isEditModeProvider = { isEditMode },
-            isGuestModeProvider = { isGuestMode() },
             onCurrentItemChanged = { item -> currentItem = item },
             onPhotoChanged = { /* no-op */ }
         )
@@ -255,36 +251,6 @@ class ItemDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ГОСТЕВОЙ РЕЖИМ
-    // ============================================================
-
-    private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
-
-    private fun applyGuestModeIfNeeded() {
-        if (!isGuestMode()) return
-
-        binding.btnWriteOff.visibility = View.GONE
-
-        binding.tvActionsTitle.visibility = View.GONE
-        binding.btnActionEdit.visibility = View.GONE
-        binding.btnActionLend.visibility = View.GONE
-        binding.btnActionMove.visibility = View.GONE
-        binding.btnActionRevision.visibility = View.GONE
-        binding.btnActionArchive.visibility = View.GONE
-        binding.btnActionDelete.visibility = View.GONE
-
-        binding.btnSave.visibility = View.GONE
-        binding.btnCancelEdit.visibility = View.GONE
-        binding.btnAddPhoto.visibility = View.GONE
-
-        binding.btnReturnItem.visibility = View.GONE
-
-        binding.btnAddNested.visibility = View.GONE
-
-        Logger.log(TAG, "Guest mode applied: edit buttons hidden")
-    }
-
-    // ============================================================
     // LISTENERS
     // ============================================================
 
@@ -294,18 +260,15 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.ivPhoto.setOnClickListener { photoController.openFullscreenPhoto() }
 
         binding.ivPhoto.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
             photoController.showPhotoActionsDialog(hasPhoto = true)
             true
         }
 
         binding.ivPhotoPlaceholder.setOnClickListener {
-            if (isGuestMode()) return@setOnClickListener
             photoController.showImageSourceDialog()
         }
 
         binding.ivPhotoPlaceholder.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
             photoController.showPhotoActionsDialog(hasPhoto = false)
             true
         }
@@ -319,34 +282,31 @@ class ItemDetailActivity : AppCompatActivity() {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
         binding.btnActionEdit.setOnClickListener {
-            if (!isGuestMode()) itemId?.let { isEditMode = true; showEditMode(it) }
+            itemId?.let { isEditMode = true; showEditMode(it) }
         }
-        binding.btnActionLend.setOnClickListener { if (!isGuestMode()) actionDialogs.showLendDialog() }
-        binding.btnActionMove.setOnClickListener { if (!isGuestMode()) actionDialogs.showMoveDialog() }
+        binding.btnActionLend.setOnClickListener { actionDialogs.showLendDialog() }
+        binding.btnActionMove.setOnClickListener { actionDialogs.showMoveDialog() }
         binding.btnActionRevision.setOnClickListener {
-            if (!isGuestMode()) {
-                actionDialogs.showRevisionDialog { timestamp ->
-                    currentItem = currentItem?.copy(lastRevisionDate = timestamp)
-                    viewController.updateRevisionRow(timestamp)
-                }
+            actionDialogs.showRevisionDialog { timestamp ->
+                currentItem = currentItem?.copy(lastRevisionDate = timestamp)
+                viewController.updateRevisionRow(timestamp)
             }
         }
         binding.btnActionArchive.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showArchiveDialog()
+            actionDialogs.showArchiveDialog()
         }
         binding.btnActionDelete.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showDeleteDialog { actionDialogs.showArchiveDialog() }
+            actionDialogs.showDeleteDialog { actionDialogs.showArchiveDialog() }
         }
         binding.btnReturnItem.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showReturnDialog()
+            actionDialogs.showReturnDialog()
         }
 
         binding.btnWriteOff.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showWriteOffDialog()
+            actionDialogs.showWriteOffDialog()
         }
 
         binding.chipQuantityView.setOnLongClickListener {
-            if (isGuestMode()) return@setOnLongClickListener true
             actionDialogs.showQuickQuantityDialog()
             true
         }
@@ -367,7 +327,7 @@ class ItemDetailActivity : AppCompatActivity() {
         }
 
         binding.btnAddNested.setOnClickListener {
-            if (!isGuestMode()) actionDialogs.showAddNestedDialog()
+            actionDialogs.showAddNestedDialog()
         }
 
         binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
@@ -383,10 +343,8 @@ class ItemDetailActivity : AppCompatActivity() {
         }
 
         binding.tvDatePurchase.setOnClickListener {
-            if (!isGuestMode()) {
-                itemId?.let { showEditMode(it) }
-                binding.etPurchaseDate.post { editController.showPurchaseDatePickerDialog() }
-            }
+            itemId?.let { showEditMode(it) }
+            binding.etPurchaseDate.post { editController.showPurchaseDatePickerDialog() }
         }
 
         binding.etPurchaseDate.setOnClickListener { editController.showPurchaseDatePickerDialog() }
@@ -502,7 +460,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     viewController.applyChips(item)
                     viewController.updateExpiryProgress(item)
                     viewController.updateSyncIndicator(item)
-                    applyGuestModeIfNeeded()
 
                     photoController.showLocalPhotoOrPlaceholder(id)
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
@@ -574,7 +531,6 @@ class ItemDetailActivity : AppCompatActivity() {
                     viewController.applyChips(item)
                     viewController.updateExpiryProgress(item)
                     viewController.updateSyncIndicator(item)
-                    applyGuestModeIfNeeded()
 
                     photoController.showLocalPhotoOrPlaceholder(id)
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
