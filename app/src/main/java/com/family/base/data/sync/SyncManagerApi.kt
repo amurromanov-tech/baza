@@ -30,6 +30,10 @@ import java.net.UnknownHostException
  * с задержкой 500 мс при 5xx / DNS / timeout. Разовые 500 от Яндекса
  * больше не теряют файл до следующего синка. 4xx — без retry
  * (бессмысленно, файла нет или нет прав).
+ *
+ * 🆕 v17.4.0 (хвост №3): deleteChangelogFile теперь тоже делает до 2 попыток
+ * с задержкой 500 мс при 5xx / 429 / DNS / timeout. 4xx (кроме 429) — без retry.
+ * Раньше разовый 500 при удалении оставлял файл на Диске до следующего cleanup.
  */
 class SyncManagerApi {
 
@@ -52,6 +56,17 @@ class SyncManagerApi {
      * 🆕 v17.3.0: пауза между попытками downloadChangelogFile.
      */
     private val DOWNLOAD_RETRY_DELAY_MS = 500L
+
+    /**
+     * 🆕 v17.4.0: сколько раз пробуем удалить один changelog-файл
+     * при 5xx/429/DNS/timeout. 2 попытки = 1 retry через 500 мс.
+     */
+    private val DELETE_MAX_ATTEMPTS = 2
+
+    /**
+     * 🆕 v17.4.0: пауза между попытками deleteChangelogFile.
+     */
+    private val DELETE_RETRY_DELAY_MS = 500L
 
     private fun getAuth(): String? {
         return try {
@@ -389,29 +404,83 @@ class SyncManagerApi {
 
     /**
      * Удаляет файл changelog с Диска.
-     * Используется для очистки своих старых пакетов.
+     * Используется для очистки своих старых пакетов и чужих
+     * (уже обработанных) в SyncManager.cleanup.
+     *
+     * 🆕 v17.4.0 (хвост №3): до DELETE_MAX_ATTEMPTS попыток
+     * с паузой DELETE_RETRY_DELAY_MS при 5xx / 429 / DNS / timeout.
+     *
+     * Логика:
+     *  - 4xx (кроме 429) — сразу false, без retry (файла нет или нет прав).
+     *    404 считается успехом: файла уже нет, цель достигнута.
+     *  - 429 — retry (rate limit).
+     *  - 5xx / DNS / timeout / исключение — retry до исчерпания попыток.
+     *  - 200/204 — успех.
      */
     suspend fun deleteChangelogFile(fileName: String): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
         val path = "${getChangelogPath()}/$fileName"
 
-        return try {
-            val response = api.deleteFile(auth, path, false)
-            val ok = response.isSuccessful || response.code() == 404
-            if (ok) {
-                Logger.log(TAG, "deleteChangelogFile: deleted $fileName")
-            } else {
-                Logger.log(TAG, "deleteChangelogFile: failed for $fileName, code=${response.code()}")
+        var lastError: String? = null
+
+        for (attempt in 1..DELETE_MAX_ATTEMPTS) {
+            try {
+                val response = api.deleteFile(auth, path, false)
+                val code = response.code()
+
+                if (response.isSuccessful) {
+                    Logger.log(TAG, "deleteChangelogFile: deleted $fileName")
+                    return true
+                }
+
+                // 404 — файла уже нет, считаем успехом
+                if (code == 404) {
+                    Logger.log(TAG, "deleteChangelogFile: $fileName already missing (404), treat as success")
+                    return true
+                }
+
+                // 4xx — бессмысленно ретраить (кроме 429)
+                if (code in 400..499 && code != 429) {
+                    Logger.log(TAG, "deleteChangelogFile: 4xx for $fileName, code=$code, no retry")
+                    return false
+                }
+
+                lastError = "code=$code"
+                Logger.log(
+                    TAG,
+                    "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
+                        "for $fileName failed, code=$code"
+                )
+                if (attempt < DELETE_MAX_ATTEMPTS) {
+                    delay(DELETE_RETRY_DELAY_MS)
+                    continue
+                }
+                return false
+            } catch (e: Exception) {
+                lastError = e.message
+                if (isDnsError(e)) {
+                    Logger.log(
+                        TAG,
+                        "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
+                            "DNS failure for $fileName: ${e.message}"
+                    )
+                } else {
+                    Logger.log(
+                        TAG,
+                        "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
+                            "error for $fileName: ${e.message}"
+                    )
+                }
+                if (attempt < DELETE_MAX_ATTEMPTS) {
+                    delay(DELETE_RETRY_DELAY_MS)
+                    continue
+                }
+                return false
             }
-            ok
-        } catch (e: Exception) {
-            if (isDnsError(e)) {
-                Logger.log(TAG, "deleteChangelogFile: DNS failure: ${e.message}")
-            } else {
-                Logger.log(TAG, "deleteChangelogFile error for $fileName: ${e.message}")
-            }
-            false
         }
+
+        Logger.log(TAG, "deleteChangelogFile: all $DELETE_MAX_ATTEMPTS attempts failed for $fileName (last=$lastError)")
+        return false
     }
 }
