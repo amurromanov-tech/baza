@@ -13,7 +13,6 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.util.ImageUtils
 
 class ArchiveAdapter(
-    private val isGuestMode: Boolean = false,
     private val onItemClick: (ItemEntity) -> Unit,
     private val onRestoreClick: (ItemEntity) -> Unit
 ) : RecyclerView.Adapter<ArchiveAdapter.ViewHolder>() {
@@ -64,14 +63,10 @@ class ArchiveAdapter(
             onItemClick(item)
         }
 
-        // ===== КНОПКА «ВЕРНУТЬ» — СКРЫВАЕМ ДЛЯ ГОСТЯ =====
-        if (isGuestMode) {
-            holder.btnRestore.visibility = View.GONE
-        } else {
-            holder.btnRestore.visibility = View.VISIBLE
-            holder.btnRestore.setOnClickListener {
-                onRestoreClick(item)
-            }
+        // Кнопка «Вернуть» — видна всегда (гостя больше нет)
+        holder.btnRestore.visibility = View.VISIBLE
+        holder.btnRestore.setOnClickListener {
+            onRestoreClick(item)
         }
     }
 
