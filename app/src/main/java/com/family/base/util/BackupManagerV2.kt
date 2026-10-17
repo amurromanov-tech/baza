@@ -12,7 +12,6 @@ import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.SettingsEntity
-import com.family.base.data.local.entity.SyncQueueEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -199,40 +198,35 @@ class BackupManagerV2(private val context: Context) {
      * Общая логика для importFromLocal и importFromCloud.
      *
      * 1. Полностью очищает локальную БД (folders / items / history).
-     * 2. Очищает sync_queue — чтобы старые «хвосты» не смешались с новыми.
-     * 3. Вставляет данные из бэкапа.
-     * 4. 🆕 v16.2: пишет ВСЕ папки, предметы и историю в outbox (changelog).
+     * 2. Вставляет данные из бэкапа.
+     * 3. 🆕 v16.2: пишет ВСЕ папки, предметы и историю в outbox (changelog).
      *
      * Это нужно, чтобы:
      *   - при следующем синке они гарантированно залились на Диск через changelog;
      *   - если сети нет — импорт «запомнился» и зальётся при следующем sync.
      *
-     * ⚠️ Старая sync_queue больше НЕ используется — она отключена
-     *     в syncWithDisk() и не обрабатывается.
+     * 🆕 v17.4.0: вызов db.syncQueueDao().clearAll() удалён —
+     * таблица sync_queue удалена миграцией 17→18.
      */
     private suspend fun applyBackupData(db: AppDatabase, backupData: BackupData) {
         // 1. Очищаем локальные данные
         clearAllData(db)
 
-        // 2. 🆕 Очищаем старую очередь — она относится к старым данным
-        db.syncQueueDao().clearAll()
-        Logger.log(TAG, "applyBackupData: sync_queue cleared")
-
-        // 3. Вставляем папки
+        // 2. Вставляем папки
         backupData.folders.forEach { db.folderDao().insertFolder(it) }
 
-        // 4. Вставляем предметы (включая архивные)
+        // 3. Вставляем предметы (включая архивные)
         backupData.items.forEach { db.itemDao().insertItem(it) }
 
-        // 5. Вставляем историю
+        // 4. Вставляем историю
         backupData.history.forEach { db.historyDao().insertEntry(it) }
 
-        // 6. Настройки
+        // 5. Настройки
         backupData.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
         // ============================================================
         // 🆕 v16.2: пишем в outbox (changelog), НЕ в старую sync_queue.
-        // Старая sync_queue отключена и не обрабатывается.
+        // Старая sync_queue удалена в v17.4.0 (миграция 17→18).
         // ============================================================
         val changedBy = "backup_import"
 
