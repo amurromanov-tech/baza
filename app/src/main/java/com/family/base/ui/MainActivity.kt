@@ -27,7 +27,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.family.base.AppUser
 import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
@@ -75,7 +74,6 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
         if (result.resultCode == RESULT_OK) {
-            applyGuestModeIfNeeded()
             viewModel.loadContents()
             handlePendingRootFolder()
         } else {
@@ -268,13 +266,11 @@ class MainActivity : AppCompatActivity() {
                         "Системная папка — действия недоступны",
                         Toast.LENGTH_SHORT
                     ).show()
-                } else if (!isGuestMode()) {
+                } else {
                     showFolderContextMenu(folder)
                 }
             },
-            onItemLongClick = { item ->
-                if (!isGuestMode()) showItemContextMenu(item)
-            }
+            onItemLongClick = { item -> showItemContextMenu(item) }
         )
         binding.rvCatalog.layoutManager = LinearLayoutManager(this)
         binding.rvCatalog.adapter = adapter
@@ -295,15 +291,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.btnAddFolder.setOnClickListener {
-            if (!isGuestMode()) showCreateFolderDialog()
-        }
+        binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
         binding.btnAddItem.setOnClickListener {
-            if (!isGuestMode()) {
-                val intent = Intent(this, AddItemActivity::class.java)
-                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-                startActivity(intent)
-            }
+            val intent = Intent(this, AddItemActivity::class.java)
+            intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+            startActivity(intent)
         }
         binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
@@ -318,10 +310,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnScanCheck.setOnClickListener {
-            if (!isGuestMode()) {
-                Logger.log(TAG, "Scan check clicked")
-                checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
-            }
+            Logger.log(TAG, "Scan check clicked")
+            checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
         }
 
         viewModel.navigateToFolder(null)
@@ -329,8 +319,6 @@ class MainActivity : AppCompatActivity() {
 
         if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
             launchSelectUserIfNeeded()
-        } else {
-            applyGuestModeIfNeeded()
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -438,7 +426,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.loadContents()
-        applyGuestModeIfNeeded()
         handlePendingRootFolder()
         loadSystemFolderCounters()
     }
@@ -456,20 +443,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ГОСТЕВОЙ РЕЖИМ
+    // ВЫБОР ПОЛЬЗОВАТЕЛЯ
     // ============================================================
-    private fun isGuestMode(): Boolean {
-        return tokenStorage.isCurrentUserGuest()
-    }
-
-    private fun applyGuestModeIfNeeded() {
-        val guest = isGuestMode()
-        binding.btnAddFolder.visibility = if (guest) View.GONE else View.VISIBLE
-        binding.btnAddItem.visibility = if (guest) View.GONE else View.VISIBLE
-        binding.btnScanCheck.visibility = if (guest) View.GONE else View.VISIBLE
-        Logger.log(TAG, "applyGuestModeIfNeeded: guest=$guest")
-    }
-
     private fun launchSelectUserIfNeeded() {
         if (tokenStorage.getCurrentUser() == null) {
             Logger.log(TAG, "No user selected, launching SelectUserActivity")
@@ -478,8 +453,6 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
             }
-        } else {
-            applyGuestModeIfNeeded()
         }
     }
 
@@ -646,12 +619,10 @@ class MainActivity : AppCompatActivity() {
                             .setTitle("Ничего не найдено")
                             .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
                             .setPositiveButton("Создать") { _, _ ->
-                                if (!isGuestMode()) {
-                                    val intent = Intent(this@MainActivity, AddItemActivity::class.java)
-                                    intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-                                    intent.putExtra("barcode", barcode)
-                                    startActivity(intent)
-                                }
+                                val intent = Intent(this@MainActivity, AddItemActivity::class.java)
+                                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                                intent.putExtra("barcode", barcode)
+                                startActivity(intent)
                             }
                             .setNegativeButton("Отмена", null)
                             .show()
