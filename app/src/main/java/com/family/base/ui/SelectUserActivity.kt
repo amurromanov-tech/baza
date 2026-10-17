@@ -12,8 +12,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.family.base.AppUser
-import com.family.base.BaseApplication
-import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.remote.model.PinHasher
@@ -43,7 +41,6 @@ class SelectUserActivity : AppCompatActivity() {
     private lateinit var btnUserAlexey: Button
     private lateinit var btnUserRima: Button
     private lateinit var btnUserDima: Button
-    private lateinit var btnGuest: Button
     private lateinit var tvStatusAlexey: TextView
     private lateinit var tvStatusRima: TextView
     private lateinit var tvStatusDima: TextView
@@ -67,7 +64,6 @@ class SelectUserActivity : AppCompatActivity() {
         btnUserAlexey = findViewById(R.id.btnUserAlexey)
         btnUserRima = findViewById(R.id.btnUserRima)
         btnUserDima = findViewById(R.id.btnUserDima)
-        btnGuest = findViewById(R.id.btnGuest)
         tvStatusAlexey = findViewById(R.id.tvStatusAlexey)
         tvStatusRima = findViewById(R.id.tvStatusRima)
         tvStatusDima = findViewById(R.id.tvStatusDima)
@@ -84,7 +80,6 @@ class SelectUserActivity : AppCompatActivity() {
         btnUserAlexey.setOnClickListener { onUserClicked(AppUser.ALEXEY) }
         btnUserRima.setOnClickListener { onUserClicked(AppUser.RIMA) }
         btnUserDima.setOnClickListener { onUserClicked(AppUser.DIMA) }
-        btnGuest.setOnClickListener { onGuestClicked() }
     }
 
     // ============================================================
@@ -115,7 +110,6 @@ class SelectUserActivity : AppCompatActivity() {
         btnUserAlexey.isEnabled = enabled
         btnUserRima.isEnabled = enabled
         btnUserDima.isEnabled = enabled
-        btnGuest.isEnabled = enabled
     }
 
     private fun updateUserStatuses() {
@@ -139,14 +133,6 @@ class SelectUserActivity : AppCompatActivity() {
         } else {
             showEnterPinDialog(user, saved)
         }
-    }
-
-    private fun onGuestClicked() {
-        Logger.log(TAG, "Guest selected")
-        tokenStorage.setCurrentUser(AppUser.GUEST.displayName)
-        Toast.makeText(this, "Вход как гость (только просмотр)", Toast.LENGTH_SHORT).show()
-        setResult(RESULT_OK)
-        finish()
     }
 
     // ============================================================
