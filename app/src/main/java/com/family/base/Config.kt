@@ -68,6 +68,9 @@ object Config {
  * PIN здесь НЕ хранится — только имя и эмодзи.
  * PIN задаёт сам пользователь при первом входе,
  * хранится в виде SHA-256-хеша в users.json на Яндекс.Диске.
+ *
+ * 🆕 v17.3.1: гость удалён полностью. Новый член семьи добавляется
+ * в enum вручную (по решению владельца).
  */
 enum class AppUser(
     val displayName: String,
@@ -75,20 +78,16 @@ enum class AppUser(
 ) {
     ALEXEY("Алексей", "👨"),
     RIMA("Рима", "👩"),
-    DIMA("Дима", "🧑"),
-    GUEST("Гость", "👤");
+    DIMA("Дима", "🧑");
 
     companion object {
-        /** Пользователи, которым можно задать PIN (без гостя). */
-        fun namedUsers(): List<AppUser> = listOf(ALEXEY, RIMA, DIMA)
+        /** Все именованные пользователи (которым можно задать PIN). */
+        fun users(): List<AppUser> = listOf(ALEXEY, RIMA, DIMA)
 
         /** Найти пользователя по имени. */
         fun byName(name: String?): AppUser? {
             if (name == null) return null
             return values().firstOrNull { it.displayName == name }
         }
-
-        /** Является ли имя «Гостем». */
-        fun isGuest(name: String?): Boolean = name == GUEST.displayName
     }
 }
