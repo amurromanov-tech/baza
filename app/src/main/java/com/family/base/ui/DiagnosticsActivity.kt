@@ -13,6 +13,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityDiagnosticsBinding
 import com.family.base.util.Logger
+import com.family.base.util.RestoreManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,8 +29,10 @@ class DiagnosticsActivity : AppCompatActivity() {
 
     private lateinit var tokenStorage: TokenStorage
     private lateinit var repository: CatalogRepository
+    private lateinit var restoreManager: RestoreManager
 
     private var isUploading = false
+    private var isRestoring = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +50,7 @@ class DiagnosticsActivity : AppCompatActivity() {
         val db = AppDatabase.getInstance(this)
         tokenStorage = TokenStorage(this)
         repository = CatalogRepository(db)
+        restoreManager = RestoreManager(db, repository)
 
         binding.btnBack.setOnClickListener { finish() }
 
@@ -76,6 +80,12 @@ class DiagnosticsActivity : AppCompatActivity() {
         binding.btnHistory.setOnClickListener {
             Logger.log(TAG, "History clicked")
             startActivity(Intent(this, HistoryActivity::class.java))
+        }
+
+        // ===== 🆕 ВРЕМЕННО: ВОССТАНОВЛЕНИЕ БД ИЗ restore_*.json =====
+        binding.btnRestoreDatabase.setOnClickListener {
+            Logger.log(TAG, "Restore database clicked")
+            showRestoreConfirmDialog()
         }
 
         Logger.log(TAG, "=== DiagnosticsActivity onCreate FINISHED ===")
@@ -262,6 +272,73 @@ class DiagnosticsActivity : AppCompatActivity() {
             .setView(container)
             .setCancelable(false)
             .create()
+    }
+
+    // ============================================================
+    // 🆕 ВРЕМЕННО: ВОССТАНОВЛЕНИЕ БД ИЗ restore_*.json
+    // ============================================================
+
+    private fun showRestoreConfirmDialog() {
+        if (isRestoring) {
+            Toast.makeText(this, "Восстановление уже идёт…", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("🔄 Восстановление БД")
+            .setMessage(
+                "Будут скачаны файлы из /BAZA/restore/:\n" +
+                    "• restore_items.json\n" +
+                    "• restore_folders.json\n" +
+                    "• restore_history.json\n" +
+                    "• restore_tasks.json\n\n" +
+                    "Восстановление только ДОБАВЛЯЕТ и ОБНОВЛЯЕТ данные. " +
+                    "НИЧЕГО не удаляется.\n\n" +
+                    "Все восстановленные сущности будут помечены pending " +
+                    "и попадут в outbox — при следующем синке улетят на Диск.\n\n" +
+                    "Продолжить?"
+            )
+            .setPositiveButton("Восстановить") { _, _ ->
+                performRestore()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun performRestore() {
+        isRestoring = true
+        val dialog = createProgressDialog("Скачивание restore-файлов…")
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    restoreManager.restoreFromDisk { stage, message ->
+                        Logger.log(TAG, "restore stage=$stage: $message")
+                    }
+                }
+
+                dialog.dismiss()
+                isRestoring = false
+
+                Logger.log(TAG, "performRestore: DONE — ${result.summary().replace("\n", " | ")}")
+
+                AlertDialog.Builder(this@DiagnosticsActivity)
+                    .setTitle("✅ Восстановление завершено")
+                    .setMessage(result.summary())
+                    .setPositiveButton("OK", null)
+                    .show()
+            } catch (e: Exception) {
+                dialog.dismiss()
+                isRestoring = false
+                Logger.log(TAG, "performRestore error: ${e.message}", e)
+                AlertDialog.Builder(this@DiagnosticsActivity)
+                    .setTitle("❌ Ошибка восстановления")
+                    .setMessage(e.message ?: "Неизвестная ошибка")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
     }
 
     override fun onDestroy() {
