@@ -6,6 +6,7 @@ import com.family.base.data.remote.YandexDiskApi
 import com.family.base.util.Logger
 import com.family.base.util.NetworkCallExecutor
 import com.family.base.util.NetworkCallExecutor.NetworkException
+import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.UnknownHostException
@@ -24,6 +25,11 @@ import java.net.UnknownHostException
  * 🆕 v17.0.7: при запросе списка файлов явно передаём `limit = 1000`.
  * Яндекс.Диск по умолчанию отдаёт только 20 элементов, из-за чего
  * новые changelog-файлы были невидимыми, и синк «залипал».
+ *
+ * 🆕 v17.3.0 (хвост №8): downloadChangelogFile теперь делает до 2 попыток
+ * с задержкой 500 мс при 5xx / DNS / timeout. Разовые 500 от Яндекса
+ * больше не теряют файл до следующего синка. 4xx — без retry
+ * (бессмысленно, файла нет или нет прав).
  */
 class SyncManagerApi {
 
@@ -35,6 +41,17 @@ class SyncManagerApi {
      * У Яндекса допустимо до 10000. 1000 — с огромным запасом.
      */
     private val LIST_LIMIT = 1000
+
+    /**
+     * 🆕 v17.3.0: сколько раз пробуем скачать один changelog-файл
+     * при 5xx/DNS/timeout. 2 попытки = 1 retry через 500 мс.
+     */
+    private val DOWNLOAD_MAX_ATTEMPTS = 2
+
+    /**
+     * 🆕 v17.3.0: пауза между попытками downloadChangelogFile.
+     */
+    private val DOWNLOAD_RETRY_DELAY_MS = 500L
 
     private fun getAuth(): String? {
         return try {
@@ -250,38 +267,120 @@ class SyncManagerApi {
      * Скачивает JSON-пакет с Диска.
      * fileName — только имя.
      * null — если ошибка или файла нет.
+     *
+     * 🆕 v17.3.0 (хвост №8): до DOWNLOAD_MAX_ATTEMPTS попыток
+     * с паузой DOWNLOAD_RETRY_DELAY_MS при 5xx / DNS / timeout.
+     *
+     * Логика:
+     *  - 4xx (кроме 429) — сразу null, без retry (файла нет или нет прав).
+     *  - 429 — retry (rate limit, может пройти).
+     *  - 5xx / DNS / timeout / любое исключение — retry до исчерпания попыток.
+     *  - 200 — сразу bytes.
+     *
+     * Это закрывает разовые 500 от Яндекса, из-за которых раньше
+     * файл терялся до следующего синка (он уже мог быть в processed
+     * на другом устройстве, и синк «залипал»).
      */
     suspend fun downloadChangelogFile(fileName: String): ByteArray? {
         val auth = getAuth() ?: return null
         val api = YandexDiskApi.getInstance()
         val path = "${getChangelogPath()}/$fileName"
 
-        return try {
-            val urlResponse = api.getDiskDownloadUrl(auth, path)
-            if (!urlResponse.isSuccessful) {
-                Logger.log(TAG, "downloadChangelogFile: getDownloadUrl failed for $fileName, code=${urlResponse.code()}")
-                return null
-            }
-            val href = urlResponse.body()?.href ?: return null
+        var lastError: String? = null
 
-            val downloadResponse = api.downloadFile(href)
-            if (!downloadResponse.isSuccessful) {
-                Logger.log(TAG, "downloadChangelogFile: download failed for $fileName, code=${downloadResponse.code()}")
+        for (attempt in 1..DOWNLOAD_MAX_ATTEMPTS) {
+            try {
+                // 1. Получаем ссылку на скачивание
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    val code = urlResponse.code()
+
+                    // 4xx — бессмысленно ретраить (кроме 429)
+                    if (code in 400..499 && code != 429) {
+                        Logger.log(TAG, "downloadChangelogFile: getDownloadUrl 4xx for $fileName, code=$code, no retry")
+                        return null
+                    }
+
+                    lastError = "getDownloadUrl code=$code"
+                    Logger.log(
+                        TAG,
+                        "downloadChangelogFile: getDownloadUrl attempt $attempt/$DOWNLOAD_MAX_ATTEMPTS " +
+                            "for $fileName failed, code=$code"
+                    )
+                    if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+                        delay(DOWNLOAD_RETRY_DELAY_MS)
+                        continue
+                    }
+                    return null
+                }
+
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    lastError = "getDownloadUrl returned empty href"
+                    Logger.log(
+                        TAG,
+                        "downloadChangelogFile: attempt $attempt/$DOWNLOAD_MAX_ATTEMPTS " +
+                            "for $fileName — empty href"
+                    )
+                    if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+                        delay(DOWNLOAD_RETRY_DELAY_MS)
+                        continue
+                    }
+                    return null
+                }
+
+                // 2. Скачиваем файл по ссылке
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    val code = downloadResponse.code()
+                    if (code in 400..499 && code != 429) {
+                        Logger.log(TAG, "downloadChangelogFile: download 4xx for $fileName, code=$code, no retry")
+                        return null
+                    }
+
+                    lastError = "download code=$code"
+                    Logger.log(
+                        TAG,
+                        "downloadChangelogFile: download attempt $attempt/$DOWNLOAD_MAX_ATTEMPTS " +
+                            "for $fileName failed, code=$code"
+                    )
+                    if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+                        delay(DOWNLOAD_RETRY_DELAY_MS)
+                        continue
+                    }
+                    return null
+                }
+
+                val bytes = downloadResponse.body()?.bytes()
+                if (bytes != null) {
+                    Logger.log(TAG, "downloadChangelogFile: downloaded $fileName (${bytes.size} bytes)")
+                }
+                return bytes
+            } catch (e: Exception) {
+                lastError = e.message
+                if (isDnsError(e)) {
+                    Logger.log(
+                        TAG,
+                        "downloadChangelogFile: attempt $attempt/$DOWNLOAD_MAX_ATTEMPTS " +
+                            "DNS failure for $fileName: ${e.message}"
+                    )
+                } else {
+                    Logger.log(
+                        TAG,
+                        "downloadChangelogFile: attempt $attempt/$DOWNLOAD_MAX_ATTEMPTS " +
+                            "error for $fileName: ${e.message}"
+                    )
+                }
+                if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+                    delay(DOWNLOAD_RETRY_DELAY_MS)
+                    continue
+                }
                 return null
             }
-            val bytes = downloadResponse.body()?.bytes()
-            if (bytes != null) {
-                Logger.log(TAG, "downloadChangelogFile: downloaded $fileName (${bytes.size} bytes)")
-            }
-            bytes
-        } catch (e: Exception) {
-            if (isDnsError(e)) {
-                Logger.log(TAG, "downloadChangelogFile: DNS failure: ${e.message}")
-            } else {
-                Logger.log(TAG, "downloadChangelogFile error for $fileName: ${e.message}")
-            }
-            null
         }
+
+        Logger.log(TAG, "downloadChangelogFile: all $DOWNLOAD_MAX_ATTEMPTS attempts failed for $fileName (last=$lastError)")
+        return null
     }
 
     // ============================================================
