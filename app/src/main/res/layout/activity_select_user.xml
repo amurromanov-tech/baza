@@ -212,33 +212,5 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="24dp"
-            android:background="@color/dateLabel"
-            android:alpha="0.3" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnGuest"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="👤  Войти как гость (только просмотр)"
-            android:textColor="@color/colorPrimary"
-            android:textSize="15sp"
-            app:cornerRadius="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="24dp"
-            android:gravity="center"
-            android:text="В режиме гостя нельзя изменять предметы, папки и историю"
-            android:textSize="12sp"
-            android:textColor="@color/dateLabel" />
-
     </LinearLayout>
 </ScrollView>
