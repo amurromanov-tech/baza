@@ -29,7 +29,6 @@ class TokenStorage(context: Context) {
     companion object {
         private const val TAG = "TokenStorage"
         private const val KEY_CURRENT_USER = "current_user"
-        private const val KEY_GUEST_MODE = "guest_mode"
     }
 
     // ========== ТОКЕНЫ ==========
@@ -123,55 +122,40 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ПРИЛОЖЕНИЯ ==========
-    // Алексей / Рима / Дима / Гость
+    // Алексей / Рима / Дима
 
     /**
      * Установить текущего пользователя.
-     * Если name == "Гость" — автоматически включается guestMode.
      */
     fun setCurrentUser(name: String) {
-        val isGuest = AppUser.isGuest(name)
         prefs.edit()
             .putString(KEY_CURRENT_USER, name)
-            .putBoolean(KEY_GUEST_MODE, isGuest)
             .apply()
-        android.util.Log.d(TAG, "Current user set: $name (guest=$isGuest)")
+        android.util.Log.d(TAG, "Current user set: $name")
     }
 
+    /**
+     * Получить текущего пользователя.
+     *
+     * 🆕 v17.3.1: если в prefs осталось старое значение "Гость"
+     * (после удаления гостя из приложения), оно очищается
+     * и возвращается null — при старте покажется экран выбора.
+     */
     fun getCurrentUser(): String? {
-        return prefs.getString(KEY_CURRENT_USER, null)
+        val stored = prefs.getString(KEY_CURRENT_USER, null)
+        if (stored == "Гость") {
+            android.util.Log.d(TAG, "Legacy guest value found in current_user, clearing")
+            prefs.edit().remove(KEY_CURRENT_USER).apply()
+            return null
+        }
+        return stored
     }
 
     fun clearCurrentUser() {
         prefs.edit()
             .remove(KEY_CURRENT_USER)
-            .remove(KEY_GUEST_MODE)
             .apply()
         android.util.Log.d(TAG, "Current user cleared")
-    }
-
-    // ========== ГОСТЕВОЙ РЕЖИМ ==========
-
-    fun setGuestMode(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_GUEST_MODE, enabled).apply()
-        android.util.Log.d(TAG, "Guest mode: $enabled")
-    }
-
-    fun isGuestMode(): Boolean {
-        return prefs.getBoolean(KEY_GUEST_MODE, false)
-    }
-
-    fun clearGuestMode() {
-        prefs.edit().remove(KEY_GUEST_MODE).apply()
-    }
-
-    /**
-     * Текущий пользователь — гость?
-     * Учитывает и флаг, и имя пользователя.
-     */
-    fun isCurrentUserGuest(): Boolean {
-        if (isGuestMode()) return true
-        return AppUser.isGuest(getCurrentUser())
     }
 
     // ========== ОБНОВЛЕНИЕ ТОКЕНА ==========
