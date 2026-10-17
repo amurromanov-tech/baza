@@ -24,6 +24,11 @@ import com.google.gson.JsonSyntaxException
  *
  * SyncManager НЕ трогает items.json / folders.json / tasks.json / history.json —
  * они продолжают работать параллельно как fallback для обратной совместимости.
+ *
+ * 🆕 v17.3.0 (cleanup): блок 3 cleanup теперь удаляет с Диска не только
+ * свои старые файлы (OWN_BATCH_TTL_MS = 7 дней), но и чужие —
+ * если их batchId уже есть в processed_changelogs и обработан
+ * раньше PROCESSED_TTL_MS (30 дней). Раньше чужие копились вечно.
  */
 class SyncManager(
     private val db: AppDatabase,
@@ -381,10 +386,23 @@ class SyncManager(
      * Чистит устаревшие данные:
      *  - outbox (synced старше 7 дней);
      *  - processed_changelogs (старше 30 дней);
-     *  - свои файлы changelog на Диске (старше 7 дней).
+     *  - свои файлы changelog на Диске (старше 7 дней);
+     *  - 🆕 v17.3.0: чужие файлы changelog на Диске (старше 30 дней,
+     *    уже обработанные локально — есть в processed_changelogs).
      *
      * ⚠️ Переписано без `continue` внутри лямбд, чтобы не упасть
      * на экспериментальной фиче Kotlin.
+     *
+     * 🆕 v17.3.0: логика удаления чужих файлов:
+     *  1. Берём batchId, обработанные локально раньше (now - 30 дней).
+     *  2. Из списка файлов на Диске отбираем те, чьё имя = "{batchId}.json"
+     *     и чей batchId в этом наборе.
+     *  3. Удаляем.
+     *
+     * Это безопасно: файл чужого устройства удаляется, только если
+     * мы его уже применили и с тех пор прошло 30 дней. Если мы его
+     * ещё не обработали (например, не докачали из-за 500) — он НЕ
+     * попадёт в набор, и cleanup его не тронет.
      */
     private suspend fun cleanup(deviceId: String) {
         val now = System.currentTimeMillis()
@@ -405,7 +423,7 @@ class SyncManager(
             Logger.log(TAG, "cleanup processed_changelogs error: ${e.message}")
         }
 
-        // 3. Свои старые файлы на Диске — необязательно, но полезно
+        // 3. Файлы на Диске
         try {
             val files = api.listChangelogFiles()
             if (files == null) {
@@ -413,20 +431,51 @@ class SyncManager(
             }
 
             val ownCutoff = now - OWN_BATCH_TTL_MS
+            val foreignCutoff = now - PROCESSED_TTL_MS
+
+            // 🆕 v17.3.0: batchId чужих файлов, уже обработанных нами
+            // и достаточно старых, чтобы их можно было удалить с Диска.
+            val oldProcessedBatchIds: Set<String> = try {
+                db.processedChangelogDao()
+                    .getProcessedOlderThan(foreignCutoff)
+                    .toSet()
+            } catch (e: Exception) {
+                Logger.log(TAG, "cleanup: cannot read getProcessedOlderThan: ${e.message}")
+                emptySet()
+            }
 
             // Собираем список файлов для удаления БЕЗ continue внутри лямбды.
             val toDelete = files.filter { fileName ->
                 val batchId = fileName.removeSuffix(".json")
                 val isOwn = batchId.startsWith(deviceId)
                 val timestamp = batchId.substringAfterLast('_').toLongOrNull()
-                isOwn && timestamp != null && timestamp < ownCutoff
+
+                // Свои — старше 7 дней.
+                val ownOld = isOwn && timestamp != null && timestamp < ownCutoff
+
+                // Чужие — старше 30 дней И уже в processed_changelogs.
+                val foreignOld = !isOwn && oldProcessedBatchIds.contains(batchId)
+
+                ownOld || foreignOld
             }
 
+            var deletedCount = 0
+            var failedCount = 0
             for (fileName in toDelete) {
-                api.deleteChangelogFile(fileName)
+                val ok = api.deleteChangelogFile(fileName)
+                if (ok) deletedCount++ else failedCount++
+            }
+
+            if (toDelete.isNotEmpty()) {
+                Logger.log(
+                    TAG,
+                    "cleanup: disk files — candidates=${toDelete.size}, " +
+                        "deleted=$deletedCount, failed=$failedCount, " +
+                        "(own TTL=$OWN_BATCH_TTL_MS ms, foreign TTL=$PROCESSED_TTL_MS ms)"
+                )
             }
         } catch (e: Exception) {
-            Logger.log(TAG, "cleanup own disk files error: ${e.message}")
+            Logger.log(TAG, "cleanup disk files error: ${e.message}")
         }
     }
 }
