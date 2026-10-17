@@ -1,9 +1,11 @@
 package com.family.base.util
 
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxHelper
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.data.repository.CatalogRepository
 import com.google.gson.Gson
@@ -38,6 +40,19 @@ import java.util.Locale
  *
  * Это безопасно: восстановление только ДОБАВЛЯЕТ/ОБНОВЛЯЕТ items,
  * folders, history, tasks. Оно не удаляет данные.
+ *
+ * 🆕 v17.3.0 (syncStatus восстановленных):
+ *  - После заливки каждая восстановленная сущность помечается
+ *    syncStatus = "pending" и пишется в outbox через OutboxHelper.
+ *  - Это нужно, чтобы при первом ручном синке они гарантированно
+ *    улетели на Диск как обычные изменения. Иначе, если syncStatus
+ *    остался "synced" (как в restore-файле), они не попадут в outbox,
+ *    на Диске их не будет, и при следующем mergeData с Диска их
+ *    могут посчитать local-only и удалить (сценарий инцидента 16.10.2026).
+ *  - Действие для outbox:
+ *      items/folders/tasks → ACTION_CREATE, если объект новый,
+ *                            ACTION_UPDATE, если перезаписали существующий.
+ *    История — append-only, поэтому ACTION_CREATE (через logHistory).
  */
 class RestoreManager(
     private val db: AppDatabase,
@@ -52,6 +67,9 @@ class RestoreManager(
         const val FILE_FOLDERS = "restore_folders.json"
         const val FILE_HISTORY = "restore_history.json"
         const val FILE_TASKS = "restore_tasks.json"
+
+        /** Кто фигурирует в outbox как автор восстановления. */
+        private const val RESTORE_AUTHOR = "RestoreManager"
     }
 
     /**
@@ -149,15 +167,24 @@ class RestoreManager(
         onProgress("folders", "Восстановление папок…")
         var foldersInserted = 0
         var foldersUpdated = 0
+        val restoredFolderIds = mutableListOf<String>()
         for (folder in folders) {
             try {
                 val existing = db.folderDao().getFolderById(folder.id)
                 if (existing == null) {
-                    db.folderDao().insertFolder(folder)
+                    val toInsert = folder.copy(syncStatus = FolderEntity.SYNC_STATUS_PENDING)
+                    db.folderDao().insertFolder(toInsert)
                     foldersInserted++
+                    restoredFolderIds.add(folder.id)
+                    OutboxHelper.logFolder(
+                        db = db,
+                        folder = toInsert,
+                        action = OutboxEntity.ACTION_CREATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 } else {
                     // Не перезаписываем системные флаги у существующих системных папок
-                    val safe = if (existing.isSystem) {
+                    val safeBase = if (existing.isSystem) {
                         folder.copy(
                             name = existing.name,
                             parentId = existing.parentId,
@@ -169,8 +196,16 @@ class RestoreManager(
                     } else {
                         folder
                     }
-                    db.folderDao().updateFolder(safe)
+                    val toUpdate = safeBase.copy(syncStatus = FolderEntity.SYNC_STATUS_PENDING)
+                    db.folderDao().updateFolder(toUpdate)
                     foldersUpdated++
+                    restoredFolderIds.add(folder.id)
+                    OutboxHelper.logFolder(
+                        db = db,
+                        folder = toUpdate,
+                        action = OutboxEntity.ACTION_UPDATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 }
             } catch (e: Exception) {
                 errors.add("Folder ${folder.id}: ${e.message}")
@@ -181,15 +216,32 @@ class RestoreManager(
         onProgress("items", "Восстановление предметов…")
         var itemsInserted = 0
         var itemsUpdated = 0
+        val restoredItemIds = mutableListOf<String>()
         for (item in items) {
             try {
                 val existing = db.itemDao().getItemById(item.id)
                 if (existing == null) {
-                    db.itemDao().insertItem(item)
+                    val toInsert = item.copy(syncStatus = ItemEntity.SYNC_STATUS_PENDING)
+                    db.itemDao().insertItem(toInsert)
                     itemsInserted++
+                    restoredItemIds.add(item.id)
+                    OutboxHelper.logItem(
+                        db = db,
+                        item = toInsert,
+                        action = OutboxEntity.ACTION_CREATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 } else {
-                    db.itemDao().updateItem(item)
+                    val toUpdate = item.copy(syncStatus = ItemEntity.SYNC_STATUS_PENDING)
+                    db.itemDao().updateItem(toUpdate)
                     itemsUpdated++
+                    restoredItemIds.add(item.id)
+                    OutboxHelper.logItem(
+                        db = db,
+                        item = toUpdate,
+                        action = OutboxEntity.ACTION_UPDATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 }
             } catch (e: Exception) {
                 errors.add("Item ${item.id}: ${e.message}")
@@ -197,15 +249,18 @@ class RestoreManager(
         }
 
         // ---------- HISTORY ----------
+        // История append-only: logHistory сам ставит ACTION_CREATE.
         onProgress("history", "Восстановление истории…")
         var historyInserted = 0
         try {
-            // getAllIds может быть тяжелым, но у нас ~800 записей — ок
             val existingIds = db.historyDao().getAllIds().toSet()
             val toInsert = history.filter { it.id !in existingIds }
             if (toInsert.isNotEmpty()) {
                 db.historyDao().insertAll(toInsert)
                 historyInserted = toInsert.size
+                for (h in toInsert) {
+                    OutboxHelper.logHistory(db = db, entry = h, changedBy = RESTORE_AUTHOR)
+                }
             }
         } catch (e: Exception) {
             errors.add("History insert: ${e.message}")
@@ -215,15 +270,32 @@ class RestoreManager(
         onProgress("tasks", "Восстановление задач…")
         var tasksInserted = 0
         var tasksUpdated = 0
+        val restoredTaskIds = mutableListOf<String>()
         for (task in tasks) {
             try {
                 val existing = db.taskDao().getById(task.id)
                 if (existing == null) {
-                    db.taskDao().insert(task)
+                    val toInsert = task.copy(syncStatus = TaskEntity.SYNC_STATUS_PENDING)
+                    db.taskDao().insert(toInsert)
                     tasksInserted++
+                    restoredTaskIds.add(task.id)
+                    OutboxHelper.logTask(
+                        db = db,
+                        task = toInsert,
+                        action = OutboxEntity.ACTION_CREATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 } else {
-                    db.taskDao().update(task)
+                    val toUpdate = task.copy(syncStatus = TaskEntity.SYNC_STATUS_PENDING)
+                    db.taskDao().update(toUpdate)
                     tasksUpdated++
+                    restoredTaskIds.add(task.id)
+                    OutboxHelper.logTask(
+                        db = db,
+                        task = toUpdate,
+                        action = OutboxEntity.ACTION_UPDATE,
+                        changedBy = RESTORE_AUTHOR
+                    )
                 }
             } catch (e: Exception) {
                 errors.add("Task ${task.id}: ${e.message}")
@@ -248,6 +320,12 @@ class RestoreManager(
         )
 
         Logger.log(TAG, "restoreFromDisk: DONE — ${result.summary().replace("\n", " | ")}")
+        Logger.log(
+            TAG,
+            "restoreFromDisk: marked pending & queued to outbox — " +
+                "items=${restoredItemIds.size}, folders=${restoredFolderIds.size}, " +
+                "history=$historyInserted, tasks=${restoredTaskIds.size}"
+        )
         return@withContext result
     }
 
