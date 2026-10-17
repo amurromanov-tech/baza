@@ -54,7 +54,6 @@ class ItemPhotoController(
     private val itemIdProvider: () -> String?,
     private val currentItemProvider: () -> ItemEntity?,
     private val isEditModeProvider: () -> Boolean,
-    private val isGuestModeProvider: () -> Boolean,
     private val onCurrentItemChanged: (ItemEntity) -> Unit,
     private val onPhotoChanged: () -> Unit
 ) {
@@ -279,7 +278,6 @@ class ItemPhotoController(
     // ============================================================
 
     fun showImageSourceDialog() {
-        if (isGuestModeProvider()) return
         val options = arrayOf("📸 Сделать фото", "🖼️ Выбрать из галереи")
         AlertDialog.Builder(activity)
             .setTitle("Выберите источник фото")
