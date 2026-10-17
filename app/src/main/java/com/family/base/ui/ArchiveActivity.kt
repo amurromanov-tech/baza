@@ -8,7 +8,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.family.base.R
-import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityArchiveBinding
@@ -24,7 +23,6 @@ class ArchiveActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityArchiveBinding
     private lateinit var db: AppDatabase
-    private lateinit var tokenStorage: TokenStorage
     private lateinit var adapter: ArchiveAdapter
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
@@ -56,14 +54,10 @@ class ArchiveActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         db = AppDatabase.getInstance(this)
-        tokenStorage = TokenStorage(this)
 
         adapter = ArchiveAdapter(
-            isGuestMode = isGuestMode(),
             onItemClick = { item -> showItemDetails(item) },
-            onRestoreClick = { item ->
-                if (!isGuestMode()) restoreItem(item)
-            }
+            onRestoreClick = { item -> restoreItem(item) }
         )
 
         binding.rvArchive.layoutManager = LinearLayoutManager(this)
@@ -84,8 +78,6 @@ class ArchiveActivity : AppCompatActivity() {
 
         Logger.log(TAG, "=== ArchiveActivity onCreate FINISHED ===")
     }
-
-    private fun isGuestMode(): Boolean = tokenStorage.isCurrentUserGuest()
 
     // ==================== СТАРТОВАЯ ПАПКА ИЗ INTENT ====================
 
