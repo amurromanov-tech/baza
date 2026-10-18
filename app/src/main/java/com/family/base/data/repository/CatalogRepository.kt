@@ -10,6 +10,7 @@ import com.family.base.data.local.entity.*
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.data.remote.model.UserModel
 import com.family.base.data.remote.model.UsersFile
+import com.family.base.util.DiskPaths
 import com.family.base.util.Logger
 import com.family.base.util.NetworkCallExecutor
 import com.family.base.util.NetworkCallExecutor.NetworkException
@@ -26,7 +27,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
     private val gson = Gson()
     private val TAG = "CatalogRepository"
-    private val DEFAULT_FOLDER_NAME = "BAZA"
 
     private val ITEMS_FILENAME = "items.json"
     private val FOLDERS_FILENAME = "folders.json"
@@ -46,22 +46,6 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     fun isNetworkAvailable(): Boolean = !isDnsBlocked()
-
-    private fun getFolderPath(): String {
-        if (folderPathCache != null) return folderPathCache!!
-        val folderName = try {
-            val context = BaseApplication.getAppContext()
-            val tokenStorage = TokenStorage(context)
-            tokenStorage.getFolderName()
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error getting folder name, using default: $DEFAULT_FOLDER_NAME")
-            DEFAULT_FOLDER_NAME
-        }
-        folderPathCache = "/$folderName"
-        return folderPathCache!!
-    }
-
-    private fun getRootPath(): String = getFolderPath()
 
     // ============================================================
     // ПАПКИ
@@ -293,7 +277,7 @@ class CatalogRepository(private val db: AppDatabase) {
         }
         val api = YandexDiskApi.getInstance()
 
-        val rootPath = getRootPath()
+        val rootPath = DiskPaths.ROOT
         try {
             val rootCheck = api.getDiskResources(auth, rootPath)
             if (rootCheck.code() == 404) {
@@ -374,11 +358,9 @@ class CatalogRepository(private val db: AppDatabase) {
                 return false
             }
             val api = YandexDiskApi.getInstance()
-            val rootPath = getRootPath()
-            val path = "$rootPath/$fileName"
+            val path = DiskPaths.dataFile(fileName)
 
-            val dataFolder = "$rootPath/data"
-            createFolderIfNotExists(dataFolder)
+            createFolderIfNotExists(DiskPaths.DATA)
 
             deleteFileOnDisk(path)
             delay(500)
@@ -443,10 +425,9 @@ class CatalogRepository(private val db: AppDatabase) {
             return false
         }
         val api = YandexDiskApi.getInstance()
-        val rootPath = getRootPath()
-        val path = "$rootPath/.last_modified"
+        val path = DiskPaths.LAST_MODIFIED
 
-        createFolderIfNotExists(rootPath)
+        createFolderIfNotExists(DiskPaths.ROOT)
 
         return try {
             val timestamp = System.currentTimeMillis()
@@ -492,8 +473,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/${Config.USERS_JSON_FILE}"
+                val path = DiskPaths.USERS_JSON
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (!urlResponse.isSuccessful) return@withContext null
@@ -524,7 +504,7 @@ class CatalogRepository(private val db: AppDatabase) {
         return withContext(Dispatchers.IO) {
             try {
                 val json = gson.toJson(usersFile)
-                val success = uploadJsonWithToken(Config.USERS_JSON_FILE, json)
+                val success = uploadJsonWithToken(Config.USERS_JSON_FILE.substringAfterLast('/'), json)
                 if (success) {
                     updateLastModifiedWithToken()
                 }
@@ -561,10 +541,9 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext false
                 val auth = getAuthHeader() ?: return@withContext false
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/folder_$folderId.jpg"
+                val path = DiskPaths.folderImage(folderId)
 
-                createFolderIfNotExists("$rootPath/images")
+                createFolderIfNotExists(DiskPaths.IMAGES)
 
                 val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
@@ -597,8 +576,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/folder_$folderId.jpg"
+                val path = DiskPaths.folderImage(folderId)
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (urlResponse.isSuccessful) {
@@ -643,6 +621,8 @@ class CatalogRepository(private val db: AppDatabase) {
      * Раньше делал 3 запроса (getResources + getDownloadUrl + download)
      * и мог висеть 30+ секунд на плохой сети. Теперь — 1-2 запроса
      * и ограниченный бюджет по времени.
+     *
+     * 🆕 B3: путь — из DiskPaths.LAST_MODIFIED.
      */
     suspend fun getDiskLastModified(): Long? {
         if (isDnsBlocked()) {
@@ -655,8 +635,7 @@ class CatalogRepository(private val db: AppDatabase) {
             return null
         }
         val api = YandexDiskApi.getInstance()
-        val rootPath = getRootPath()
-        val path = "$rootPath/.last_modified"
+        val path = DiskPaths.LAST_MODIFIED
 
         val result = NetworkCallExecutor.runHttpSafely<Long>(
             label = "getDiskLastModified",
@@ -759,18 +738,17 @@ class CatalogRepository(private val db: AppDatabase) {
                     )
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
 
-                val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, "$rootPath/data/$FOLDERS_FILENAME")
+                val foldersResult = downloadJsonFileSafe<FolderEntity>(api, auth, DiskPaths.dataFile(FOLDERS_FILENAME))
                 Logger.log(TAG, "Downloaded ${foldersResult.data.size} folders (error=${foldersResult.error})")
 
-                val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, "$rootPath/data/$ITEMS_FILENAME")
+                val itemsResult = downloadJsonFileSafe<ItemEntity>(api, auth, DiskPaths.dataFile(ITEMS_FILENAME))
                 Logger.log(TAG, "Downloaded ${itemsResult.data.size} items (error=${itemsResult.error})")
 
-                val historyResult = downloadJsonFileSafe<HistoryEntry>(api, auth, "$rootPath/data/$HISTORY_FILENAME")
+                val historyResult = downloadJsonFileSafe<HistoryEntry>(api, auth, DiskPaths.dataFile(HISTORY_FILENAME))
                 Logger.log(TAG, "Downloaded ${historyResult.data.size} history entries (error=${historyResult.error})")
 
-                val tasksResult = downloadJsonFileSafe<TaskEntity>(api, auth, "$rootPath/data/$TASKS_FILENAME")
+                val tasksResult = downloadJsonFileSafe<TaskEntity>(api, auth, DiskPaths.dataFile(TASKS_FILENAME))
                 Logger.log(TAG, "Downloaded ${tasksResult.data.size} tasks (error=${tasksResult.error})")
 
                 DownloadResult(
@@ -851,8 +829,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/$itemId.jpg"
+                val path = DiskPaths.itemImage(itemId)
                 val response = api.getDiskDownloadUrl(auth, path)
                 when (response.code()) {
                     200 -> true
@@ -875,8 +852,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/folder_$folderId.jpg"
+                val path = DiskPaths.folderImage(folderId)
                 val response = api.getDiskDownloadUrl(auth, path)
                 when (response.code()) {
                     200 -> true
@@ -899,11 +875,9 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext false
                 val auth = getAuthHeader() ?: return@withContext false
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val imagesPath = "$rootPath/images"
-                val path = "$imagesPath/$itemId.jpg"
+                val path = DiskPaths.itemImage(itemId)
 
-                createFolderIfNotExists(imagesPath)
+                createFolderIfNotExists(DiskPaths.IMAGES)
 
                 val body = imageBytes.toRequestBody("image/jpeg".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
@@ -941,8 +915,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 if (isDnsBlocked()) return@withContext null
                 val auth = getAuthHeader() ?: return@withContext null
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/$itemId.jpg"
+                val path = DiskPaths.itemImage(itemId)
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (urlResponse.isSuccessful) {
@@ -974,6 +947,8 @@ class CatalogRepository(private val db: AppDatabase) {
      * Возвращает:
      *  - ByteArray — если файл на Диске есть и скачался;
      *  - null — если файла нет (404), нет сети, нет токена или любая другая ошибка.
+     *
+     * 🆕 B3: путь — из DiskPaths.itemImage().
      */
     suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
         return withContext(Dispatchers.IO) {
@@ -988,8 +963,7 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext null
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/images/$itemId.jpg"
+                val path = DiskPaths.itemImage(itemId)
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (!urlResponse.isSuccessful) {
@@ -1026,10 +1000,6 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // ЛОГИ
-    // ============================================================
-
-        // ============================================================
     // 🆕 v17.2.7: ВОССТАНОВЛЕНИЕ (RESTORE)
     // ============================================================
 
@@ -1046,7 +1016,7 @@ class CatalogRepository(private val db: AppDatabase) {
      *   - String — сырой JSON, если файл есть и скачался;
      *   - null — если файла нет (404), нет сети, нет токена или ошибка.
      *
-     * Используется в DiagnosticsActivity → RestoreManager.
+     * 🆕 B3: путь — из DiskPaths.restoreFile().
      */
     suspend fun downloadRestoreFile(fileName: String): String? {
         return withContext(Dispatchers.IO) {
@@ -1061,8 +1031,7 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext null
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val path = "$rootPath/restore/$fileName"
+                val path = DiskPaths.restoreFile(fileName)
 
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (!urlResponse.isSuccessful) {
@@ -1105,6 +1074,8 @@ class CatalogRepository(private val db: AppDatabase) {
      * Используется, если restore-файлы формируются на телефоне.
      *
      * Возвращает true при успехе, false при ошибке.
+     *
+     * 🆕 B3: путь — из DiskPaths.restoreFile().
      */
     suspend fun uploadRestoreFile(fileName: String, json: String): Boolean {
         return withContext(Dispatchers.IO) {
@@ -1119,11 +1090,9 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext false
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val restoreFolder = "$rootPath/restore"
-                val path = "$restoreFolder/$fileName"
+                val path = DiskPaths.restoreFile(fileName)
 
-                createFolderIfNotExists(restoreFolder)
+                createFolderIfNotExists(DiskPaths.RESTORE)
 
                 val body = json.toRequestBody("application/json".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
@@ -1173,11 +1142,9 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext false
                 }
                 val api = YandexDiskApi.getInstance()
-                val rootPath = getRootPath()
-                val logsFolder = "$rootPath/logs"
-                val path = "$logsFolder/$fileName"
+                val path = DiskPaths.logFile(fileName)
 
-                createFolderIfNotExists(logsFolder)
+                createFolderIfNotExists(DiskPaths.LOGS)
 
                 val body = bytes.toRequestBody("text/plain".toMediaType())
                 val urlResponse = api.getUploadUrl(auth, path, true)
