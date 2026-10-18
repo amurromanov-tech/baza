@@ -3,6 +3,7 @@ package com.family.base.data.sync
 import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
 import com.family.base.data.remote.YandexDiskApi
+import com.family.base.util.DiskPaths
 import com.family.base.util.Logger
 import com.family.base.util.NetworkCallExecutor
 import com.family.base.util.NetworkCallExecutor.NetworkException
@@ -34,11 +35,12 @@ import java.net.UnknownHostException
  * 🆕 v17.4.0 (хвост №3): deleteChangelogFile теперь тоже делает до 2 попыток
  * с задержкой 500 мс при 5xx / 429 / DNS / timeout. 4xx (кроме 429) — без retry.
  * Раньше разовый 500 при удалении оставлял файл на Диске до следующего cleanup.
+ *
+ * 🆕 B3: пути changelog берутся из DiskPaths — никаких магических строк.
  */
 class SyncManagerApi {
 
     private val TAG = "SyncManagerApi"
-    private val CHANGELOG_FOLDER = "changelog"
 
     /**
      * Максимум файлов в одном ответе list.
@@ -79,20 +81,6 @@ class SyncManagerApi {
         }
     }
 
-    private fun getRootPath(): String {
-        return try {
-            val ctx = BaseApplication.getAppContext()
-            val tokenStorage = TokenStorage(ctx)
-            val folderName = tokenStorage.getFolderName() ?: "BAZA"
-            "/$folderName"
-        } catch (e: Exception) {
-            Logger.log(TAG, "getRootPath error, using /BAZA: ${e.message}")
-            "/BAZA"
-        }
-    }
-
-    private fun getChangelogPath(): String = "${getRootPath()}/$CHANGELOG_FOLDER"
-
     private fun isDnsError(e: Exception): Boolean {
         var cause: Throwable? = e
         while (cause != null) {
@@ -118,12 +106,14 @@ class SyncManagerApi {
      * 🆕 v17.0.7: явно передаём limit в getDiskResources.
      * Хотя для проверки существования папки нам нужно только одно поле,
      * явный limit защищает от скрытых кэшей и странных ответов.
+     *
+     * 🆕 B3: пути — из DiskPaths.
      */
     suspend fun ensureChangelogFolder(): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
-        val folderPath = getChangelogPath()
-        val rootPath = getRootPath()
+        val folderPath = DiskPaths.CHANGELOG
+        val rootPath = DiskPaths.ROOT
 
         val result = NetworkCallExecutor.runHttpSafely<Boolean>(
             label = "ensureChangelogFolder",
@@ -192,11 +182,13 @@ class SyncManagerApi {
      * 🆕 v17.0.7: явно передаём limit = 1000.
      * Это ГЛАВНЫЙ фикс: без limit Яндекс отдавал только 20 файлов,
      * и всё, что старше, было невидимым → синк «залипал».
+     *
+     * 🆕 B3: путь — из DiskPaths.
      */
     suspend fun listChangelogFiles(): List<String>? {
         val auth = getAuth() ?: return null
         val api = YandexDiskApi.getInstance()
-        val folderPath = getChangelogPath()
+        val folderPath = DiskPaths.CHANGELOG
 
         return try {
             val response = api.getDiskResources(auth, folderPath, limit = LIST_LIMIT)
@@ -240,11 +232,13 @@ class SyncManagerApi {
     /**
      * Заливает JSON-пакет на Диск.
      * fileName — только имя (например, "abc-123_1730000000000.json").
+     *
+     * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
     suspend fun uploadChangelogFile(fileName: String, jsonBytes: ByteArray): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
-        val path = "${getChangelogPath()}/$fileName"
+        val path = DiskPaths.changelogFile(fileName)
 
         return try {
             val body = jsonBytes.toRequestBody("application/json".toMediaType())
@@ -295,11 +289,13 @@ class SyncManagerApi {
      * Это закрывает разовые 500 от Яндекса, из-за которых раньше
      * файл терялся до следующего синка (он уже мог быть в processed
      * на другом устройстве, и синк «залипал»).
+     *
+     * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
     suspend fun downloadChangelogFile(fileName: String): ByteArray? {
         val auth = getAuth() ?: return null
         val api = YandexDiskApi.getInstance()
-        val path = "${getChangelogPath()}/$fileName"
+        val path = DiskPaths.changelogFile(fileName)
 
         var lastError: String? = null
 
@@ -416,11 +412,13 @@ class SyncManagerApi {
      *  - 429 — retry (rate limit).
      *  - 5xx / DNS / timeout / исключение — retry до исчерпания попыток.
      *  - 200/204 — успех.
+     *
+     * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
     suspend fun deleteChangelogFile(fileName: String): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
-        val path = "${getChangelogPath()}/$fileName"
+        val path = DiskPaths.changelogFile(fileName)
 
         var lastError: String? = null
 
