@@ -41,7 +41,12 @@ import java.util.Locale
  * позволяет создавать, редактировать, удалять, отмечать выполненными.
  * Повторяющиеся задачи при выполнении автоматически создают клон.
  *
- * v14.1.0: возвращены напоминания — через WorkManager, глобальная настройка.
+ * 🆕 AlarmManager: напоминания теперь ставятся на конкретную задачу
+ * (TaskReminderScheduler.schedule/cancel). Старый WorkManager-подход
+ * с глобальным периодическим worker'ом больше не используется.
+ * Глобальная настройка TaskReminderPreferences осталась — она задаёт
+ * час:минуту, во сколько напоминать в день дедлайна, и общий флаг
+ * «напоминания включены».
  *
  * 🆕 v16.0.12: сортировка списка.
  *  - кнопка в тулбаре (меню) → PopupMenu с 4 режимами + сброс;
@@ -247,12 +252,20 @@ class TaskListActivity : AppCompatActivity() {
                 if (task.isDone) {
                     withContext(Dispatchers.IO) { repository.markUndone(task.id) }
                     Logger.log(TAG, "toggleDone: undone ${task.id}")
+                    // 🆕 AlarmManager: если задачу вернули в работу — вернуть напоминание
+                    TaskReminderScheduler.schedule(this@TaskListActivity, task.copy(isDone = false))
                 } else {
                     val result = withContext(Dispatchers.IO) {
                         repository.markDone(task.id, currentUser)
                     }
                     Logger.log(TAG, "toggleDone: done ${task.id}, clone=${result?.second?.id}")
+
+                    // 🆕 AlarmManager: выполненная задача больше не напоминает
+                    TaskReminderScheduler.cancel(this@TaskListActivity, task.id)
+
+                    // Если создался клон (повторяющаяся задача) — поставить напоминание на него
                     result?.second?.let { clone ->
+                        TaskReminderScheduler.schedule(this@TaskListActivity, clone)
                         Toast.makeText(
                             this@TaskListActivity,
                             "Создана следующая: ${clone.title}",
@@ -275,6 +288,8 @@ class TaskListActivity : AppCompatActivity() {
             .setPositiveButton("Удалить") { _, _ ->
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) { repository.softDelete(task.id) }
+                    // 🆕 AlarmManager: удалённая задача больше не напоминает
+                    TaskReminderScheduler.cancel(this@TaskListActivity, task.id)
                     Toast.makeText(this@TaskListActivity, "Удалено", Toast.LENGTH_SHORT).show()
                     loadTasks()
                 }
@@ -307,7 +322,7 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
-        // v14.1.0: напоминания
+        // Напоминания (глобальная настройка «во сколько напоминать»)
         val switchReminder = view.findViewById<SwitchCompat>(R.id.switchReminder)
         val layoutReminderTime = view.findViewById<View>(R.id.layoutReminderTime)
         val textReminderTime = view.findViewById<TextView>(R.id.textReminderTime)
@@ -375,7 +390,7 @@ class TaskListActivity : AppCompatActivity() {
         }
 
         // ============================================================
-        // v14.1.0: НАПОМИНАНИЯ
+        // НАПОМИНАНИЯ: глобальный флаг + время дня
         // ============================================================
 
         fun updateReminderTimeLabel() {
@@ -443,9 +458,13 @@ class TaskListActivity : AppCompatActivity() {
 
                 lifecycleScope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
+                        // 🆕 AlarmManager: глобальную настройку применяем ДО сохранения,
+                        // чтобы schedule() увидел актуальный флаг isEnabled.
+                        applyGlobalReminderSetting(switchReminder.isChecked)
+
+                        val savedTask: TaskEntity? = withContext(Dispatchers.IO) {
                             if (task == null) {
-                                repository.addTask(
+                                val newTask = repository.addTask(
                                     title = title,
                                     note = note,
                                     priority = priority,
@@ -453,6 +472,7 @@ class TaskListActivity : AppCompatActivity() {
                                     recurrence = recurrence,
                                     createdBy = currentUser
                                 )
+                                newTask
                             } else {
                                 val updated = task.copy(
                                     title = title,
@@ -463,10 +483,14 @@ class TaskListActivity : AppCompatActivity() {
                                     updatedAt = System.currentTimeMillis()
                                 )
                                 repository.updateTask(updated)
+                                updated
                             }
                         }
 
-                        applyReminderSetting(switchReminder.isChecked)
+                        // 🆕 AlarmManager: поставить (или снять) напоминание для задачи
+                        if (savedTask != null) {
+                            TaskReminderScheduler.schedule(this@TaskListActivity, savedTask)
+                        }
 
                         dialog.dismiss()
                         loadTasks()
@@ -482,33 +506,44 @@ class TaskListActivity : AppCompatActivity() {
     }
 
     /**
-     * Применить глобальную настройку напоминаний:
-     *  - сохранить в SharedPreferences
-     *  - перепланировать или отменить WorkManager
-     * Всё в try/catch — ошибка планировщика не должна ронять приложение.
+     * 🆕 AlarmManager: сохранить глобальную настройку «напоминания включены».
+     *
+     * Сам alarm ставится не здесь, а per-task в schedule() после сохранения задачи.
+     * Здесь только:
+     *  - сохраняем флаг isEnabled в SharedPreferences;
+     *  - если включили — перепланируем все активные задачи (на случай, если
+     *    раньше напоминания были выключены и alarms не стояли);
+     *  - если выключили — снимаем все alarms (rescheduleAll не нужен).
+     *
+     * Ошибка планировщика не должна ронять приложение — всё в try/catch.
      */
-    private fun applyReminderSetting(enabled: Boolean) {
+    private fun applyGlobalReminderSetting(enabled: Boolean) {
         try {
             val wasEnabled = TaskReminderPreferences.isEnabled(this)
             TaskReminderPreferences.setEnabled(this, enabled)
 
             if (enabled) {
-                TaskReminderScheduler.reschedule(this)
                 if (!wasEnabled) {
+                    // Включили только что — перепланируем всё, что было пропущено
+                    TaskReminderScheduler.rescheduleAll(this)
                     Toast.makeText(
                         this,
                         "Напоминания включены (${TaskReminderPreferences.getTimeLabel(this)})",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
+                // Если уже были включены — конкретный schedule() вызовется ниже для этой задачи
             } else {
-                TaskReminderScheduler.cancel(this)
+                // Выключили — снимаем все alarms (id задач не знаем, но
+                // rescheduleAll при выключенном флаге ничего не поставит;
+                // для снятия конкретных alarms нужен отдельный проход — см. ниже)
                 if (wasEnabled) {
+                    TaskReminderScheduler.cancelAll(this)
                     Toast.makeText(this, "Напоминания выключены", Toast.LENGTH_SHORT).show()
                 }
             }
         } catch (e: Exception) {
-            Logger.log(TAG, "applyReminderSetting error: ${e.message}")
+            Logger.log(TAG, "applyGlobalReminderSetting error: ${e.message}")
         }
     }
 }
