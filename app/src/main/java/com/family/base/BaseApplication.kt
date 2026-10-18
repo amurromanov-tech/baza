@@ -12,8 +12,9 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderPreferences
+import com.family.base.util.TaskReminderReceiver
 import com.family.base.util.TaskReminderScheduler
-import com.family.base.util.TaskReminderWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,7 +31,7 @@ class BaseApplication : Application(), ImageLoaderFactory {
             private set
 
         // ============================================================
-        // 🆕 ГЛОБАЛЬНЫЙ СКОУП ДЛЯ ФОНОВЫХ ЗАДАЧ
+        // ГЛОБАЛЬНЫЙ СКОУП ДЛЯ ФОНОВЫХ ЗАДАЧ
         // Живёт всё время жизни процесса приложения.
         // Используется, например, для тихого скачивания фото
         // при открытии карточки предмета — задача не прерывается,
@@ -92,14 +93,17 @@ class BaseApplication : Application(), ImageLoaderFactory {
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
 
-        // 🆕 v14.1.0: канал уведомлений для напоминаний (безопасно, без WorkManager)
+        // 🆕 AlarmManager: канал уведомлений для напоминаний
         ensureReminderChannel(this)
 
-        // 🆕 v14.1.0: восстановление напоминания при холодном старте
-        // В try/catch — если WorkManager даст сбой, приложение продолжит работу
+        // 🆕 AlarmManager: восстановление напоминаний при холодном старте.
+        // Android стирает alarms при выключении, но на всякий случай
+        // (например, после обновления приложения, если BootReceiver
+        // не успел отработать) — перепланируем всё, что есть в БД.
+        // В try/catch — если планировщик даст сбой, приложение продолжит работу.
         try {
-            if (com.family.base.util.TaskReminderPreferences.isEnabled(this)) {
-                TaskReminderScheduler.reschedule(this)
+            if (TaskReminderPreferences.isEnabled(this)) {
+                TaskReminderScheduler.rescheduleAll(this)
                 Logger.log("BaseApplication", "Task reminders rescheduled on cold start")
             }
         } catch (e: Exception) {
@@ -110,19 +114,23 @@ class BaseApplication : Application(), ImageLoaderFactory {
     /**
      * Создать канал уведомлений для напоминаний (Android 8+).
      * Безопасно вызывать многократно — повторное создание игнорируется системой.
+     *
+     * 🆕 AlarmManager: канал принадлежит TaskReminderReceiver (там же используется).
+     * Важность HIGH — напоминание должно быть заметным.
      */
     private fun ensureReminderChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         try {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (manager.getNotificationChannel(TaskReminderWorker.CHANNEL_ID) != null) return
+            if (manager.getNotificationChannel(TaskReminderReceiver.CHANNEL_ID) != null) return
 
             val channel = NotificationChannel(
-                TaskReminderWorker.CHANNEL_ID,
-                TaskReminderWorker.CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT
+                TaskReminderReceiver.CHANNEL_ID,
+                TaskReminderReceiver.CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Ежедневные напоминания о домашних делах"
+                description = "Напоминания о домашних делах"
+                enableVibration(true)
             }
             manager.createNotificationChannel(channel)
             Logger.log("BaseApplication", "Reminder channel created")
