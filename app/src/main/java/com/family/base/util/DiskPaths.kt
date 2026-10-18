@@ -3,104 +3,67 @@ package com.family.base.util
 import com.family.base.Config
 
 /**
- * 🆕 B3: единое место для всех путей Яндекс.Диска.
+ * 🆕 B3: централизованные пути Яндекс.Диска.
  *
- * Все пути — ОТНОСИТЕЛЬНО корня приложения (папки пользователя на Диске).
- * Корень определяется динамически через TokenStorage.getFolderName()
- * (fallback — Config.SHARED_FOLDER_NAME = "BAZA").
+ * Все магические строки вида "/BAZA/changelog", "/BAZA/images" и т.п.
+ * собраны здесь. Корень строится из Config.SHARED_FOLDER_NAME — если
+ * когда-нибудь поменяется имя корневой папки, достаточно поменять его
+ * в Config.kt.
  *
- * Использование:
- *   val root = DiskPaths.root(folderName)          // "/BAZA"
- *   val changelog = DiskPaths.changelog(folderName) // "/BAZA/changelog"
- *   val itemImage = DiskPaths.itemImage(folderName, itemId)
- *
- * ⚠️ Не хранить здесь абсолютные URL — только пути на Диске.
- * Базовые URL API — в Config (YANDEX_DISK_API_BASE и т.д.).
+ * ⚠️ Локальные пути устройства (Downloads/BAZA/backup в BackupManagerV2)
+ * сюда НЕ входят — это не Яндекс.Диск.
  */
 object DiskPaths {
 
-    /** Дефолтное имя корневой папки, если TokenStorage не вернул. */
-    const val DEFAULT_ROOT_NAME = Config.SHARED_FOLDER_NAME // "BAZA"
+    /** Корень на Диске: "/BAZA" */
+    val ROOT: String = "/" + Config.SHARED_FOLDER_NAME
 
-    // ===== Имена подпапок =====
-    const val CHANGELOG = "changelog"
-    const val IMAGES = "images"
-    const val DATA = "data"
-    const val LOGS = "logs"
-    const val RESTORE = "restore"
-    const val BACKUP = "backup"
+    /** /BAZA/data — items.json, folders.json, history.json, tasks.json, users.json */
+    val DATA: String = "$ROOT/data"
 
-    // ===== Имена файлов в data/ =====
-    const val ITEMS_JSON = "items.json"
-    const val FOLDERS_JSON = "folders.json"
-    const val HISTORY_JSON = "history.json"
-    const val TASKS_JSON = "tasks.json"
+    /** /BAZA/images — фото предметов и папок */
+    val IMAGES: String = "$ROOT/images"
 
-    // ===== Служебные файлы в корне =====
-    const val LAST_MODIFIED = ".last_modified"
+    /** /BAZA/changelog — пакеты изменений */
+    val CHANGELOG: String = "$ROOT/changelog"
 
-    // ===== Корень =====
+    /** /BAZA/logs — логи приложения */
+    val LOGS: String = "$ROOT/logs"
 
-    /** "/{folderName}" — корень приложения на Диске. */
-    fun root(folderName: String?): String {
-        val name = if (folderName.isNullOrEmpty()) DEFAULT_ROOT_NAME else folderName
-        return "/$name"
-    }
+    /** /BAZA/restore — restore_*.json для RestoreManager */
+    val RESTORE: String = "$ROOT/restore"
 
-    // ===== Подпапки =====
+    /** /BAZA/backup — облачные бэкапы BackupManagerV2 */
+    val BACKUP: String = "$ROOT/backup"
 
-    fun changelog(folderName: String?): String = "${root(folderName)}/$CHANGELOG"
-    fun images(folderName: String?): String = "${root(folderName)}/$IMAGES"
-    fun data(folderName: String?): String = "${root(folderName)}/$DATA"
-    fun logs(folderName: String?): String = "${root(folderName)}/$LOGS"
-    fun restore(folderName: String?): String = "${root(folderName)}/$RESTORE"
-    fun backup(folderName: String?): String = "${root(folderName)}/$BACKUP"
+    /** /BAZA/.last_modified — timestamp последнего изменения */
+    val LAST_MODIFIED: String = "$ROOT/.last_modified"
 
-    // ===== Файлы в data/ =====
+    /** /BAZA/data/users.json */
+    val USERS_JSON: String = "$DATA/users.json"
 
-    fun itemsJson(folderName: String?): String = "${data(folderName)}/$ITEMS_JSON"
-    fun foldersJson(folderName: String?): String = "${data(folderName)}/$FOLDERS_JSON"
-    fun historyJson(folderName: String?): String = "${data(folderName)}/$HISTORY_JSON"
-    fun tasksJson(folderName: String?): String = "${data(folderName)}/$TASKS_JSON"
+    // ============================================================
+    // ДИНАМИЧЕСКИЕ ПУТИ
+    // ============================================================
 
-    // ===== Служебные =====
+    /** /BAZA/changelog/{fileName} */
+    fun changelogFile(fileName: String): String = "$CHANGELOG/$fileName"
 
-    fun lastModified(folderName: String?): String = "${root(folderName)}/$LAST_MODIFIED"
+    /** /BAZA/images/{itemId}.jpg */
+    fun itemImage(itemId: String): String = "$IMAGES/$itemId.jpg"
 
-    // ===== Файлы картинок =====
+    /** /BAZA/images/folder_{folderId}.jpg */
+    fun folderImage(folderId: String): String = "$IMAGES/folder_$folderId.jpg"
 
-    /** Фото предмета: /BAZA/images/{itemId}.jpg */
-    fun itemImage(folderName: String?, itemId: String): String =
-        "${images(folderName)}/$itemId.jpg"
+    /** /BAZA/data/{fileName} — items.json, folders.json, history.json, tasks.json */
+    fun dataFile(fileName: String): String = "$DATA/$fileName"
 
-    /** Фото папки: /BAZA/images/folder_{folderId}.jpg */
-    fun folderImage(folderName: String?, folderId: String): String =
-        "${images(folderName)}/folder_$folderId.jpg"
+    /** /BAZA/logs/{fileName} */
+    fun logFile(fileName: String): String = "$LOGS/$fileName"
 
-    /** Относительный путь для imageUrl в ItemEntity (без корня и /images). */
-    fun itemImageRelative(itemId: String): String = "$IMAGES/$itemId.jpg"
+    /** /BAZA/restore/{fileName} — restore_items.json и т.п. */
+    fun restoreFile(fileName: String): String = "$RESTORE/$fileName"
 
-    // ===== Changelog-файлы =====
-
-    /** Один changelog-файл: /BAZA/changelog/{fileName}. */
-    fun changelogFile(folderName: String?, fileName: String): String =
-        "${changelog(folderName)}/$fileName"
-
-    // ===== Restore-файлы =====
-
-    /** /BAZA/restore/{fileName}. */
-    fun restoreFile(folderName: String?, fileName: String): String =
-        "${restore(folderName)}/$fileName"
-
-    // ===== Backup-файлы =====
-
-    /** /BAZA/backup/{fileName}. */
-    fun backupFile(folderName: String?, fileName: String): String =
-        "${backup(folderName)}/$fileName"
-
-    // ===== Логи =====
-
-    /** /BAZA/logs/{fileName}. */
-    fun logFile(folderName: String?, fileName: String): String =
-        "${logs(folderName)}/$fileName"
+    /** /BAZA/backup/{fileName} */
+    fun backupFile(fileName: String): String = "$BACKUP/$fileName"
 }
