@@ -12,11 +12,15 @@ import com.family.base.Config
 import com.family.base.data.remote.AppVersion
 import com.family.base.data.remote.YandexDiskApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 
 /**
  * Менеджер обновлений приложения.
@@ -24,11 +28,31 @@ import java.net.URL
  * 🆕 B3: прямых путей Яндекс.Диска здесь нет — только Config.APK_FILE_NAME
  * и Config.APK_YANDEX_PUBLIC_URL. Правок по DiskPaths не требуется.
  * Локальные пути APK (Downloads) остаются в классе — это не Яндекс.Диск.
+ *
+ * 🆕 Хвост «UpdateManager 500»: downloadJson (GitHub raw) и resolveDirectApkUrl
+ * (Яндекс API) теперь делают до 3 попыток с паузой 500/1000 мс при
+ * 5xx / 429 / DNS / timeout / IOException. 4xx (кроме 429) — без retry.
+ *
+ * Логика:
+ *  - 4xx (кроме 429) — сразу null/throw, ретраить бессмысленно.
+ *  - 429 — retry (rate limit).
+ *  - 5xx / DNS / timeout / IOException — retry до исчерпания попыток.
+ *  - Успех — сразу результат.
+ *
+ * Снаружи поведение не меняется: checkForUpdate всё так же возвращает
+ * AppVersion? или null, downloadAndInstall всё так же либо стартует
+ * скачивание, либо логирует ошибку и выходит.
  */
 class UpdateManager(private val context: Context) {
 
     companion object {
         private const val TAG = "UpdateManager"
+
+        /** Сколько попыток делаем при 5xx/429/DNS/timeout. */
+        private const val MAX_ATTEMPTS = 3
+
+        /** Базовая пауза между попытками (умножается на номер попытки). */
+        private const val RETRY_BASE_DELAY_MS = 500L
     }
 
     // ============================================================
@@ -64,27 +88,93 @@ class UpdateManager(private val context: Context) {
     }
 
     // ============================================================
-    // СКАЧИВАНИЕ version.json
+    // СКАЧИВАНИЕ version.json (с retry)
     // ============================================================
-    private fun downloadJson(urlString: String): JSONObject {
-        val url = URL(urlString)
-        val connection = url.openConnection() as HttpURLConnection
-        connection.requestMethod = "GET"
-        connection.connectTimeout = 15000
-        connection.readTimeout = 15000
 
-        if (connection.responseCode != 200) {
-            throw Exception("HTTP ${connection.responseCode}: failed to fetch version.json")
+    /**
+     * Скачивает version.json с GitHub raw.
+     *
+     * 🆕 До MAX_ATTEMPTS попыток с паузой RETRY_BASE_DELAY_MS * attempt
+     * при 5xx / 429 / DNS / timeout / IOException.
+     * 4xx (кроме 429) — сразу исключение, без retry.
+     *
+     * Бросает исключение, если все попытки провалились — checkForUpdate
+     * ловит его и возвращает null (как раньше при разовой ошибке).
+     */
+    private suspend fun downloadJson(urlString: String): JSONObject {
+        var lastError: Exception? = null
+
+        for (attempt in 1..MAX_ATTEMPTS) {
+            var connection: HttpURLConnection? = null
+            try {
+                val url = URL(urlString)
+                connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+
+                val code = connection.responseCode
+
+                // 4xx (кроме 429) — бессмысленно ретраить
+                if (code in 400..499 && code != 429) {
+                    Logger.log(TAG, "downloadJson: 4xx ($code), no retry")
+                    throw Exception("HTTP $code: failed to fetch version.json")
+                }
+
+                if (code != 200) {
+                    // 5xx или 429 — потенциально retry
+                    lastError = Exception("HTTP $code: failed to fetch version.json")
+                    Logger.log(
+                        TAG,
+                        "downloadJson: attempt $attempt/$MAX_ATTEMPTS failed, HTTP $code"
+                    )
+                    if (attempt < MAX_ATTEMPTS) {
+                        delay(RETRY_BASE_DELAY_MS * attempt)
+                        continue
+                    }
+                    throw lastError
+                }
+
+                val text = connection.inputStream.bufferedReader().use { it.readText() }
+                return JSONObject(text)
+            } catch (e: Exception) {
+                // Если это наше собственное исключение про 4xx — не ретраим
+                if (e is IOException || e is SocketTimeoutException || e is UnknownHostException) {
+                    lastError = e
+                    Logger.log(
+                        TAG,
+                        "downloadJson: attempt $attempt/$MAX_ATTEMPTS IO error: ${e.message}"
+                    )
+                    if (attempt < MAX_ATTEMPTS) {
+                        delay(RETRY_BASE_DELAY_MS * attempt)
+                        continue
+                    }
+                    throw e
+                }
+                // Прочие исключения (включая наш throw про 4xx) — пробрасываем
+                throw e
+            } finally {
+                try { connection?.disconnect() } catch (_: Exception) { }
+            }
         }
 
-        val text = connection.inputStream.bufferedReader().use { it.readText() }
-        return JSONObject(text)
+        throw lastError ?: Exception("downloadJson failed after $MAX_ATTEMPTS attempts")
     }
 
     // ============================================================
-    // ПОЛУЧЕНИЕ ПРЯМОЙ ССЫЛКИ НА APK
+    // ПОЛУЧЕНИЕ ПРЯМОЙ ССЫЛКИ НА APK (с retry)
     // Публичная ссылка Яндекс.Диска → прямая ссылка через API
     // ============================================================
+
+    /**
+     * Получает прямую ссылку на APK.
+     *
+     * Если urlOrPublicLink — не Яндекс.Диск, возвращает как есть, без сети.
+     *
+     * 🆕 Если Яндекс.Диск — до MAX_ATTEMPTS попыток с паузой
+     * RETRY_BASE_DELAY_MS * attempt при 5xx / 429 / DNS / timeout.
+     * 4xx (кроме 429) — сразу throw, без retry.
+     */
     private suspend fun resolveDirectApkUrl(urlOrPublicLink: String): String {
         // Если это уже прямая ссылка на файл (не Яндекс.Диск) — возвращаем как есть
         if (!urlOrPublicLink.contains("disk.yandex.ru/d/")) {
@@ -95,33 +185,76 @@ class UpdateManager(private val context: Context) {
         Logger.log(TAG, "Resolving Yandex.Disk public URL: $urlOrPublicLink")
         Logger.log(TAG, "APK file name: ${Config.APK_FILE_NAME}")
 
-        return try {
-            val api = YandexDiskApi.getInstance()
-            val response = api.getPublicDownloadUrl(
-                publicKey = urlOrPublicLink,
-                path = Config.APK_FILE_NAME
-            )
+        var lastError: Exception? = null
 
-            Logger.log(TAG, "getPublicDownloadUrl response code: ${response.code()}")
+        for (attempt in 1..MAX_ATTEMPTS) {
+            try {
+                val api = YandexDiskApi.getInstance()
+                val response = api.getPublicDownloadUrl(
+                    publicKey = urlOrPublicLink,
+                    path = Config.APK_FILE_NAME
+                )
 
-            if (response.isSuccessful) {
+                val code = response.code()
+                Logger.log(TAG, "getPublicDownloadUrl attempt $attempt/$MAX_ATTEMPTS, code=$code")
+
+                // 4xx (кроме 429) — бессмысленно ретраить
+                if (code in 400..499 && code != 429) {
+                    val errorBody = response.errorBody()?.string()
+                    Logger.log(TAG, "Failed to resolve: HTTP $code (no retry), body=$errorBody")
+                    throw Exception("Не удалось получить прямую ссылку на APK (HTTP $code)")
+                }
+
+                if (!response.isSuccessful) {
+                    // 5xx или 429 — retry
+                    lastError = Exception("Не удалось получить прямую ссылку на APK (HTTP $code)")
+                    Logger.log(
+                        TAG,
+                        "resolveDirectApkUrl: attempt $attempt/$MAX_ATTEMPTS failed, HTTP $code"
+                    )
+                    if (attempt < MAX_ATTEMPTS) {
+                        delay(RETRY_BASE_DELAY_MS * attempt)
+                        continue
+                    }
+                    throw lastError
+                }
+
                 val href = response.body()?.href
                 if (!href.isNullOrEmpty()) {
                     Logger.log(TAG, "Resolved direct URL: $href")
                     return href
                 }
-                Logger.log(TAG, "Href is null in response")
-            } else {
-                val errorBody = response.errorBody()?.string()
-                Logger.log(TAG, "Failed to resolve: HTTP ${response.code()}, body=$errorBody")
-            }
 
-            throw Exception("Не удалось получить прямую ссылку на APK (HTTP ${response.code()})")
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error resolving Yandex URL: ${e.message}")
-            e.printStackTrace()
-            throw e
+                // 200 без href — странно, считаем как 5xx и ретраим
+                lastError = Exception("getPublicDownloadUrl вернул 200 без href")
+                Logger.log(
+                    TAG,
+                    "resolveDirectApkUrl: attempt $attempt/$MAX_ATTEMPTS — 200 but empty href"
+                )
+                if (attempt < MAX_ATTEMPTS) {
+                    delay(RETRY_BASE_DELAY_MS * attempt)
+                    continue
+                }
+                throw lastError
+            } catch (e: Exception) {
+                // Если это наше собственное исключение про 4xx — не ретраим
+                if (e is IOException || e is SocketTimeoutException || e is UnknownHostException) {
+                    lastError = e
+                    Logger.log(
+                        TAG,
+                        "resolveDirectApkUrl: attempt $attempt/$MAX_ATTEMPTS IO error: ${e.message}"
+                    )
+                    if (attempt < MAX_ATTEMPTS) {
+                        delay(RETRY_BASE_DELAY_MS * attempt)
+                        continue
+                    }
+                    throw e
+                }
+                throw e
+            }
         }
+
+        throw lastError ?: Exception("resolveDirectApkUrl failed after $MAX_ATTEMPTS attempts")
     }
 
     // ============================================================
@@ -160,7 +293,7 @@ class UpdateManager(private val context: Context) {
             return
         }
 
-        // Получаем прямую ссылку (для Яндекс.Диска — через API)
+        // Получаем прямую ссылку (для Яндекс.Диска — через API, с retry)
         val directUrl = try {
             resolveDirectApkUrl(apkUrl)
         } catch (e: Exception) {
