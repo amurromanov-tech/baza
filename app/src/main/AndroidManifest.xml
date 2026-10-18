@@ -14,8 +14,11 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 🆕 v14.1.0: для восстановления напоминаний после перезагрузки -->
+    <!-- Восстановление напоминаний после перезагрузки -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- 🆕 AlarmManager: точные alarms для напоминаний (Android 12+) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -56,7 +59,7 @@
         </provider>
 
         <!-- ============================================================ -->
-        <!-- 🆕 v14.1.0: RECEIVER ДЛЯ ВОССТАНОВЛЕНИЯ НАПОМИНАНИЙ -->
+        <!-- RECEIVER: восстановление напоминаний после boot / обновления -->
         <!-- ============================================================ -->
         <receiver
             android:name=".util.BootReceiver"
@@ -67,6 +70,18 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ============================================================ -->
+        <!-- 🆕 RECEIVER: показ напоминания о конкретной задаче          -->
+        <!-- ============================================================ -->
+        <receiver
+            android:name=".util.TaskReminderReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.family.base.action.TASK_REMIND" />
             </intent-filter>
         </receiver>
 
@@ -89,7 +104,7 @@
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ (НОВОЕ) ===== -->
+        <!-- ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ ===== -->
         <activity
             android:name=".ui.SelectUserActivity"
             android:exported="false"
@@ -151,7 +166,7 @@
             android:name=".ui.AppSettingsActivity"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- 🆕 О программе -->
+        <!-- О программе -->
         <activity
             android:name=".ui.AboutActivity"
             android:windowSoftInputMode="adjustResize" />
@@ -168,7 +183,7 @@
         <activity android:name=".ui.AuditActivity" />
 
         <!-- ============================================================ -->
-        <!-- 🆕 ДОМАШНИЕ ДЕЛА (v14) -->
+        <!-- ДОМАШНИЕ ДЕЛА -->
         <!-- ============================================================ -->
 
         <activity
@@ -177,7 +192,7 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!-- ============================================================ -->
-        <!-- 🆕 СПИСОК ПОКУПОК (v16.0.15) -->
+        <!-- СПИСОК ПОКУПОК -->
         <!-- ============================================================ -->
 
         <activity
