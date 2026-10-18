@@ -18,6 +18,13 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * Менеджер обновлений приложения.
+ *
+ * 🆕 B3: прямых путей Яндекс.Диска здесь нет — только Config.APK_FILE_NAME
+ * и Config.APK_YANDEX_PUBLIC_URL. Правок по DiskPaths не требуется.
+ * Локальные пути APK (Downloads) остаются в классе — это не Яндекс.Диск.
+ */
 class UpdateManager(private val context: Context) {
 
     companion object {
