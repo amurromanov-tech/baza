@@ -5,14 +5,18 @@ import android.content.Context
 import android.content.Intent
 
 /**
- * Восстанавливает запланированное напоминание после перезагрузки устройства.
+ * Восстанавливает запланированные напоминания после перезагрузки устройства
+ * или обновления приложения.
  *
- * WorkManager сам по себе НЕ восстанавливает PeriodicWork после reboot —
- * точнее, восстанавливает только те, что были enqueued через persist,
- * но initial delay мог быть потерян. Чтобы не гадать — просто перепланируем
- * при загрузке, если напоминания включены.
+ * 🆕 Замена WorkManager на AlarmManager:
+ *  - Android стирает ВСЕ alarms при выключении/перезагрузке.
+ *  - После boot их надо восстановить — иначе напоминания молча исчезнут.
+ *  - Аналогично после обновления приложения (MY_PACKAGE_REPLACED):
+ *    новая версия кода, alarms могли остаться от старой — перепланируем.
  *
- * Регистрируется в AndroidManifest.xml на action BOOT_COMPLETED.
+ * Регистрируется в AndroidManifest.xml на BOOT_COMPLETED / QUICKBOOT_POWERON /
+ * MY_PACKAGE_REPLACED.
+ *
  * Вся логика — в try/catch, никаких крашей.
  */
 class BootReceiver : BroadcastReceiver() {
@@ -36,8 +40,8 @@ class BootReceiver : BroadcastReceiver() {
                 return
             }
 
-            TaskReminderScheduler.reschedule(context)
-            Logger.log(TAG, "onReceive: rescheduled")
+            TaskReminderScheduler.rescheduleAll(context)
+            Logger.log(TAG, "onReceive: rescheduleAll done")
         } catch (e: Exception) {
             Logger.log(TAG, "onReceive error: ${e.message}")
         }
