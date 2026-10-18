@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.TaskEntity
 import java.util.Calendar
 
@@ -18,6 +19,7 @@ import java.util.Calendar
  *    Время = dueDate задачи, приведённый к часу:минуте из TaskReminderPreferences
  *    (глобальная настройка «во сколько напоминать в день дедлайна»).
  *  - cancel(taskId) — снимает alarm для задачи.
+ *  - cancelAll() — снимает alarms для ВСЕХ задач (при выключении напоминаний).
  *  - rescheduleAll() — перечитывает все активные задачи и перепланирует alarms
  *    (используется BootReceiver после перезагрузки/обновления).
  *
@@ -133,14 +135,39 @@ object TaskReminderScheduler {
     }
 
     /**
+     * 🆕 Снять alarms для ВСЕХ задач.
+     *
+     * Используется, когда пользователь выключает напоминания глобально
+     * (applyGlobalReminderSetting → cancelAll). Без этого уже стоящие
+     * alarms остались бы и сработали бы один раз после выключения.
+     *
+     * Читает задачи из БД синхронно (getAllTasksBlocking) — как и rescheduleAll,
+     * это допустимо в контексте onReceive / лёгкой операции UI.
+     */
+    fun cancelAll(context: Context) {
+        try {
+            val db = AppDatabase.getInstance(context)
+            val tasks = db.taskDao().getAllTasksBlocking()
+
+            var cancelled = 0
+            for (task in tasks) {
+                cancel(context, task.id)
+                cancelled++
+            }
+            Logger.log(TAG, "cancelAll: cancelled=$cancelled")
+        } catch (e: Exception) {
+            Logger.log(TAG, "cancelAll error: ${e.message}")
+        }
+    }
+
+    /**
      * Перепланировать все активные задачи.
      *
      * Используется BootReceiver после перезагрузки/обновления приложения:
      * система стирает все alarms при выключении, их надо восстановить.
      *
-     * Читает задачи из БД синхронно (BootReceiver — не корутина,
-     * но БД маленькая, блокирующий вызов допустим в onReceive
-     * при коротком таймауте; при необходимости обернём в goAsync).
+     * Читает задачи из БД синхронно (getAllTasksBlocking) — BootReceiver
+     * не корутина, а таблица маленькая, запрос быстрый.
      */
     fun rescheduleAll(context: Context) {
         try {
@@ -149,7 +176,7 @@ object TaskReminderScheduler {
                 return
             }
 
-            val db = com.family.base.data.local.AppDatabase.getInstance(context)
+            val db = AppDatabase.getInstance(context)
             val tasks = db.taskDao().getAllTasksBlocking()
 
             var scheduled = 0
