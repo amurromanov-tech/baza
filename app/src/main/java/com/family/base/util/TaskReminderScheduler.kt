@@ -1,105 +1,239 @@
 package com.family.base.util
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import android.content.Intent
+import android.os.Build
+import com.family.base.data.local.entity.TaskEntity
 import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 /**
- * Планировщик напоминаний о задачах через WorkManager.
+ * Планировщик напоминаний о задачах через AlarmManager.
  *
- * Использует PeriodicWorkRequest с интервалом 1 раз в сутки.
- * Время первого запуска вычисляется от текущего момента до заданного часа:минуты.
+ * 🆕 Замена WorkManager на AlarmManager — точное время срабатывания.
  *
- * Все методы обёрнуты в try/catch — если WorkManager по какой-то причине
- * недоступен, приложение не должно крашиться.
+ * Как работает:
+ *  - schedule(task) — ставит точный alarm на время напоминания для конкретной задачи.
+ *    Время = dueDate задачи, приведённый к часу:минуте из TaskReminderPreferences
+ *    (глобальная настройка «во сколько напоминать в день дедлайна»).
+ *  - cancel(taskId) — снимает alarm для задачи.
+ *  - rescheduleAll() — перечитывает все активные задачи и перепланирует alarms
+ *    (используется BootReceiver после перезагрузки/обновления).
+ *
+ * Использует setExactAndAllowWhileIdle (RTC_WAKEUP) — срабатывает точно,
+ * даже в Doze. На Android 12+ требует разрешение SCHEDULE_EXACT_ALARM;
+ * если его нет — fallback на setAndAllowWhileIdle (менее точный, но не молчит).
+ *
+ * Все методы обёрнуты в try/catch — ошибка планировщика не должна ронять приложение.
  */
 object TaskReminderScheduler {
 
     private const val TAG = "TaskReminderScheduler"
-    private const val WORK_NAME = "baza_task_reminder_daily"
 
     /**
-     * Запустить (или перезапустить) ежедневное напоминание.
-     * Если напоминания выключены — ничего не делает.
+     * Поставить (или переставить) alarm для конкретной задачи.
+     *
+     * Условия, при которых alarm не ставится:
+     *  - напоминания выключены глобально;
+     *  - у задачи нет dueDate;
+     *  - задача уже выполнена или удалена;
+     *  - вычисленное время напоминания уже в прошлом.
+     *
+     * Если задача не подходит под условия — существующий alarm для неё
+     * снимается (чтобы не висел устаревший).
      */
-    fun schedule(context: Context) {
+    fun schedule(context: Context, task: TaskEntity) {
         try {
             if (!TaskReminderPreferences.isEnabled(context)) {
-                Logger.log(TAG, "schedule: reminders disabled, skip")
+                Logger.log(TAG, "schedule(${task.id}): reminders disabled, cancel")
+                cancel(context, task.id)
                 return
             }
 
-            val delayMs = computeInitialDelayMs(
-                context,
-                TaskReminderPreferences.getHour(context),
-                TaskReminderPreferences.getMinute(context)
-            )
+            if (task.isDone || task.isDeleted) {
+                Logger.log(TAG, "schedule(${task.id}): task done/deleted, cancel")
+                cancel(context, task.id)
+                return
+            }
 
-            val request = PeriodicWorkRequestBuilder<TaskReminderWorker>(
-                1, TimeUnit.DAYS
-            )
-                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
-                .addTag(WORK_NAME)
-                .build()
+            val dueDate = task.dueDate
+            if (dueDate == null) {
+                Logger.log(TAG, "schedule(${task.id}): no dueDate, cancel")
+                cancel(context, task.id)
+                return
+            }
 
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-                request
-            )
+            val triggerAt = computeTriggerAtMillis(context, dueDate)
+            if (triggerAt <= System.currentTimeMillis()) {
+                Logger.log(TAG, "schedule(${task.id}): trigger in past ($triggerAt), cancel")
+                cancel(context, task.id)
+                return
+            }
 
-            Logger.log(TAG, "schedule: enqueued, initial delay = ${delayMs / 1000 / 60} min")
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pendingIntent = buildPendingIntent(context, task.id)
+
+            if (canScheduleExact(alarmManager)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.setExact(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                }
+                Logger.log(
+                    TAG,
+                    "schedule(${task.id}): exact alarm at ${formatTime(triggerAt)} (task='${task.title}')"
+                )
+            } else {
+                // Нет разрешения на точные alarms — fallback на неточный, но не молчим.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.set(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                }
+                Logger.log(
+                    TAG,
+                    "schedule(${task.id}): INEXACT alarm (no exact permission) at ${formatTime(triggerAt)}"
+                )
+            }
         } catch (e: Exception) {
-            Logger.log(TAG, "schedule error: ${e.message}")
+            Logger.log(TAG, "schedule(${task.id}) error: ${e.message}")
         }
     }
 
     /**
-     * Отменить запланированное напоминание.
+     * Снять alarm для задачи.
      */
-    fun cancel(context: Context) {
+    fun cancel(context: Context, taskId: String) {
         try {
-            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
-            Logger.log(TAG, "cancel: done")
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pendingIntent = buildPendingIntent(context, taskId)
+            alarmManager.cancel(pendingIntent)
+            pendingIntent.cancel()
+            Logger.log(TAG, "cancel($taskId): done")
         } catch (e: Exception) {
-            Logger.log(TAG, "cancel error: ${e.message}")
+            Logger.log(TAG, "cancel($taskId) error: ${e.message}")
         }
     }
 
     /**
-     * Перепланировать: отменить и заново запустить с новыми настройками.
-     */
-    fun reschedule(context: Context) {
-        try {
-            cancel(context)
-            schedule(context)
-        } catch (e: Exception) {
-            Logger.log(TAG, "reschedule error: ${e.message}")
-        }
-    }
-
-    /**
-     * Вычислить задержку в миллисекундах от текущего момента
-     * до ближайшего наступления указанного часа:минуты.
+     * Перепланировать все активные задачи.
      *
-     * Если время уже прошло сегодня — берём завтра.
+     * Используется BootReceiver после перезагрузки/обновления приложения:
+     * система стирает все alarms при выключении, их надо восстановить.
+     *
+     * Читает задачи из БД синхронно (BootReceiver — не корутина,
+     * но БД маленькая, блокирующий вызов допустим в onReceive
+     * при коротком таймауте; при необходимости обернём в goAsync).
      */
-    private fun computeInitialDelayMs(context: Context, hour: Int, minute: Int): Long {
-        val now = Calendar.getInstance()
+    fun rescheduleAll(context: Context) {
+        try {
+            if (!TaskReminderPreferences.isEnabled(context)) {
+                Logger.log(TAG, "rescheduleAll: reminders disabled, skip")
+                return
+            }
+
+            val db = com.family.base.data.local.AppDatabase.getInstance(context)
+            val tasks = db.taskDao().getAllTasksBlocking()
+
+            var scheduled = 0
+            var skipped = 0
+            for (task in tasks) {
+                if (task.isDone || task.isDeleted || task.dueDate == null) {
+                    skipped++
+                    continue
+                }
+                schedule(context, task)
+                scheduled++
+            }
+            Logger.log(TAG, "rescheduleAll: scheduled=$scheduled, skipped=$skipped")
+        } catch (e: Exception) {
+            Logger.log(TAG, "rescheduleAll error: ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // ВНУТРЕННЕЕ
+    // ============================================================
+
+    /**
+     * Вычисляет точное время срабатывания alarm:
+     * берёт дату из dueDate (год/месяц/день) и подставляет час:минуту
+     * из TaskReminderPreferences (глобальная настройка «во сколько напоминать»).
+     *
+     * Пример: dueDate = 25.10.2026 00:00, настройка 09:30 → trigger = 25.10.2026 09:30.
+     */
+    private fun computeTriggerAtMillis(context: Context, dueDate: Long): Long {
+        val due = Calendar.getInstance().apply { timeInMillis = dueDate }
         val target = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour.coerceIn(0, 23))
-            set(Calendar.MINUTE, minute.coerceIn(0, 59))
+            set(Calendar.YEAR, due.get(Calendar.YEAR))
+            set(Calendar.MONTH, due.get(Calendar.MONTH))
+            set(Calendar.DAY_OF_MONTH, due.get(Calendar.DAY_OF_MONTH))
+            set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.getHour(context).coerceIn(0, 23))
+            set(Calendar.MINUTE, TaskReminderPreferences.getMinute(context).coerceIn(0, 59))
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
+        return target.timeInMillis
+    }
 
-        if (target.timeInMillis <= now.timeInMillis) {
-            target.add(Calendar.DAY_OF_YEAR, 1)
+    /**
+     * Собирает PendingIntent на TaskReminderReceiver для конкретной задачи.
+     * requestCode = хэш taskId — чтобы у разных задач были разные PendingIntent.
+     */
+    private fun buildPendingIntent(context: Context, taskId: String): PendingIntent {
+        val intent = Intent(context, TaskReminderReceiver::class.java).apply {
+            action = TaskReminderReceiver.ACTION_REMIND
+            putExtra(TaskReminderReceiver.EXTRA_TASK_ID, taskId)
         }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            taskId.hashCode(),
+            intent,
+            flags
+        )
+    }
 
-        return target.timeInMillis - now.timeInMillis
+    /**
+     * Проверка, можно ли ставить точные alarms.
+     * На Android 12+ требуется разрешение SCHEDULE_EXACT_ALARM.
+     * На более старых — всегда можно.
+     */
+    private fun canScheduleExact(alarmManager: AlarmManager): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
+    }
+
+    private fun formatTime(millis: Long): String {
+        val c = Calendar.getInstance().apply { timeInMillis = millis }
+        val h = c.get(Calendar.HOUR_OF_DAY).toString().padStart(2, '0')
+        val m = c.get(Calendar.MINUTE).toString().padStart(2, '0')
+        val d = c.get(Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
+        val mo = (c.get(Calendar.MONTH) + 1).toString().padStart(2, '0')
+        return "$d.$mo ${h}:$m"
     }
 }
