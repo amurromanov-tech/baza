@@ -27,13 +27,13 @@ import kotlinx.coroutines.withContext
  *
  * Что делает:
  *  1. Достаёт taskId из extras.
- *  2. Читает задачу из БД.
+ *  2. Читает задачу из БД (TaskDao.getById).
  *  3. Если задача ещё актуальна (не выполнена, не удалена) — показывает
  *     персональное уведомление с её названием.
  *
  * Клик по уведомлению открывает TaskListActivity.
  *
- * Регистрируется в AndroidManifest.xml (см. следующий шаг).
+ * Регистрируется в AndroidManifest.xml.
  *
  * ⚠️ onReceive работает в главном потоке — БД читаем через runBlocking
  * с коротким таймаутом. Для одной задачи это быстро (Room + индекс по id).
@@ -51,7 +51,7 @@ class TaskReminderReceiver : BroadcastReceiver() {
         /** Ключ extras: id задачи. */
         const val EXTRA_TASK_ID = "extra_task_id"
 
-        /** Канал уведомлений. Переиспользуем имя из старого TaskReminderWorker. */
+        /** Канал уведомлений. */
         const val CHANNEL_ID = "baza_task_reminders"
         const val CHANNEL_NAME = "Напоминания о делах"
 
@@ -104,10 +104,6 @@ class TaskReminderReceiver : BroadcastReceiver() {
             // 3. Показываем уведомление
             showNotification(context, task)
 
-            // 4. Если задача повторяющаяся — ставим следующее напоминание
-            //    (для повторяющихся dueDate сдвигается при markDone, но если
-            //    задача ещё не выполнена, повторный alarm не нужен — он
-            //    переставится при следующем сохранении/выполнении).
             Logger.log(TAG, "onReceive: notification shown for '$task.title'")
         } catch (e: Exception) {
             Logger.log(TAG, "onReceive error: ${e.message}")
@@ -123,7 +119,7 @@ class TaskReminderReceiver : BroadcastReceiver() {
             runBlocking {
                 withContext(Dispatchers.IO) {
                     val db = AppDatabase.getInstance(context)
-                    db.taskDao().getTaskById(taskId)
+                    db.taskDao().getById(taskId)
                 }
             }
         } catch (e: Exception) {
