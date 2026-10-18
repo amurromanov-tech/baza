@@ -92,8 +92,23 @@ interface TaskDao {
     @Query("SELECT id FROM tasks")
     suspend fun getAllIds(): List<String>
 
+    /**
+     * 🆕 AlarmManager: ВСЕ задачи, блокирующий вызов (не suspend).
+     *
+     * Нужен BootReceiver.onReceive — там нельзя запускать корутину,
+     * а runBlocking с suspend-функцией Room может дать ANR.
+     * Этот метод Room выполнит синхронно, в фоновом потоке BroadcastReceiver
+     * (onReceive уже не главный поток по умолчанию для BOOT_COMPLETED,
+     * но даже если главный — таблица маленькая, запрос быстрый).
+     *
+     * Возвращает задачи без фильтров, включая soft-deleted и выполненные —
+     * фильтрацию делает вызывающий код (rescheduleAll).
+     */
+    @Query("SELECT * FROM tasks")
+    fun getAllTasksBlocking(): List<TaskEntity>
+
     // ============================================================
-    // 🆕 v15: СИНХРОНИЗАЦИЯ
+    // СИНХРОНИЗАЦИЯ
     // ============================================================
 
     /**
