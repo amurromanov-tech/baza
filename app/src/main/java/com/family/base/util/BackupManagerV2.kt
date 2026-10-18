@@ -26,7 +26,7 @@ class BackupManagerV2(private val context: Context) {
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
     private val TAG = "BackupManagerV2"
 
-    // ===== ПУТИ =====
+    // ===== ПУТИ (локальные, не Яндекс.Диск) =====
     private fun getBackupDir(): File {
         val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val backupDir = File(downloadDir, "BAZA/backup")
@@ -80,10 +80,9 @@ class BackupManagerV2(private val context: Context) {
 
             val api = com.family.base.data.remote.YandexDiskApi.getInstance()
             val auth = "OAuth $token"
-            val path = "/${tokenStorage.getFolderName()}/backup/${localFile.name}"
+            val path = DiskPaths.backupFile(localFile.name)
 
-            val backupFolderPath = "/${tokenStorage.getFolderName()}/backup"
-            val createFolderResponse = api.createFolder(auth, backupFolderPath)
+            val createFolderResponse = api.createFolder(auth, DiskPaths.BACKUP)
             if (!createFolderResponse.isSuccessful && createFolderResponse.code() != 409) {
                 Logger.log(TAG, "Failed to create backup folder: ${createFolderResponse.code()}")
                 return@withContext false
@@ -130,7 +129,7 @@ class BackupManagerV2(private val context: Context) {
 
             val api = com.family.base.data.remote.YandexDiskApi.getInstance()
             val auth = "OAuth $token"
-            val backupPath = "/${tokenStorage.getFolderName()}/backup"
+            val backupPath = DiskPaths.BACKUP
 
             val listResponse = api.getDiskResources(auth, backupPath)
             if (!listResponse.isSuccessful) {
@@ -154,7 +153,7 @@ class BackupManagerV2(private val context: Context) {
                 return@withContext false
             }
 
-            val downloadUrlResponse = api.getDiskDownloadUrl(auth, "$backupPath/${latest.name}")
+            val downloadUrlResponse = api.getDiskDownloadUrl(auth, DiskPaths.backupFile(latest.name))
             if (!downloadUrlResponse.isSuccessful) {
                 Logger.log(TAG, "Failed to get download URL: ${downloadUrlResponse.code()}")
                 return@withContext false
