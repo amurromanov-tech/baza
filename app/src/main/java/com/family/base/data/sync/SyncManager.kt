@@ -29,6 +29,10 @@ import com.google.gson.JsonSyntaxException
  * свои старые файлы (OWN_BATCH_TTL_MS = 7 дней), но и чужие —
  * если их batchId уже есть в processed_changelogs и обработан
  * раньше PROCESSED_TTL_MS (30 дней). Раньше чужие копились вечно.
+ *
+ * 🆕 B3: прямых путей в этом классе нет — вся работа с путями
+ * делегирована SyncManagerApi, который использует DiskPaths.
+ * Правок по путям здесь не требуется.
  */
 class SyncManager(
     private val db: AppDatabase,
