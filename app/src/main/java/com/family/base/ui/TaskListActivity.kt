@@ -52,6 +52,8 @@ import java.util.Locale
  *  - кнопка в тулбаре (меню) → PopupMenu с 4 режимами + сброс;
  *  - режим хранится в TaskSortPreferences (SharedPreferences);
  *  - если режим DEFAULT — сортировка отдаётся на откуп TaskDao.
+ *
+ * 🆕 v19 (№10): удаление задачи — tombstone (softDelete с deletedBy).
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -287,7 +289,10 @@ class TaskListActivity : AppCompatActivity() {
             .setMessage("«${task.title}»")
             .setPositiveButton("Удалить") { _, _ ->
                 lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { repository.softDelete(task.id) }
+                    // 🆕 v19 (№10): tombstone с указанием, кто удалил.
+                    withContext(Dispatchers.IO) {
+                        repository.softDelete(task.id, currentUser)
+                    }
                     // 🆕 AlarmManager: удалённая задача больше не напоминает
                     TaskReminderScheduler.cancel(this@TaskListActivity, task.id)
                     Toast.makeText(this@TaskListActivity, "Удалено", Toast.LENGTH_SHORT).show()
@@ -534,9 +539,7 @@ class TaskListActivity : AppCompatActivity() {
                 }
                 // Если уже были включены — конкретный schedule() вызовется ниже для этой задачи
             } else {
-                // Выключили — снимаем все alarms (id задач не знаем, но
-                // rescheduleAll при выключенном флаге ничего не поставит;
-                // для снятия конкретных alarms нужен отдельный проход — см. ниже)
+                // Выключили — снимаем все alarms
                 if (wasEnabled) {
                     TaskReminderScheduler.cancelAll(this)
                     Toast.makeText(this, "Напоминания выключены", Toast.LENGTH_SHORT).show()
