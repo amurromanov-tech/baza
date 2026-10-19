@@ -77,7 +77,7 @@ interface TaskDao {
      * Нужна для:
      *  - TaskReminderReceiver (должен увидеть, что задача уже tombstone);
      *  - mergeData при сравнении версий.
-     * Если нужна именно «живая» — используй getLiveTaskById.
+     * Если нужна именно «живая» — используй getLiveById.
      */
     @Query("SELECT * FROM tasks WHERE id = :id")
     suspend fun getById(id: String): TaskEntity?
@@ -111,13 +111,26 @@ interface TaskDao {
     /**
      * AlarmManager: ВСЕ задачи, блокирующий вызов (не suspend).
      *
-     * Нужен BootReceiver.onReceive — там нельзя запускать корутину,
-     * а runBlocking с suspend-функцией Room может дать ANR.
-     * Возвращает задачи без фильтров, включая soft-deleted и выполненные —
-     * фильтрацию делает вызывающий код (rescheduleAll).
+     * ⚠️ v18.2.0 (шаг 1): НЕ вызывать с главного потока!
+     * Раньше это было причиной "Cannot access database on the main thread"
+     * в BaseApplication.onCreate и BootReceiver.onReceive — rescheduleAll
+     * падал в try/catch, и ни одна задача не планировалась.
+     *
+     * Теперь TaskReminderScheduler оборачивает вызов в
+     * runBlocking(Dispatchers.IO). Если вызываешь напрямую — тоже
+     * оборачивай в IO-контекст. Предпочтительна suspend-версия
+     * getAllTasksSuspend() из корутины.
      */
     @Query("SELECT * FROM tasks")
     fun getAllTasksBlocking(): List<TaskEntity>
+
+    /**
+     * 🆕 v18.2.0 (шаг 1): suspend-версия getAllTasksBlocking.
+     * Использовать из корутин — не блокирует поток, Room сам
+     * выполнит запрос на IO-диспетчере.
+     */
+    @Query("SELECT * FROM tasks")
+    suspend fun getAllTasksSuspend(): List<TaskEntity>
 
     // ============================================================
     // СИНХРОНИЗАЦИЯ
