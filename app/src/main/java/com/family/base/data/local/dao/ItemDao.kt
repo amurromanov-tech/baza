@@ -649,6 +649,44 @@ interface ItemDao {
     """)
     suspend fun getFolderStatsRecursive(folderId: String): FolderStatsRow?
 
+    /**
+     * 🆕 v20.1.2: рекурсивная статистика сразу по СПИСКУ папок —
+     * один запрос, без N+1.
+     *
+     * Для каждой папки из :folderIds строим своё поддерево
+     * (root_id запоминает, от какой папки из списка пошёл обход),
+     * затем LEFT JOIN с items — чтобы папки без предметов тоже
+     * попали в результат (itemCount = 0, totalPrice = 0.0).
+     *
+     * Нужен для корня «Домашнего каталога»: «Продукты», «Лекарства»,
+     * «Вещи» и т.д. теперь показывают количество и сумму по ВСЕМ
+     * вложенным подпапкам, как «🛒 Покупки».
+     *
+     * ⚠️ Если передать и родителя, и его потомка — предметы потомка
+     * попадут в счётчики обоих. Для корня каталога это не проблема
+     * (там только папки верхнего уровня), но помнить надо.
+     */
+    @Query("""
+        WITH RECURSIVE folder_tree(root_id, id) AS (
+            SELECT id, id FROM folders WHERE id IN (:folderIds)
+            UNION ALL
+            SELECT ft.root_id, f.id
+            FROM folders f
+            INNER JOIN folder_tree ft ON f.parentId = ft.id
+        )
+        SELECT ft.root_id AS folderId,
+               COUNT(i.id) AS itemCount,
+               COALESCE(SUM(i.price * i.quantity), 0.0) AS totalPrice
+        FROM folder_tree ft
+        LEFT JOIN items i
+               ON i.parentId = ft.id
+              AND i.parentItemId IS NULL
+              AND i.isArchived = 0
+              AND i.isDeleted = 0
+        GROUP BY ft.root_id
+    """)
+    suspend fun getFolderStatsRecursiveBatch(folderIds: List<String>): List<FolderStatsRow>
+
     // ============================================================
     // ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
     // ============================================================
