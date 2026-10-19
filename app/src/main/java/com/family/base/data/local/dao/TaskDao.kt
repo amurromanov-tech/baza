@@ -194,6 +194,135 @@ interface TaskDao {
     suspend fun getClonesOf(sourceId: String): List<TaskEntity>
 
     // ============================================================
+    // 🆕 v18.2.0 (шаг 2): НАПОМИНАНИЯ (Путь 2 + Путь 3)
+    // ============================================================
+
+    /**
+     * 🆕 Путь 2: задачи с точным напоминанием, которое уже наступило
+     * (или наступит до `beforeMs`), и которые ещё не выполнены.
+     *
+     * Используется планировщиком, чтобы понять, какие задачи нужно
+     * перепланировать/показать при следующем проходе.
+     *
+     * @param beforeMs верхняя граница remindAt (обычно now + окно).
+     */
+    @Query("""
+        SELECT * FROM tasks
+        WHERE isDeleted = 0
+          AND isDone = 0
+          AND remindAt IS NOT NULL
+          AND remindAt <= :beforeMs
+        ORDER BY remindAt ASC
+    """)
+    suspend fun getTasksWithRemindAtBefore(beforeMs: Long): List<TaskEntity>
+
+    /**
+     * 🆕 Путь 2: все задачи с заданным точным напоминанием (для диагностики
+     * и для rescheduleAll — чтобы не потерять будущие remindAt).
+     */
+    @Query("""
+        SELECT * FROM tasks
+        WHERE isDeleted = 0
+          AND isDone = 0
+          AND remindAt IS NOT NULL
+        ORDER BY remindAt ASC
+    """)
+    suspend fun getTasksWithRemindAt(): List<TaskEntity>
+
+    /**
+     * 🆕 Путь 3: задачи, которым нужен умный пинг.
+     *
+     * Условия:
+     *  - не удалены и не выполнены;
+     *  - autoRemindEnabled = 1;
+     *  - нет точного remindAt (иначе приоритет у Пути 2);
+     *  - нет dueDate ИЛИ dueDate уже в прошлом (просрочка = пингуем ежедневно).
+     *
+     * Сортировка: сначала просроченные (dueDate != NULL), потом важные.
+     * Дальше по createdAt — старые задачи должны пинговаться первыми.
+     */
+    @Query("""
+        SELECT * FROM tasks
+        WHERE isDeleted = 0
+          AND isDone = 0
+          AND autoRemindEnabled = 1
+          AND remindAt IS NULL
+          AND (dueDate IS NULL OR dueDate < :nowMs)
+        ORDER BY
+            CASE WHEN dueDate IS NOT NULL THEN 0 ELSE 1 END ASC,
+            priority DESC,
+            createdAt ASC
+    """)
+    suspend fun getTasksNeedingSmartPing(nowMs: Long): List<TaskEntity>
+
+    /**
+     * 🆕 Путь 3: только просроченные задачи (dueDate < now, не выполнены,
+     * не удалены, autoRemindEnabled = 1). Для секции «Просрочено» в UI
+     * и для ежедневного пинга.
+     */
+    @Query("""
+        SELECT * FROM tasks
+        WHERE isDeleted = 0
+          AND isDone = 0
+          AND autoRemindEnabled = 1
+          AND dueDate IS NOT NULL
+          AND dueDate < :nowMs
+        ORDER BY
+            priority DESC,
+            dueDate ASC
+    """)
+    suspend fun getOverdueTasks(nowMs: Long): List<TaskEntity>
+
+    /**
+     * 🆕 Путь 2: обновить только remindAt (не трогая остальные поля).
+     * Используется, когда пользователь меняет «Когда напомнить» без
+     * полного редактирования задачи.
+     *
+     * ⚠️ НЕ логируется в outbox автоматически — вызывающий код должен
+     * перечитать задачу и вызвать OutboxLogger.taskChanged(...).
+     */
+    @Query("""
+        UPDATE tasks SET
+            remindAt = :remindAt,
+            updatedAt = :updatedAt,
+            syncStatus = 'pending'
+        WHERE id = :taskId
+    """)
+    suspend fun updateRemindAt(taskId: String, remindAt: Long?, updatedAt: Long)
+
+    /**
+     * 🆕 Путь 3: включить/выключить умный пинг у конкретной задачи.
+     *
+     * ⚠️ НЕ логируется в outbox автоматически — вызывающий код должен
+     * перечитать задачу и вызвать OutboxLogger.taskChanged(...).
+     */
+    @Query("""
+        UPDATE tasks SET
+            autoRemindEnabled = :enabled,
+            updatedAt = :updatedAt,
+            syncStatus = 'pending'
+        WHERE id = :taskId
+    """)
+    suspend fun updateAutoRemindEnabled(taskId: String, enabled: Boolean, updatedAt: Long)
+
+    /**
+     * 🆕 Путь 3: сбросить точный remindAt после показа уведомления,
+     * чтобы задача перешла на умный пинг (если autoRemindEnabled = 1)
+     * или замолчала (если 0). dueDate при этом НЕ трогаем.
+     *
+     * ⚠️ НЕ логируется в outbox автоматически — вызывающий код должен
+     * перечитать задачу и вызвать OutboxLogger.taskChanged(...).
+     */
+    @Query("""
+        UPDATE tasks SET
+            remindAt = NULL,
+            updatedAt = :updatedAt,
+            syncStatus = 'pending'
+        WHERE id = :taskId
+    """)
+    suspend fun clearRemindAt(taskId: String, updatedAt: Long)
+
+    // ============================================================
     // 🆕 v19 (№10): TOMBSTONES
     // ============================================================
 
