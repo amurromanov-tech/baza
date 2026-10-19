@@ -21,7 +21,7 @@ import com.family.base.data.local.entity.*
         OutboxEntity::class,
         ProcessedChangelogEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -360,6 +360,51 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS sync_queue")
+            }
+        }
+
+        // ============================================================
+        // 🆕 v18 → v19: tombstones для удалений (№10)
+        //
+        // Добавляем в items, folders, tasks поля:
+        //   isDeleted       BOOLEAN NOT NULL DEFAULT 0
+        //   deletedAt       INTEGER NULL
+        //   deletedBy       TEXT    NULL
+        //   deleteConfirmed BOOLEAN NOT NULL DEFAULT 0
+        //
+        // В tasks колонка isDeleted УЖЕ БЫЛА (с v14) — её не трогаем,
+        // добавляем только три новые.
+        //
+        // Существующие записи автоматически получают isDeleted=0,
+        // то есть «живые» — данные не теряются.
+        // ============================================================
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // items
+                db.execSQL("ALTER TABLE items ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE items ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE items ADD COLUMN deletedBy TEXT")
+                db.execSQL("ALTER TABLE items ADD COLUMN deleteConfirmed INTEGER NOT NULL DEFAULT 0")
+
+                // folders
+                db.execSQL("ALTER TABLE folders ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE folders ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE folders ADD COLUMN deletedBy TEXT")
+                db.execSQL("ALTER TABLE folders ADD COLUMN deleteConfirmed INTEGER NOT NULL DEFAULT 0")
+
+                // tasks — isDeleted уже есть, добавляем только 3
+                db.execSQL("ALTER TABLE tasks ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN deletedBy TEXT")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN deleteConfirmed INTEGER NOT NULL DEFAULT 0")
+
+                // Индексы для эффективного фильтра и cleanup
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_items_isDeleted ON items(isDeleted)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_isDeleted ON folders(isDeleted)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_tasks_isDeleted ON tasks(isDeleted)")
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_items_deleteConfirmed_deletedAt ON items(deleteConfirmed, deletedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_deleteConfirmed_deletedAt ON folders(deleteConfirmed, deletedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_tasks_deleteConfirmed_deletedAt ON tasks(deleteConfirmed, deletedAt)")
             }
         }
 
@@ -1537,6 +1582,126 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_17_18_DIRECT = MIGRATION_17_18
 
+        // ============================================================
+        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 18 (сразу в 19)
+        //
+        // Для каждой старой версии X: сначала применяем существующую
+        // цепочку до 18, потом MIGRATION_18_19.
+        // ============================================================
+        private val MIGRATION_17_19 = object : Migration(17, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_17_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_2_19 = object : Migration(2, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_3_19 = object : Migration(3, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_4_19 = object : Migration(4, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_5_19 = object : Migration(5, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_6_19 = object : Migration(6, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_7_19 = object : Migration(7, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_8_19 = object : Migration(8, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_9_19 = object : Migration(9, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_10_19 = object : Migration(10, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_11_19 = object : Migration(11, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_12_19 = object : Migration(12, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_13_19 = object : Migration(13, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_14_19 = object : Migration(14, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_15_19 = object : Migration(15, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_15_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_16_19 = object : Migration(16, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_16_18.migrate(db)
+                MIGRATION_18_19.migrate(db)
+            }
+        }
+
+        private val MIGRATION_18_19_DIRECT = MIGRATION_18_19
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -1643,7 +1808,28 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_18,
                         MIGRATION_14_18,
                         MIGRATION_15_18,
-                        MIGRATION_16_18
+                        MIGRATION_16_18,
+
+                        // 🆕 v18 → v19: tombstones (№10)
+                        MIGRATION_18_19_DIRECT,
+
+                        // 🆕 Цепочки с пропуском 18 (сразу в 19)
+                        MIGRATION_17_19,
+                        MIGRATION_2_19,
+                        MIGRATION_3_19,
+                        MIGRATION_4_19,
+                        MIGRATION_5_19,
+                        MIGRATION_6_19,
+                        MIGRATION_7_19,
+                        MIGRATION_8_19,
+                        MIGRATION_9_19,
+                        MIGRATION_10_19,
+                        MIGRATION_11_19,
+                        MIGRATION_12_19,
+                        MIGRATION_13_19,
+                        MIGRATION_14_19,
+                        MIGRATION_15_19,
+                        MIGRATION_16_19
                     )
                     .build()
                     .also { INSTANCE = it }
