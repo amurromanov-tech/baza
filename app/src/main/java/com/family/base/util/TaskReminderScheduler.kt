@@ -15,48 +15,49 @@ import java.util.Calendar
 /**
  * Планировщик напоминаний о задачах через AlarmManager.
  *
- * 🆕 v18.2.0 (Шаг 1): ФИКС ПАДЕНИЯ НА ГЛАВНОМ ПОТОКЕ.
+ * 🆕 v18.2.0 (шаг 1): ФИКС ПАДЕНИЯ НА ГЛАВНОМ ПОТОКЕ.
+ *  - Чтение БД для rescheduleAll/cancelAll вынесено в Dispatchers.IO.
  *
- * Было: rescheduleAll()/cancelAll() вызывали getAllTasksBlocking() прямо
- * в вызывающем потоке. Из BaseApplication.onCreate и BootReceiver.onReceive
- * это главный поток → Room бросал IllegalStateException
- * "Cannot access database on the main thread", ловился в try/catch,
- * и НИ ОДНА задача не планировалась. Отсюда «утром ничего не пришло».
+ * 🆕 v18.2.0 (шаг 2): ПУТЬ 2 (remindAt) + ПУТЬ 3 (умный пинг).
  *
- * Стало:
- *  - чтение задач вынесено в runBlocking(Dispatchers.IO) внутри
- *    suspend-версий rescheduleAllSuspend()/cancelAllSuspend();
- *  - старые синхронные rescheduleAll()/cancelAll() оставлены как обёртки
- *    для обратной совместимости (BootReceiver, BaseApplication),
- *    но внутри они тоже читают БД в IO-потоке.
+ * Приоритет напоминаний для одной задачи:
+ *  1) remindAt задан и в будущем → точный alarm на remindAt (Путь 2).
+ *  2) remindAt нет, dueDate задан и в будущем → точный alarm
+ *     на dueDate - N минут (дефолт из дедлайна, тоже Путь 2).
+ *  3) remindAt нет, dueDate нет или в прошлом, autoRemindEnabled = true
+ *     → умный пинг (Путь 3): следующий раз — «завтра утром»
+ *     (или сегодня вечером, если сейчас утро), дальше — по важности:
+ *        - важные (HIGH/URGENT) → ежедневно;
+ *        - обычные (NORMAL)     → раз в 2 дня;
+ *        - низкие (LOW)         → раз в 3 дня.
+ *     Просроченные (dueDate < now) пингуются ежедневно независимо от важности.
+ *  4) autoRemindEnabled = false и точных пингов нет → задача молчит.
  *
- * 🆕 v18.2.0: задачи без dueDate БОЛЬШЕ НЕ отменяются молча.
- * Раньше schedule() при dueDate == null вызывал cancel() — это
- * скрывало проблему и мешало будущему Пути 2 (remindAt). Теперь
- * при dueDate == null просто пропускаем (alarm не ставим и не снимаем),
- * а cancel() вызывается только при явных условиях (done/deleted/disabled).
+ * Двойных уведомлений не будет: точный пинг подавляет умный
+ * на этот день (scheduler выбирает ОДИН тип alarm на задачу).
  *
- * ⚠️ Путь 2 (remindAt) и Путь 3 (autoRemind) будут добавлены на Шагах 3–4.
- * Здесь пока только точная дата из dueDate — как было, но без падений.
+ * ⚠️ v18.2.0: requestCode для точного и умного alarm РАЗНЫЕ
+ * (taskId.hashCode() для точного, taskId.hashCode() + SMART_OFFSET
+ * для умного). Иначе при переключении режима старый PendingIntent
+ * мог бы «съесть» новый.
+ *
+ * ⚠️ Все методы обёрнуты в try/catch — ошибка планировщика
+ * не должна ронять приложение.
  */
 object TaskReminderScheduler {
 
     private const val TAG = "TaskReminderScheduler"
 
+    /** Сдвиг requestCode для умного пинга, чтобы не пересекаться с точным. */
+    private const val SMART_REQUEST_OFFSET = 100_000
+
+    /** За сколько минут до dueDate напоминать, если remindAt не задан. */
+    private const val DUE_SOON_MINUTES = 15
+
     // ============================================================
     // СИНХРОННЫЕ ОБЁРТКИ (для BootReceiver / BaseApplication)
     // ============================================================
 
-    /**
-     * Перепланировать все активные задачи.
-     *
-     * Синхронная обёртка: читает БД в IO-потоке через runBlocking,
-     * чтобы не упасть на главном потоке (BootReceiver.onReceive,
-     * BaseApplication.onCreate).
-     *
-     * Если можешь вызвать suspend-версию (rescheduleAllSuspend) —
-     * лучше вызывай её из корутины, без runBlocking.
-     */
     fun rescheduleAll(context: Context) {
         try {
             if (!TaskReminderPreferences.isEnabled(context)) {
@@ -70,10 +71,6 @@ object TaskReminderScheduler {
         }
     }
 
-    /**
-     * Suspend-версия rescheduleAll. Предпочтительна, если вызывающий код
-     * уже в корутине (applicationScope.launch { }).
-     */
     suspend fun rescheduleAllSuspend(context: Context) {
         try {
             if (!TaskReminderPreferences.isEnabled(context)) {
@@ -89,11 +86,6 @@ object TaskReminderScheduler {
         }
     }
 
-    /**
-     * Снять alarms для ВСЕХ задач (когда пользователь выключает напоминания).
-     *
-     * Синхронная обёртка: чтение БД — в IO-потоке.
-     */
     fun cancelAll(context: Context) {
         try {
             val tasks = readAllTasksBlockingFromIo(context)
@@ -108,9 +100,6 @@ object TaskReminderScheduler {
         }
     }
 
-    /**
-     * Suspend-версия cancelAll.
-     */
     suspend fun cancelAllSuspend(context: Context) {
         try {
             val tasks = withContext(Dispatchers.IO) {
@@ -134,135 +123,259 @@ object TaskReminderScheduler {
     /**
      * Поставить (или переставить) alarm для конкретной задачи.
      *
-     * Условия, при которых alarm НЕ ставится:
-     *  - напоминания выключены глобально → cancel (убираем устаревший);
-     *  - задача уже выполнена или удалена → cancel;
-     *  - у задачи нет dueDate → ПРОПУСКАЕМ (не cancel! см. ниже);
-     *  - вычисленное время в прошлом → cancel.
+     * Снимает оба возможных alarm (точный и умный) и ставит тот,
+     * который сейчас имеет приоритет (см. шапку файла).
      *
-     * 🆕 Почему при dueDate == null теперь НЕ cancel:
-     * Раньше cancel() скрывал проблему — задачи без даты молча
-     * оставались без напоминаний, и это выглядело как «баг AlarmManager».
-     * Теперь мы просто не трогаем alarm: если он был поставлен ранее
-     * (например, из remindAt на будущем Шаге 2) — он останется.
-     * Если его не было — его и не будет, но это осознанно.
+     * Если ни одно условие не подходит — оба alarm снимаются.
      */
     fun schedule(context: Context, task: TaskEntity) {
         try {
+            // Сначала всегда снимаем оба, чтобы не осталось устаревших.
+            cancelExact(context, task.id)
+            cancelSmart(context, task.id)
+
             if (!TaskReminderPreferences.isEnabled(context)) {
-                Logger.log(TAG, "schedule(${task.id}): reminders disabled, cancel")
-                cancel(context, task.id)
+                Logger.log(TAG, "schedule(${task.id}): reminders disabled, skip")
                 return
             }
 
             if (task.isDone || task.isDeleted) {
-                Logger.log(TAG, "schedule(${task.id}): task done/deleted, cancel")
-                cancel(context, task.id)
+                Logger.log(TAG, "schedule(${task.id}): task done/deleted, skip")
                 return
             }
 
+            val now = System.currentTimeMillis()
+
+            // ── ПУТЬ 2a: точный remindAt ──
+            val remindAt = task.remindAt
+            if (remindAt != null && remindAt > now) {
+                scheduleExact(context, task.id, remindAt, "remindAt")
+                return
+            }
+
+            // ── ПУТЬ 2b: из dueDate (за N минут до) ──
             val dueDate = task.dueDate
-            if (dueDate == null) {
-                // 🆕 НЕ cancel — просто пропускаем. На Шагах 3–4 здесь
-                // подключится remindAt / autoRemind.
-                Logger.log(TAG, "schedule(${task.id}): no dueDate, skip (Path 2/3 not implemented yet)")
-                return
-            }
-
-            val triggerAt = computeTriggerAtMillis(context, dueDate)
-            if (triggerAt <= System.currentTimeMillis()) {
-                Logger.log(TAG, "schedule(${task.id}): trigger in past ($triggerAt), cancel")
-                cancel(context, task.id)
-                return
-            }
-
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val pendingIntent = buildPendingIntent(context, task.id)
-
-            if (canScheduleExact(alarmManager)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAt,
-                        pendingIntent
-                    )
-                } else {
-                    alarmManager.setExact(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAt,
-                        pendingIntent
-                    )
+            if (remindAt == null && dueDate != null) {
+                val triggerAt = dueDate - DUE_SOON_MINUTES * 60_000L
+                if (triggerAt > now) {
+                    scheduleExact(context, task.id, triggerAt, "dueDate-$DUE_SOON_MINUTES min")
+                    return
                 }
-                Logger.log(
-                    TAG,
-                    "schedule(${task.id}): exact alarm at ${formatTime(triggerAt)} (task='${task.title}')"
-                )
-            } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAt,
-                        pendingIntent
-                    )
-                } else {
-                    alarmManager.set(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAt,
-                        pendingIntent
-                    )
-                }
-                Logger.log(
-                    TAG,
-                    "schedule(${task.id}): INEXACT alarm (no exact permission) at ${formatTime(triggerAt)}"
-                )
+                // dueDate в прошлом — уходим в умный пинг (если включён).
             }
+
+            // ── ПУТЬ 3: умный пинг ──
+            if (task.autoRemindEnabled) {
+                val nextSmartAt = computeNextSmartPingAt(context, task, now)
+                if (nextSmartAt > now) {
+                    scheduleSmart(context, task.id, nextSmartAt)
+                    return
+                }
+            }
+
+            Logger.log(TAG, "schedule(${task.id}): no remindAt, no dueDate, autoRemind off — silent")
         } catch (e: Exception) {
             Logger.log(TAG, "schedule(${task.id}) error: ${e.message}")
         }
     }
 
     /**
-     * Снять alarm для задачи.
+     * Снять ОБА alarm для задачи (точный и умный).
      */
     fun cancel(context: Context, taskId: String) {
+        cancelExact(context, taskId)
+        cancelSmart(context, taskId)
+    }
+
+    // ============================================================
+    // ТОЧНЫЙ ALARM
+    // ============================================================
+
+    private fun scheduleExact(context: Context, taskId: String, triggerAt: Long, reason: String) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = buildPendingIntent(context, taskId, smart = false)
+
+        if (canScheduleExact(alarmManager)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            }
+            Logger.log(
+                TAG,
+                "scheduleExact($taskId): exact alarm at ${formatTime(triggerAt)} ($reason)"
+            )
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.set(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            }
+            Logger.log(
+                TAG,
+                "scheduleExact($taskId): INEXACT alarm (no exact permission) at ${formatTime(triggerAt)} ($reason)"
+            )
+        }
+    }
+
+    private fun cancelExact(context: Context, taskId: String) {
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val pendingIntent = buildPendingIntent(context, taskId)
+            val pendingIntent = buildPendingIntent(context, taskId, smart = false)
             alarmManager.cancel(pendingIntent)
             pendingIntent.cancel()
-            Logger.log(TAG, "cancel($taskId): done")
         } catch (e: Exception) {
-            Logger.log(TAG, "cancel($taskId) error: ${e.message}")
+            Logger.log(TAG, "cancelExact($taskId) error: ${e.message}")
         }
+    }
+
+    // ============================================================
+    // УМНЫЙ ALARM (Путь 3)
+    // ============================================================
+
+    private fun scheduleSmart(context: Context, taskId: String, triggerAt: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = buildPendingIntent(context, taskId, smart = true)
+
+        if (canScheduleExact(alarmManager)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.set(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            }
+        }
+        Logger.log(
+            TAG,
+            "scheduleSmart($taskId): smart ping at ${formatTime(triggerAt)}"
+        )
+    }
+
+    private fun cancelSmart(context: Context, taskId: String) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pendingIntent = buildPendingIntent(context, taskId, smart = true)
+            alarmManager.cancel(pendingIntent)
+            pendingIntent.cancel()
+        } catch (e: Exception) {
+            Logger.log(TAG, "cancelSmart($taskId) error: ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // РАСЧЁТ УМНОГО ПИНГА
+    // ============================================================
+
+    /**
+     * Вычисляет момент следующего умного пинга.
+     *
+     * База — createdAt (возраст задачи), а не dueDate.
+     *
+     * Логика:
+     *  - если задача просрочена (dueDate < now) → следующий пинг «завтра утром»
+     *    (просрочка пингуется ежедневно, независимо от важности);
+     *  - иначе — интервал по важности:
+     *      URGENT / HIGH → 1 день
+     *      NORMAL        → 2 дня
+     *      LOW           → 3 дня
+     *    Следующий пинг = createdAt + N * intervalDays, сдвигаем вперёд,
+     *    пока не окажется в будущем. Время суток — из TaskReminderPreferences
+     *    (то же «утро», что и для точных напоминаний).
+     */
+    private fun computeNextSmartPingAt(context: Context, task: TaskEntity, now: Long): Long {
+        val isOverdue = task.dueDate != null && task.dueDate < now
+
+        val intervalDays = if (isOverdue) {
+            1
+        } else {
+            when (task.priority) {
+                TaskEntity.PRIORITY_URGENT, TaskEntity.PRIORITY_HIGH -> 1
+                TaskEntity.PRIORITY_NORMAL -> 2
+                else -> 3
+            }
+        }
+
+        val baseAt = task.createdAt
+        val intervalMs = intervalDays * 24L * 60L * 60L * 1000L
+
+        // Кандидат: base + N * interval. Если уже в прошлом — сдвигаем на день.
+        var candidate = alignToMorning(context, baseAt + intervalMs)
+        while (candidate <= now) {
+            candidate = alignToMorning(context, candidate + intervalMs)
+        }
+        return candidate
+    }
+
+    /**
+     * Приводит timestamp к «утру» из настроек напоминаний
+     * (час:минута из TaskReminderPreferences) в тот же день.
+     */
+    private fun alignToMorning(context: Context, ts: Long): Long {
+        val src = Calendar.getInstance().apply { timeInMillis = ts }
+        val target = Calendar.getInstance().apply {
+            set(Calendar.YEAR, src.get(Calendar.YEAR))
+            set(Calendar.MONTH, src.get(Calendar.MONTH))
+            set(Calendar.DAY_OF_MONTH, src.get(Calendar.DAY_OF_MONTH))
+            set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.getHour(context).coerceIn(0, 23))
+            set(Calendar.MINUTE, TaskReminderPreferences.getMinute(context).coerceIn(0, 59))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return target.timeInMillis
     }
 
     // ============================================================
     // ВНУТРЕННЕЕ
     // ============================================================
 
-    /**
-     * Читает ВСЕ задачи из БД в IO-потоке через runBlocking.
-     * Нужна только для синхронных обёрток (BootReceiver, BaseApplication).
-     *
-     * runBlocking здесь безопасен: вызывающий код уже не главный поток
-     * (мы внутри runBlocking переключились на Dispatchers.IO).
-     */
     private fun readAllTasksBlockingFromIo(context: Context): List<TaskEntity> {
         return runBlocking(Dispatchers.IO) {
             AppDatabase.getInstance(context).taskDao().getAllTasksBlocking()
         }
     }
 
-    /**
-     * Общая логика перепланирования: проходим по всем задачам,
-     * планируем/пропускаем/снимаем. Вынесено, чтобы не дублировать
-     * между rescheduleAll() и rescheduleAllSuspend().
-     */
     private fun doRescheduleAll(context: Context, tasks: List<TaskEntity>) {
         var scheduled = 0
         var skipped = 0
         for (task in tasks) {
-            if (task.isDone || task.isDeleted || task.dueDate == null) {
+            if (task.isDone || task.isDeleted) {
                 skipped++
                 continue
             }
@@ -273,48 +386,29 @@ object TaskReminderScheduler {
     }
 
     /**
-     * Вычисляет точное время срабатывания alarm:
-     * берёт дату из dueDate (год/месяц/день) и подставляет час:минуту
-     * из TaskReminderPreferences (глобальная настройка «во сколько напоминать»).
+     * PendingIntent для задачи.
+     *
+     * smart = false → точный пинг (requestCode = taskId.hashCode())
+     * smart = true  → умный пинг (requestCode = taskId.hashCode() + SMART_REQUEST_OFFSET)
+     *
+     * В extras кладём флаг smart, чтобы TaskReminderReceiver знал,
+     * какой alarm сработал и что делать после показа.
      */
-    private fun computeTriggerAtMillis(context: Context, dueDate: Long): Long {
-        val due = Calendar.getInstance().apply { timeInMillis = dueDate }
-        val target = Calendar.getInstance().apply {
-            set(Calendar.YEAR, due.get(Calendar.YEAR))
-            set(Calendar.MONTH, due.get(Calendar.MONTH))
-            set(Calendar.DAY_OF_MONTH, due.get(Calendar.DAY_OF_MONTH))
-            set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.getHour(context).coerceIn(0, 23))
-            set(Calendar.MINUTE, TaskReminderPreferences.getMinute(context).coerceIn(0, 59))
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return target.timeInMillis
-    }
-
-    /**
-     * Собирает PendingIntent на TaskReminderReceiver для конкретной задачи.
-     */
-    private fun buildPendingIntent(context: Context, taskId: String): PendingIntent {
+    private fun buildPendingIntent(context: Context, taskId: String, smart: Boolean): PendingIntent {
         val intent = Intent(context, TaskReminderReceiver::class.java).apply {
             action = TaskReminderReceiver.ACTION_REMIND
             putExtra(TaskReminderReceiver.EXTRA_TASK_ID, taskId)
+            putExtra(TaskReminderReceiver.EXTRA_IS_SMART, smart)
         }
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
-        return PendingIntent.getBroadcast(
-            context,
-            taskId.hashCode(),
-            intent,
-            flags
-        )
+        val requestCode = if (smart) taskId.hashCode() + SMART_REQUEST_OFFSET else taskId.hashCode()
+        return PendingIntent.getBroadcast(context, requestCode, intent, flags)
     }
 
-    /**
-     * Проверка, можно ли ставить точные alarms.
-     */
     private fun canScheduleExact(alarmManager: AlarmManager): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             alarmManager.canScheduleExactAlarms()
