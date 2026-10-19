@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
  *  - Счётчик активных задач
  *  - Soft-delete (tombstone, №10 v19)
  *  - 🆕 v15: логирование изменений в outbox (changelog)
+ *  - 🆕 v18.2.0 (шаг 2): напоминания — Путь 2 (remindAt) + Путь 3 (умный пинг)
  *
  * НЕ отвечает за синхронизацию — это в CatalogRepository / SyncManager.
  */
@@ -109,14 +110,31 @@ class TaskRepository(
     // СОЗДАНИЕ
     // ============================================================
 
+    /**
+     * Создать задачу.
+     *
+     * 🆕 v18.2.0 (шаг 2): параметры напоминаний.
+     *  - remindAt: точный момент напоминания (Путь 2). null = нет точного.
+     *  - autoRemindEnabled: умный пинг «пока не сделаю» (Путь 3). По умолчанию true.
+     *
+     * Вызывающий код (диалог создания) должен передать:
+     *  - remindAt = выбранное «Когда напомнить» (по умолчанию «сегодня 19:00»);
+     *  - autoRemindEnabled = чекбокс «Напоминать, пока не сделаю» (по умолчанию true).
+     *
+     * Если remindAt не передан — задача всё равно получит умный пинг
+     * (autoRemindEnabled = true), т.е. не останется совсем без напоминаний.
+     */
     suspend fun addTask(
         title: String,
         note: String?,
         priority: Int,
         dueDate: Long?,
         recurrence: Int,
-        createdBy: String
+        createdBy: String,
+        remindAt: Long? = null,
+        autoRemindEnabled: Boolean = true
     ): TaskEntity = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
         val task = TaskEntity(
             title = title.trim(),
             note = note?.trim()?.takeIf { it.isNotEmpty() },
@@ -124,8 +142,10 @@ class TaskRepository(
             dueDate = dueDate,
             recurrence = recurrence,
             createdBy = createdBy,
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
+            createdAt = now,
+            updatedAt = now,
+            remindAt = remindAt,
+            autoRemindEnabled = autoRemindEnabled
         )
         taskDao.insert(task)
         OutboxLogger.taskChanged(
@@ -153,6 +173,84 @@ class TaskRepository(
         updated
     }
 
+    /**
+     * 🆕 v18.2.0 (шаг 2): точечно обновить «Когда напомнить» (Путь 2).
+     *
+     * Читает задачу, ставит remindAt, помечает pending, логирует в outbox
+     * и возвращает обновлённую задачу (или null, если задачи нет).
+     *
+     * @param remindAt null — снять точное напоминание (тогда останется
+     *                 только умный пинг, если autoRemindEnabled = true).
+     */
+    suspend fun updateRemindAt(
+        taskId: String,
+        remindAt: Long?,
+        changedBy: String
+    ): TaskEntity? = withContext(Dispatchers.IO) {
+        val task = taskDao.getLiveById(taskId) ?: return@withContext null
+        val now = System.currentTimeMillis()
+        taskDao.updateRemindAt(taskId, remindAt, now)
+
+        // Перечитываем, чтобы outbox уехал с актуальными полями
+        val updated = taskDao.getById(taskId) ?: return@withContext null
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = changedBy
+        )
+        updated
+    }
+
+    /**
+     * 🆕 v18.2.0 (шаг 2): включить/выключить умный пинг у конкретной задачи (Путь 3).
+     */
+    suspend fun setAutoRemindEnabled(
+        taskId: String,
+        enabled: Boolean,
+        changedBy: String
+    ): TaskEntity? = withContext(Dispatchers.IO) {
+        val task = taskDao.getLiveById(taskId) ?: return@withContext null
+        val now = System.currentTimeMillis()
+        taskDao.updateAutoRemindEnabled(taskId, enabled, now)
+
+        val updated = taskDao.getById(taskId) ?: return@withContext null
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = changedBy
+        )
+        updated
+    }
+
+    /**
+     * 🆕 v18.2.0 (шаг 2): сбросить точный remindAt после показа уведомления.
+     *
+     * Вызывается из TaskReminderReceiver, когда точный пинг уже сработал.
+     * Дальше задача либо уйдёт в умный пинг (autoRemindEnabled = true),
+     * либо замолчит (autoRemindEnabled = false).
+     *
+     * dueDate при этом НЕ трогаем — задача остаётся с тем же дедлайном.
+     */
+    suspend fun clearRemindAtAfterNotification(
+        taskId: String,
+        changedBy: String
+    ): TaskEntity? = withContext(Dispatchers.IO) {
+        val task = taskDao.getLiveById(taskId) ?: return@withContext null
+        val now = System.currentTimeMillis()
+        taskDao.clearRemindAt(taskId, now)
+
+        val updated = taskDao.getById(taskId) ?: return@withContext null
+        OutboxLogger.taskChanged(
+            db = db,
+            task = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = changedBy
+        )
+        updated
+    }
+
     // ============================================================
     // ВЫПОЛНЕНИЕ (с логикой повторов)
     // ============================================================
@@ -164,6 +262,10 @@ class TaskRepository(
      * новая задача-клон с dueDate + period и recurrenceSource = originalId.
      *
      * 🆕 v15: обе задачи (выполненная + клон) уходят в outbox.
+     *
+     * 🆕 v18.2.0 (шаг 2): при выполнении сбрасываем remindAt у выполненной
+     * задачи (точный пинг больше не нужен), а клон получает remindAt
+     * со сдвигом на тот же период, что и dueDate.
      */
     suspend fun markDone(
         taskId: String,
@@ -177,7 +279,8 @@ class TaskRepository(
             isDone = true,
             doneAt = now,
             doneBy = doneBy,
-            updatedAt = now
+            updatedAt = now,
+            remindAt = null  // 🆕 точный пинг больше не нужен
         )
         taskDao.update(done)
         OutboxLogger.taskChanged(
@@ -197,6 +300,10 @@ class TaskRepository(
     /**
      * Снять отметку «выполнено».
      * Клон НЕ удаляем — он самостоятельная задача.
+     *
+     * 🆕 v18.2.0 (шаг 2): remindAt не восстанавливаем автоматически —
+     * если нужно, пользователь выставит его заново. Умный пинг
+     * (autoRemindEnabled) продолжит работать как обычно.
      */
     suspend fun markUndone(taskId: String): TaskEntity? = withContext(Dispatchers.IO) {
         val task = taskDao.getById(taskId) ?: return@withContext null
@@ -221,6 +328,10 @@ class TaskRepository(
     /**
      * Создаёт клон повторяющейся задачи со сдвигом dueDate.
      * 🆕 v15: клон тоже пишется в outbox.
+     *
+     * 🆕 v18.2.0 (шаг 2): если у оригинала был remindAt, сдвигаем его
+     * на тот же период, что и dueDate (чтобы точный пинг клона
+     * сработал вовремя).
      */
     private suspend fun createRecurrenceClone(
         original: TaskEntity,
@@ -229,6 +340,9 @@ class TaskRepository(
         val baseDate = original.dueDate ?: System.currentTimeMillis()
         val nextDate = addPeriod(baseDate, original.recurrence)
 
+        val nextRemindAt = original.remindAt?.let { addPeriod(it, original.recurrence) }
+
+        val now = System.currentTimeMillis()
         val clone = TaskEntity(
             title = original.title,
             note = original.note,
@@ -239,8 +353,10 @@ class TaskRepository(
             recurrenceSource = original.id,
             sortOrder = original.sortOrder,
             createdBy = createdBy,
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
+            createdAt = now,
+            updatedAt = now,
+            remindAt = nextRemindAt,
+            autoRemindEnabled = original.autoRemindEnabled
         )
         taskDao.insert(clone)
         OutboxLogger.taskChanged(
@@ -329,6 +445,45 @@ class TaskRepository(
         taskDao.hardDeleteConfirmedTasks(ids)
         ids.size
     }
+
+    // ============================================================
+    // 🆕 v18.2.0 (шаг 2): ВЫБОРКИ ДЛЯ ПЛАНИРОВЩИКА
+    // ============================================================
+
+    /**
+     * 🆕 Путь 2: задачи с точным напоминанием, которое наступит до `beforeMs`.
+     * Нужно планировщику, чтобы перепланировать ближайшие alarms.
+     */
+    suspend fun getTasksWithRemindAtBefore(beforeMs: Long): List<TaskEntity> =
+        withContext(Dispatchers.IO) {
+            taskDao.getTasksWithRemindAtBefore(beforeMs)
+        }
+
+    /**
+     * 🆕 Путь 2: все задачи с заданным точным напоминанием.
+     * Используется rescheduleAll, чтобы не потерять будущие remindAt.
+     */
+    suspend fun getTasksWithRemindAt(): List<TaskEntity> =
+        withContext(Dispatchers.IO) {
+            taskDao.getTasksWithRemindAt()
+        }
+
+    /**
+     * 🆕 Путь 3: задачи, которым нужен умный пинг (нет remindAt,
+     * autoRemindEnabled = 1, dueDate NULL или в прошлом).
+     */
+    suspend fun getTasksNeedingSmartPing(nowMs: Long): List<TaskEntity> =
+        withContext(Dispatchers.IO) {
+            taskDao.getTasksNeedingSmartPing(nowMs)
+        }
+
+    /**
+     * 🆕 Путь 3: только просроченные задачи (dueDate < now).
+     */
+    suspend fun getOverdueTasks(nowMs: Long): List<TaskEntity> =
+        withContext(Dispatchers.IO) {
+            taskDao.getOverdueTasks(nowMs)
+        }
 
     // ============================================================
     // ДЛЯ СИНКА (используется CatalogRepository)
