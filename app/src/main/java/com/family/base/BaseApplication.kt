@@ -33,13 +33,6 @@ class BaseApplication : Application(), ImageLoaderFactory {
 
         // ============================================================
         // ГЛОБАЛЬНЫЙ СКОУП ДЛЯ ФОНОВЫХ ЗАДАЧ
-        // Живёт всё время жизни процесса приложения.
-        // Используется, например, для тихого скачивания фото
-        // при открытии карточки предмета — задача не прерывается,
-        // если пользователь свернул приложение или закрыл активити.
-        //
-        // 🆕 v18.2.0 (шаг 1): также используется для rescheduleAllSuspend —
-        // чтобы чтение БД для планировщика не шло через главный поток.
         // ============================================================
         val applicationScope: CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -90,28 +83,17 @@ class BaseApplication : Application(), ImageLoaderFactory {
 
         Logger.init(this)
 
-        // Применяем сохранённую тему до создания UI
         applySavedTheme(this)
 
-        // Создаём глобальный MainViewModel — живёт всё время жизни приложения
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
 
-        // 🆕 AlarmManager: канал уведомлений для напоминаний
+        // Канал уведомлений для напоминаний
         ensureReminderChannel(this)
 
-        // 🆕 AlarmManager: восстановление напоминаний при холодном старте.
-        //
-        // ⚠️ v18.2.0 (шаг 1): раньше здесь вызывался TaskReminderScheduler.rescheduleAll(this)
-        // прямо в onCreate → главный поток → Room бросал
-        // "Cannot access database on the main thread" → try/catch → ни одна
-        // задача не планировалась. Отсюда «утром ничего не пришло».
-        //
-        // Теперь запускаем через applicationScope (Dispatchers.IO) и
-        // suspend-версию rescheduleAllSuspend — чтение БД уходит с главного
-        // потока, а сам onCreate не блокируется.
-        //
-        // В try/catch — если планировщик даст сбой, приложение продолжит работу.
+        // 🆕 v20.1.0 (Вариант A): глобальное время суток убрано.
+        // Здесь по-прежнему только isEnabled — читаем флаг «напоминания включены».
+        // Планировщик сам решит: per-task remindAt / dueDate-15мин / умный пинг 08:00.
         try {
             if (TaskReminderPreferences.isEnabled(this)) {
                 applicationScope.launch {
@@ -130,13 +112,6 @@ class BaseApplication : Application(), ImageLoaderFactory {
         }
     }
 
-    /**
-     * Создать канал уведомлений для напоминаний (Android 8+).
-     * Безопасно вызывать многократно — повторное создание игнорируется системой.
-     *
-     * 🆕 AlarmManager: канал принадлежит TaskReminderReceiver (там же используется).
-     * Важность HIGH — напоминание должно быть заметным.
-     */
     private fun ensureReminderChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         try {
