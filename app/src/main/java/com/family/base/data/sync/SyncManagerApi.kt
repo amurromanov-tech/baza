@@ -15,7 +15,8 @@ import java.net.UnknownHostException
 /**
  * Тонкий сетевой слой для SyncManager.
  *
- * Отвечает только за работу с папкой /BAZA/changelog/:
+ * Отвечает только за работу с папкой /BAZA/changelog/ и с файлами фото
+ * (нужны для cleanup tombstones):
  *  - список файлов;
  *  - загрузка одного файла;
  *  - скачивание одного файла;
@@ -28,15 +29,15 @@ import java.net.UnknownHostException
  * новые changelog-файлы были невидимыми, и синк «залипал».
  *
  * 🆕 v17.3.0 (хвост №8): downloadChangelogFile теперь делает до 2 попыток
- * с задержкой 500 мс при 5xx / DNS / timeout. Разовые 500 от Яндекса
- * больше не теряют файл до следующего синка. 4xx — без retry
- * (бессмысленно, файла нет или нет прав).
+ * с задержкой 500 мс при 5xx / DNS / timeout.
  *
  * 🆕 v17.4.0 (хвост №3): deleteChangelogFile теперь тоже делает до 2 попыток
- * с задержкой 500 мс при 5xx / 429 / DNS / timeout. 4xx (кроме 429) — без retry.
- * Раньше разовый 500 при удалении оставлял файл на Диске до следующего cleanup.
+ * с задержкой 500 мс при 5xx / 429 / DNS / timeout.
  *
- * 🆕 B3: пути changelog берутся из DiskPaths — никаких магических строк.
+ * 🆕 B3: пути changelog и фото берутся из DiskPaths — никаких магических строк.
+ *
+ * 🆕 v19 (№10): deleteItemImageFile / deleteFolderImageFile — для cleanup
+ * tombstones, чтобы Диск не раздувался фотографиями удалённых предметов.
  */
 class SyncManagerApi {
 
@@ -104,9 +105,6 @@ class SyncManagerApi {
      *  - 404 → создаём папку (это не ошибка).
      *
      * 🆕 v17.0.7: явно передаём limit в getDiskResources.
-     * Хотя для проверки существования папки нам нужно только одно поле,
-     * явный limit защищает от скрытых кэшей и странных ответов.
-     *
      * 🆕 B3: пути — из DiskPaths.
      */
     suspend fun ensureChangelogFolder(): Boolean {
@@ -180,9 +178,6 @@ class SyncManagerApi {
      * null — если сетевая ошибка (важно: НЕ пустой список!).
      *
      * 🆕 v17.0.7: явно передаём limit = 1000.
-     * Это ГЛАВНЫЙ фикс: без limit Яндекс отдавал только 20 файлов,
-     * и всё, что старше, было невидимым → синк «залипал».
-     *
      * 🆕 B3: путь — из DiskPaths.
      */
     suspend fun listChangelogFiles(): List<String>? {
@@ -232,7 +227,6 @@ class SyncManagerApi {
     /**
      * Заливает JSON-пакет на Диск.
      * fileName — только имя (например, "abc-123_1730000000000.json").
-     *
      * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
     suspend fun uploadChangelogFile(fileName: String, jsonBytes: ByteArray): Boolean {
@@ -274,21 +268,10 @@ class SyncManagerApi {
 
     /**
      * Скачивает JSON-пакет с Диска.
-     * fileName — только имя.
-     * null — если ошибка или файла нет.
+     * fileName — только имя. null — если ошибка или файла нет.
      *
      * 🆕 v17.3.0 (хвост №8): до DOWNLOAD_MAX_ATTEMPTS попыток
      * с паузой DOWNLOAD_RETRY_DELAY_MS при 5xx / DNS / timeout.
-     *
-     * Логика:
-     *  - 4xx (кроме 429) — сразу null, без retry (файла нет или нет прав).
-     *  - 429 — retry (rate limit, может пройти).
-     *  - 5xx / DNS / timeout / любое исключение — retry до исчерпания попыток.
-     *  - 200 — сразу bytes.
-     *
-     * Это закрывает разовые 500 от Яндекса, из-за которых раньше
-     * файл терялся до следующего синка (он уже мог быть в processed
-     * на другом устройстве, и синк «залипал»).
      *
      * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
@@ -301,12 +284,10 @@ class SyncManagerApi {
 
         for (attempt in 1..DOWNLOAD_MAX_ATTEMPTS) {
             try {
-                // 1. Получаем ссылку на скачивание
                 val urlResponse = api.getDiskDownloadUrl(auth, path)
                 if (!urlResponse.isSuccessful) {
                     val code = urlResponse.code()
 
-                    // 4xx — бессмысленно ретраить (кроме 429)
                     if (code in 400..499 && code != 429) {
                         Logger.log(TAG, "downloadChangelogFile: getDownloadUrl 4xx for $fileName, code=$code, no retry")
                         return null
@@ -340,7 +321,6 @@ class SyncManagerApi {
                     return null
                 }
 
-                // 2. Скачиваем файл по ссылке
                 val downloadResponse = api.downloadFile(href)
                 if (!downloadResponse.isSuccessful) {
                     val code = downloadResponse.code()
@@ -395,30 +375,68 @@ class SyncManagerApi {
     }
 
     // ============================================================
-    // DELETE
+    // DELETE — CHANGELOG
     // ============================================================
 
     /**
      * Удаляет файл changelog с Диска.
-     * Используется для очистки своих старых пакетов и чужих
-     * (уже обработанных) в SyncManager.cleanup.
      *
      * 🆕 v17.4.0 (хвост №3): до DELETE_MAX_ATTEMPTS попыток
      * с паузой DELETE_RETRY_DELAY_MS при 5xx / 429 / DNS / timeout.
-     *
-     * Логика:
-     *  - 4xx (кроме 429) — сразу false, без retry (файла нет или нет прав).
-     *    404 считается успехом: файла уже нет, цель достигнута.
-     *  - 429 — retry (rate limit).
-     *  - 5xx / DNS / timeout / исключение — retry до исчерпания попыток.
-     *  - 200/204 — успех.
+     * 404 считается успехом (файла нет — цель достигнута).
      *
      * 🆕 B3: путь — из DiskPaths.changelogFile().
      */
     suspend fun deleteChangelogFile(fileName: String): Boolean {
+        val path = DiskPaths.changelogFile(fileName)
+        return deleteFileByPathInternal(path, label = "deleteChangelogFile($fileName)")
+    }
+
+    // ============================================================
+    // 🆕 v19 (№10): DELETE — ФОТО (для cleanup tombstones)
+    // ============================================================
+
+    /**
+     * Удаляет файл фото предмета с Диска.
+     * Используется при физическом удалении подтверждённого tombstone
+     * (cleanup старше 1 года), чтобы Диск не раздувался.
+     *
+     * 404 = успех (файла нет — цель достигнута).
+     * 🆕 B3: путь — из DiskPaths.itemImage().
+     */
+    suspend fun deleteItemImageFile(itemId: String): Boolean {
+        val path = DiskPaths.itemImage(itemId)
+        return deleteFileByPathInternal(path, label = "deleteItemImageFile($itemId)")
+    }
+
+    /**
+     * Удаляет файл иконки папки с Диска.
+     * Используется при физическом удалении подтверждённого tombstone.
+     *
+     * 🆕 B3: путь — из DiskPaths.folderImage().
+     */
+    suspend fun deleteFolderImageFile(folderId: String): Boolean {
+        val path = DiskPaths.folderImage(folderId)
+        return deleteFileByPathInternal(path, label = "deleteFolderImageFile($folderId)")
+    }
+
+    // ============================================================
+    // УНИВЕРСАЛЬНОЕ УДАЛЕНИЕ ПО ПУТИ (с retry)
+    // ============================================================
+
+    /**
+     * Внутренний метод: удаляет файл по абсолютному пути на Диске
+     * с теми же правилами, что и deleteChangelogFile:
+     *  - 200/204 — успех;
+     *  - 404 — успех (файла нет);
+     *  - 4xx (кроме 429) — false без retry;
+     *  - 429 / 5xx / DNS / timeout / исключение — retry до DELETE_MAX_ATTEMPTS.
+     *
+     * label — для логов (какой именно файл удаляем).
+     */
+    private suspend fun deleteFileByPathInternal(path: String, label: String): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
-        val path = DiskPaths.changelogFile(fileName)
 
         var lastError: String? = null
 
@@ -428,27 +446,24 @@ class SyncManagerApi {
                 val code = response.code()
 
                 if (response.isSuccessful) {
-                    Logger.log(TAG, "deleteChangelogFile: deleted $fileName")
+                    Logger.log(TAG, "$label: deleted $path")
                     return true
                 }
 
-                // 404 — файла уже нет, считаем успехом
                 if (code == 404) {
-                    Logger.log(TAG, "deleteChangelogFile: $fileName already missing (404), treat as success")
+                    Logger.log(TAG, "$label: $path already missing (404), treat as success")
                     return true
                 }
 
-                // 4xx — бессмысленно ретраить (кроме 429)
                 if (code in 400..499 && code != 429) {
-                    Logger.log(TAG, "deleteChangelogFile: 4xx for $fileName, code=$code, no retry")
+                    Logger.log(TAG, "$label: 4xx for $path, code=$code, no retry")
                     return false
                 }
 
                 lastError = "code=$code"
                 Logger.log(
                     TAG,
-                    "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
-                        "for $fileName failed, code=$code"
+                    "$label: attempt $attempt/$DELETE_MAX_ATTEMPTS failed for $path, code=$code"
                 )
                 if (attempt < DELETE_MAX_ATTEMPTS) {
                     delay(DELETE_RETRY_DELAY_MS)
@@ -460,14 +475,12 @@ class SyncManagerApi {
                 if (isDnsError(e)) {
                     Logger.log(
                         TAG,
-                        "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
-                            "DNS failure for $fileName: ${e.message}"
+                        "$label: attempt $attempt/$DELETE_MAX_ATTEMPTS DNS failure for $path: ${e.message}"
                     )
                 } else {
                     Logger.log(
                         TAG,
-                        "deleteChangelogFile: attempt $attempt/$DELETE_MAX_ATTEMPTS " +
-                            "error for $fileName: ${e.message}"
+                        "$label: attempt $attempt/$DELETE_MAX_ATTEMPTS error for $path: ${e.message}"
                     )
                 }
                 if (attempt < DELETE_MAX_ATTEMPTS) {
@@ -478,7 +491,7 @@ class SyncManagerApi {
             }
         }
 
-        Logger.log(TAG, "deleteChangelogFile: all $DELETE_MAX_ATTEMPTS attempts failed for $fileName (last=$lastError)")
+        Logger.log(TAG, "$label: all $DELETE_MAX_ATTEMPTS attempts failed for $path (last=$lastError)")
         return false
     }
 }
