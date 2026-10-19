@@ -1,11 +1,13 @@
 package com.family.base.data.sync
 
+import com.family.base.BaseApplication
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.DeviceIdProvider
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.TaskEntity
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -32,7 +34,16 @@ import com.google.gson.JsonSyntaxException
  *
  * 🆕 B3: прямых путей в этом классе нет — вся работа с путями
  * делегирована SyncManagerApi, который использует DiskPaths.
- * Правок по путям здесь не требуется.
+ *
+ * 🆕 v19 (№10): tombstones.
+ *  - После успешного PUSH вызываем confirmItemDeleted / confirmFolderDeleted /
+ *    confirmTaskDeleted для всех сущностей, которые сейчас isDeleted = true.
+ *    Это значит: удаление разошлось по всем устройствам, можно через год
+ *    физически удалить.
+ *  - В cleanup добавлен блок 4: физическое удаление подтверждённых
+ *    tombstones старше TOMBSTONE_RETENTION_MS (365 дней). Вместе с ними
+ *    удаляются фото на локальном диске и на Яндекс.Диске, чтобы база
+ *    и облако не раздувались.
  */
 class SyncManager(
     private val db: AppDatabase,
@@ -52,6 +63,14 @@ class SyncManager(
 
         /** Записи outbox со статусом synced старше этого возраста чистим */
         private const val OUTBOX_SYNCED_TTL_MS = 7L * 24 * 60 * 60 * 1000 // 7 дней
+
+        /**
+         * 🆕 v19 (№10): сколько хранить подтверждённые tombstones перед
+         * физическим удалением. 1 год — с большим запасом: даже если
+         * какое-то устройство не выходило в сеть год, оно получит
+         * пакет с tombstone из changelog раньше, чем мы удалим запись.
+         */
+        private const val TOMBSTONE_RETENTION_MS = 365L * 24 * 60 * 60 * 1000 // 1 год
     }
 
     /**
@@ -90,7 +109,7 @@ class SyncManager(
      */
     suspend fun syncChangelogs(): SyncResult {
         val deviceId: String = try {
-            val ctx = com.family.base.BaseApplication.getAppContext()
+            val ctx = BaseApplication.getAppContext()
             DeviceIdProvider.get(ctx)
         } catch (e: Exception) {
             Logger.log(TAG, "syncChangelogs: cannot get app context: ${e.message}")
@@ -221,6 +240,9 @@ class SyncManager(
         // Помечаем сущности как synced
         markEntitiesSynced(pending)
 
+        // 🆕 v19 (№10): подтверждаем tombstones — PUSH прошёл, удаление разошлось.
+        confirmTombstones(pending)
+
         Logger.log(TAG, "pushPendingChanges: uploaded $fileName with ${entries.size} entries")
         return Triple(1, entries.size, false)
     }
@@ -250,6 +272,61 @@ class SyncManager(
             )
         } catch (e: Exception) {
             Logger.log(TAG, "markEntitiesSynced error: ${e.message}")
+        }
+    }
+
+    /**
+     * 🆕 v19 (№10): после успешного PUSH подтверждаем tombstones.
+     *
+     * Для каждой outbox-записи читаем сущность из БД. Если она сейчас
+     * в состоянии tombstone (isDeleted = true) — ставим deleteConfirmed = 1.
+     * Это значит: PUSH уже прошёл, удаление разошлось по всем устройствам,
+     * cleanup может физически удалить запись через TOMBSTONE_RETENTION_MS.
+     *
+     * Внимание: читаем именно из БД (а не из outbox payload), потому что
+     * сущность могли обновить ещё раз между формированием outbox и PUSH
+     * (например, пользователь после удаления нажал «отменить» — но у нас
+     * отмены нет; тем не менее, читать актуальную версию правильнее).
+     */
+    private suspend fun confirmTombstones(entries: List<OutboxEntity>) {
+        var itemsConfirmed = 0
+        var foldersConfirmed = 0
+        var tasksConfirmed = 0
+
+        try {
+            for (out in entries) {
+                when (out.entityType) {
+                    OutboxEntity.ENTITY_ITEM -> {
+                        val item = db.itemDao().getItemById(out.entityId)
+                        if (item != null && item.isDeleted && !item.deleteConfirmed) {
+                            db.itemDao().confirmItemDeleted(out.entityId)
+                            itemsConfirmed++
+                        }
+                    }
+                    OutboxEntity.ENTITY_FOLDER -> {
+                        val folder = db.folderDao().getFolderById(out.entityId)
+                        if (folder != null && folder.isDeleted && !folder.deleteConfirmed) {
+                            db.folderDao().confirmFolderDeleted(out.entityId)
+                            foldersConfirmed++
+                        }
+                    }
+                    OutboxEntity.ENTITY_TASK -> {
+                        val task = db.taskDao().getById(out.entityId)
+                        if (task != null && task.isDeleted && !task.deleteConfirmed) {
+                            db.taskDao().confirmTaskDeleted(out.entityId)
+                            tasksConfirmed++
+                        }
+                    }
+                }
+            }
+            if (itemsConfirmed + foldersConfirmed + tasksConfirmed > 0) {
+                Logger.log(
+                    TAG,
+                    "confirmTombstones: items=$itemsConfirmed, folders=$foldersConfirmed, tasks=$tasksConfirmed"
+                )
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "confirmTombstones error: ${e.message}")
         }
     }
 
@@ -291,7 +368,6 @@ class SyncManager(
         }
 
         // Фильтруем: имя файла = "{batchId}.json".
-        // Без continue/break внутри лямбды — только чистый filter.
         val candidates: List<String> = files.filter { fileName ->
             val id = fileName.removeSuffix(".json")
             !processedIds.contains(id)
@@ -391,22 +467,13 @@ class SyncManager(
      *  - outbox (synced старше 7 дней);
      *  - processed_changelogs (старше 30 дней);
      *  - свои файлы changelog на Диске (старше 7 дней);
-     *  - 🆕 v17.3.0: чужие файлы changelog на Диске (старше 30 дней,
-     *    уже обработанные локально — есть в processed_changelogs).
+     *  - чужие файлы changelog на Диске (старше 30 дней, уже обработанные);
+     *  - 🆕 v19 (№10): физически удаляет подтверждённые tombstones
+     *    старше TOMBSTONE_RETENTION_MS (365 дней) вместе с их фото
+     *    (локально и на Диске).
      *
      * ⚠️ Переписано без `continue` внутри лямбд, чтобы не упасть
      * на экспериментальной фиче Kotlin.
-     *
-     * 🆕 v17.3.0: логика удаления чужих файлов:
-     *  1. Берём batchId, обработанные локально раньше (now - 30 дней).
-     *  2. Из списка файлов на Диске отбираем те, чьё имя = "{batchId}.json"
-     *     и чей batchId в этом наборе.
-     *  3. Удаляем.
-     *
-     * Это безопасно: файл чужого устройства удаляется, только если
-     * мы его уже применили и с тех пор прошло 30 дней. Если мы его
-     * ещё не обработали (например, не докачали из-за 500) — он НЕ
-     * попадёт в набор, и cleanup его не тронет.
      */
     private suspend fun cleanup(deviceId: String) {
         val now = System.currentTimeMillis()
@@ -427,59 +494,141 @@ class SyncManager(
             Logger.log(TAG, "cleanup processed_changelogs error: ${e.message}")
         }
 
-        // 3. Файлы на Диске
+        // 3. Файлы changelog на Диске
         try {
             val files = api.listChangelogFiles()
-            if (files == null) {
-                return
-            }
+            if (files != null) {
+                val ownCutoff = now - OWN_BATCH_TTL_MS
+                val foreignCutoff = now - PROCESSED_TTL_MS
 
-            val ownCutoff = now - OWN_BATCH_TTL_MS
-            val foreignCutoff = now - PROCESSED_TTL_MS
+                // 🆕 v17.3.0: batchId чужих файлов, уже обработанных нами
+                // и достаточно старых, чтобы их можно было удалить с Диска.
+                val oldProcessedBatchIds: Set<String> = try {
+                    db.processedChangelogDao()
+                        .getProcessedOlderThan(foreignCutoff)
+                        .toSet()
+                } catch (e: Exception) {
+                    Logger.log(TAG, "cleanup: cannot read getProcessedOlderThan: ${e.message}")
+                    emptySet()
+                }
 
-            // 🆕 v17.3.0: batchId чужих файлов, уже обработанных нами
-            // и достаточно старых, чтобы их можно было удалить с Диска.
-            val oldProcessedBatchIds: Set<String> = try {
-                db.processedChangelogDao()
-                    .getProcessedOlderThan(foreignCutoff)
-                    .toSet()
-            } catch (e: Exception) {
-                Logger.log(TAG, "cleanup: cannot read getProcessedOlderThan: ${e.message}")
-                emptySet()
-            }
+                val toDelete = files.filter { fileName ->
+                    val batchId = fileName.removeSuffix(".json")
+                    val isOwn = batchId.startsWith(deviceId)
+                    val timestamp = batchId.substringAfterLast('_').toLongOrNull()
 
-            // Собираем список файлов для удаления БЕЗ continue внутри лямбды.
-            val toDelete = files.filter { fileName ->
-                val batchId = fileName.removeSuffix(".json")
-                val isOwn = batchId.startsWith(deviceId)
-                val timestamp = batchId.substringAfterLast('_').toLongOrNull()
+                    val ownOld = isOwn && timestamp != null && timestamp < ownCutoff
+                    val foreignOld = !isOwn && oldProcessedBatchIds.contains(batchId)
 
-                // Свои — старше 7 дней.
-                val ownOld = isOwn && timestamp != null && timestamp < ownCutoff
+                    ownOld || foreignOld
+                }
 
-                // Чужие — старше 30 дней И уже в processed_changelogs.
-                val foreignOld = !isOwn && oldProcessedBatchIds.contains(batchId)
+                var deletedCount = 0
+                var failedCount = 0
+                for (fileName in toDelete) {
+                    val ok = api.deleteChangelogFile(fileName)
+                    if (ok) deletedCount++ else failedCount++
+                }
 
-                ownOld || foreignOld
-            }
-
-            var deletedCount = 0
-            var failedCount = 0
-            for (fileName in toDelete) {
-                val ok = api.deleteChangelogFile(fileName)
-                if (ok) deletedCount++ else failedCount++
-            }
-
-            if (toDelete.isNotEmpty()) {
-                Logger.log(
-                    TAG,
-                    "cleanup: disk files — candidates=${toDelete.size}, " +
-                        "deleted=$deletedCount, failed=$failedCount, " +
-                        "(own TTL=$OWN_BATCH_TTL_MS ms, foreign TTL=$PROCESSED_TTL_MS ms)"
-                )
+                if (toDelete.isNotEmpty()) {
+                    Logger.log(
+                        TAG,
+                        "cleanup: disk files — candidates=${toDelete.size}, " +
+                            "deleted=$deletedCount, failed=$failedCount, " +
+                            "(own TTL=$OWN_BATCH_TTL_MS ms, foreign TTL=$PROCESSED_TTL_MS ms)"
+                    )
+                }
             }
         } catch (e: Exception) {
             Logger.log(TAG, "cleanup disk files error: ${e.message}")
+        }
+
+        // 4. 🆕 v19 (№10): физическое удаление подтверждённых tombstones
+        cleanupConfirmedTombstones(now)
+    }
+
+    /**
+     * 🆕 v19 (№10): физически удаляет подтверждённые tombstones
+     * старше TOMBSTONE_RETENTION_MS.
+     *
+     * Для каждой сущности:
+     *  1. Удаляем фото с Яндекс.Диска (через SyncManagerApi).
+     *  2. Удаляем фото с локального диска (через ImageUtils).
+     *  3. Удаляем запись из Room.
+     *
+     * Если удаление с Диска не удалось — всё равно удаляем локально.
+     * Файл на Диске можно попробовать удалить в следующий раз (но id
+     * уже не будет в БД, поэтому повторно мы его не тронем — это
+     * осознанный компромисс: не залипаем на сетевых ошибках).
+     */
+    private suspend fun cleanupConfirmedTombstones(now: Long) {
+        val cutoff = now - TOMBSTONE_RETENTION_MS
+        val appContext = try {
+            BaseApplication.getAppContext()
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones: cannot get app context: ${e.message}")
+            return
+        }
+
+        // --- ITEMS ---
+        try {
+            val itemIds = db.itemDao().getConfirmedItemsOlderThan(cutoff)
+            if (itemIds.isNotEmpty()) {
+                var diskDeleted = 0
+                var diskFailed = 0
+                for (id in itemIds) {
+                    if (api.deleteItemImageFile(id)) diskDeleted++ else diskFailed++
+                    try {
+                        ImageUtils.deleteLocalImage(appContext, id)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "cleanupConfirmedTombstones: local image delete error for $id: ${e.message}")
+                    }
+                }
+                db.itemDao().hardDeleteConfirmedItems(itemIds)
+                Logger.log(
+                    TAG,
+                    "cleanupConfirmedTombstones: removed ${itemIds.size} items " +
+                        "(disk images: deleted=$diskDeleted, failed=$diskFailed)"
+                )
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones items error: ${e.message}")
+        }
+
+        // --- FOLDERS ---
+        try {
+            val folderIds = db.folderDao().getConfirmedFoldersOlderThan(cutoff)
+            if (folderIds.isNotEmpty()) {
+                var diskDeleted = 0
+                var diskFailed = 0
+                for (id in folderIds) {
+                    if (api.deleteFolderImageFile(id)) diskDeleted++ else diskFailed++
+                    try {
+                        ImageUtils.deleteLocalImage(appContext, "folder_$id")
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "cleanupConfirmedTombstones: local folder image delete error for $id: ${e.message}")
+                    }
+                }
+                db.folderDao().hardDeleteConfirmedFolders(folderIds)
+                Logger.log(
+                    TAG,
+                    "cleanupConfirmedTombstones: removed ${folderIds.size} folders " +
+                        "(disk icons: deleted=$diskDeleted, failed=$diskFailed)"
+                )
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones folders error: ${e.message}")
+        }
+
+        // --- TASKS (без фото) ---
+        try {
+            val taskIds = db.taskDao().getConfirmedTasksOlderThan(cutoff)
+            if (taskIds.isNotEmpty()) {
+                db.taskDao().hardDeleteConfirmedTasks(taskIds)
+                Logger.log(TAG, "cleanupConfirmedTombstones: removed ${taskIds.size} tasks")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones tasks error: ${e.message}")
         }
     }
 }
