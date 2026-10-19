@@ -351,7 +351,11 @@ class MainActivity : AppCompatActivity() {
   *
   * 🆕 v20.1.1: дополнительно собирает агрегаты (📦 N · 💰 X ₽)
   * для всех обычных папок, которые сейчас на экране, и передаёт их
-  * в адаптер. Один batch-запрос getFolderStatsShallow — без N+1.
+  * в адаптер. Один batch-запрос — без N+1.
+  *
+  * 🆕 v20.1.2: обычные папки теперь считаются РЕКУРСИВНО — как «Покупки».
+  * «Продукты», «Лекарства», «Вещи» и т.д. показывают количество и сумму
+  * по всем своим подпапкам.
   */
  private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
@@ -386,7 +390,12 @@ class MainActivity : AppCompatActivity() {
   *
   * Список папок берём из viewModel.currentEntries.value — это те же
   * объекты, что сейчас на экране. Для них одним batch-запросом
-  * достаём количество и сумму прямых предметов.
+  * достаём количество и сумму.
+  *
+  * 🆕 v20.1.2: для обычных папок используем РЕКУРСИВНЫЙ batch-запрос
+  * (getFolderStatsRecursiveBatch) — «Продукты» считает всё, что лежит
+  * в её подпапках, как «🛒 Покупки». Один SQL-запрос на все папки,
+  * без N+1.
   */
  private fun loadFolderStats() {
      lifecycleScope.launch {
@@ -399,17 +408,17 @@ class MainActivity : AppCompatActivity() {
                  .map { it.id }
 
              val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
-                 // batch по обычным папкам — один запрос
+                 // 🆕 v20.1.2: batch по обычным папкам — рекурсивно, один запрос
                  val map: Map<String, FolderStatsRow> =
                      if (ordinaryFolderIds.isEmpty()) {
                          emptyMap()
                      } else {
                          db.itemDao()
-                             .getFolderStatsShallow(ordinaryFolderIds)
+                             .getFolderStatsRecursiveBatch(ordinaryFolderIds)
                              .associateBy { it.folderId }
                      }
 
-                 // рекурсивно по «Покупкам» — один запрос
+                 // рекурсивно по «Покупкам» — один запрос (без изменений)
                  val pStats = db.itemDao()
                      .getFolderStatsRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
 
