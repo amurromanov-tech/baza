@@ -215,7 +215,7 @@
             tools:visibility="visible" />
 
         <!-- ============================================================ -->
-        <!-- v14.1.0: НАПОМИНАНИЕ -->
+        <!-- v14.1.0: ГЛОБАЛЬНАЯ НАСТРОЙКА НАПОМИНАНИЙ                     -->
         <!-- ============================================================ -->
 
         <View
@@ -229,7 +229,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Напоминать о делах"
+            android:text="Напоминания о делах включены"
             android:textSize="14sp" />
 
         <TextView
@@ -237,7 +237,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text="Раз в день присылать уведомление о задачах с дедлайном сегодня или завтра."
+            android:text="Глобальный переключатель. Если выключен — никакие напоминания не приходят."
             android:textColor="?android:attr/textColorSecondary"
             android:textSize="11sp" />
 
@@ -286,10 +286,93 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Настройка общая для всех задач. Уведомление появится, если есть задачи с дедлайном сегодня или завтра."
+            android:text="Время суток, в которое приходят точные и умные напоминания."
             android:textColor="?android:attr/textColorSecondary"
             android:textSize="11sp"
             android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- ============================================================ -->
+        <!-- 🆕 v18.2.0 (шаг 2): НАПОМИНАНИЕ ДЛЯ ЭТОЙ ЗАДАЧИ               -->
+        <!--    Путь 2 (remindAt) + Путь 3 (autoRemindEnabled)             -->
+        <!-- ============================================================ -->
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:background="?android:attr/listDivider" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Когда напомнить"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+        <!-- Точное напоминание: дата + время -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/textRemindAt"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="Не задано (только умный пинг)"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="14sp"
+                tools:text="19.10.2026 19:00" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPickRemindAt"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:text="🕐 Дата и время" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearRemindAt"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:text="✖ Сброс" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Точное время, когда придёт уведомление именно об этой задаче."
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11sp" />
+
+        <!-- Умный пинг -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchAutoRemind"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Напоминать, пока не сделаю"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/textAutoRemindHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Умный пинг: важные задачи — ежедневно, обычные — раз в 2 дня, несрочные — раз в 3 дня. Просроченные — ежедневно."
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11sp"
             tools:visibility="visible" />
 
     </LinearLayout>
