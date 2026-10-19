@@ -2,6 +2,7 @@ package com.family.base.data.local.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
 
@@ -13,8 +14,28 @@ import java.util.UUID
  * архивации. Зато есть приоритет, дедлайн, повтор, статус выполнения.
  *
  * Синхронизируется через общий changelog (v15), наравне с items и folders.
+ *
+ * 🆕 v18.1.2 (fix миграции 18→19): добавлены indices для
+ * isDeleted и (deleteConfirmed, deletedAt).
+ *
+ * Миграция 18→19 создаёт индексы:
+ *   CREATE INDEX index_tasks_isDeleted ON tasks(isDeleted);
+ *   CREATE INDEX index_tasks_deleteConfirmed_deletedAt ON tasks(deleteConfirmed, deletedAt);
+ *
+ * Без @Entity(indices=...) Room ожидал indices=[], а в БД они есть —
+ * валидация схемы падала с "Migration didn't properly handle: tasks".
+ * Теперь ожидаемые и фактические индексы совпадают.
  */
-@Entity(tableName = "tasks")
+@Entity(
+    tableName = "tasks",
+    indices = [
+        Index(value = ["isDeleted"], name = "index_tasks_isDeleted"),
+        Index(
+            value = ["deleteConfirmed", "deletedAt"],
+            name = "index_tasks_deleteConfirmed_deletedAt"
+        )
+    ]
+)
 data class TaskEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
 
