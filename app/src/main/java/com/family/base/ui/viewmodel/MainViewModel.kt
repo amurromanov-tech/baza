@@ -601,6 +601,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // УДАЛЕНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
+    /**
+     * 🆕 v19 (№10): tombstone внутри CatalogViewModel.
+     * Сигнатура без изменений — UI-вызовы не правим.
+     */
     fun deleteItem(itemId: String) {
         viewModelScope.launch { catalogViewModel.deleteItem(itemId) }
     }
