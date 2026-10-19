@@ -12,12 +12,14 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.TaskEntity
+import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.TaskListActivity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -25,20 +27,20 @@ import kotlinx.coroutines.withContext
  *
  * Вызывается AlarmManager'ом ровно в момент напоминания (см. TaskReminderScheduler).
  *
- * Что делает:
- *  1. Достаёт taskId из extras.
- *  2. Читает задачу из БД (TaskDao.getById).
- *  3. Если задача ещё актуальна (не выполнена, не удалена) — показывает
- *     персональное уведомление с её названием.
+ * 🆕 v18.2.0 (шаг 2): два типа alarm.
+ *  - EXTRA_IS_SMART = false → точный пинг (Путь 2: remindAt или dueDate-15мин).
+ *    После показа уведомления: сбрасываем remindAt у задачи (точный пинг
+ *    больше не нужен), outbox-логируем. Дальше задача либо уйдёт в умный пинг
+ *    (если autoRemindEnabled = true), либо замолчит.
+ *  - EXTRA_IS_SMART = true → умный пинг (Путь 3).
+ *    После показа уведомления: перепланируем следующий умный пинг на
+ *    следующий интервал по важности (через TaskReminderScheduler.schedule).
  *
- * Клик по уведомлению открывает TaskListActivity.
+ * ⚠️ onReceive работает в главном потоке. Чтение БД и запись (сброс remindAt,
+ * outbox) — через goAsync() + BaseApplication.applicationScope.launch,
+ * чтобы не ловить "Cannot access database on the main thread" (урок из шага 1).
  *
  * Регистрируется в AndroidManifest.xml.
- *
- * ⚠️ onReceive работает в главном потоке — БД читаем через runBlocking
- * с коротким таймаутом. Для одной задачи это быстро (Room + индекс по id).
- * Если когда-нибудь понадобится показывать много уведомлений — переделаем
- * на goAsync() + корутину.
  */
 class TaskReminderReceiver : BroadcastReceiver() {
 
@@ -50,6 +52,9 @@ class TaskReminderReceiver : BroadcastReceiver() {
 
         /** Ключ extras: id задачи. */
         const val EXTRA_TASK_ID = "extra_task_id"
+
+        /** 🆕 v18.2.0 (шаг 2): true — умный пинг (Путь 3), false — точный (Путь 2). */
+        const val EXTRA_IS_SMART = "extra_is_smart"
 
         /** Канал уведомлений. */
         const val CHANNEL_ID = "baza_task_reminders"
@@ -76,7 +81,9 @@ class TaskReminderReceiver : BroadcastReceiver() {
                 return
             }
 
-            Logger.log(TAG, "onReceive: taskId=$taskId")
+            val isSmart = intent.getBooleanExtra(EXTRA_IS_SMART, false)
+
+            Logger.log(TAG, "onReceive: taskId=$taskId, isSmart=$isSmart")
 
             // 1. Проверяем разрешение на уведомления (Android 13+)
             if (!hasNotificationPermission(context)) {
@@ -84,47 +91,91 @@ class TaskReminderReceiver : BroadcastReceiver() {
                 return
             }
 
-            // 2. Читаем задачу из БД. Короткий runBlocking — это BroadcastReceiver,
-            //    тут нельзя запускать долгие корутины без goAsync.
-            val task = readTaskBlocking(context, taskId)
-            if (task == null) {
-                Logger.log(TAG, "onReceive: task $taskId not found, skip")
-                return
-            }
+            // 2. goAsync — даём ресиверу дожить до конца корутины:
+            //    нужно прочитать задачу, показать уведомление и обновить БД
+            //    (сброс remindAt / outbox / перепланирование).
+            val pendingResult = goAsync()
+            val appContext = context.applicationContext
 
-            if (task.isDone) {
-                Logger.log(TAG, "onReceive: task $taskId already done, skip")
-                return
+            BaseApplication.applicationScope.launch {
+                try {
+                    handleReminder(appContext, taskId, isSmart)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "handleReminder error: ${e.message}", e)
+                } finally {
+                    try {
+                        pendingResult.finish()
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "pendingResult.finish error: ${e.message}")
+                    }
+                }
             }
-            if (task.isDeleted) {
-                Logger.log(TAG, "onReceive: task $taskId deleted, skip")
-                return
-            }
-
-            // 3. Показываем уведомление
-            showNotification(context, task)
-
-            Logger.log(TAG, "onReceive: notification shown for '$task.title'")
         } catch (e: Exception) {
             Logger.log(TAG, "onReceive error: ${e.message}")
         }
     }
 
     // ============================================================
-    // ЧТЕНИЕ ЗАДАЧИ
+    // ОСНОВНАЯ ЛОГИКА (в корутине, IO)
     // ============================================================
 
-    private fun readTaskBlocking(context: Context, taskId: String): TaskEntity? {
-        return try {
-            runBlocking {
-                withContext(Dispatchers.IO) {
-                    val db = AppDatabase.getInstance(context)
-                    db.taskDao().getById(taskId)
-                }
+    private suspend fun handleReminder(context: Context, taskId: String, isSmart: Boolean) {
+        // 1. Читаем задачу из БД (с IO-диспетчером).
+        val db = AppDatabase.getInstance(context)
+        val task = withContext(Dispatchers.IO) { db.taskDao().getById(taskId) }
+
+        if (task == null) {
+            Logger.log(TAG, "handleReminder: task $taskId not found, skip")
+            return
+        }
+        if (task.isDone) {
+            Logger.log(TAG, "handleReminder: task $taskId already done, skip")
+            return
+        }
+        if (task.isDeleted) {
+            Logger.log(TAG, "handleReminder: task $taskId deleted, skip")
+            return
+        }
+
+        // 2. Показываем уведомление (разный текст для точного и умного).
+        showNotification(context, task, isSmart)
+
+        // 3. Пост-обработка.
+        if (isSmart) {
+            // Умный пинг: перепланируем следующий на следующий интервал.
+            // schedule() сам разберётся: если autoRemindEnabled = false —
+            // снимет оба alarm и задача замолчит.
+            try {
+                TaskReminderScheduler.schedule(context, task)
+                Logger.log(TAG, "handleReminder: smart ping rescheduled for '$taskId'")
+            } catch (e: Exception) {
+                Logger.log(TAG, "handleReminder: reschedule smart error: ${e.message}")
             }
-        } catch (e: Exception) {
-            Logger.log(TAG, "readTaskBlocking($taskId) error: ${e.message}")
-            null
+        } else {
+            // Точный пинг: сбрасываем remindAt (он уже сработал), логируем
+            // в outbox. dueDate не трогаем — задача остаётся с тем же сроком.
+            try {
+                val repository = TaskRepository(context, db)
+                val updated = repository.clearRemindAtAfterNotification(
+                    taskId = taskId,
+                    changedBy = task.createdBy
+                )
+                Logger.log(
+                    TAG,
+                    "handleReminder: remindAt cleared for '$taskId' " +
+                        "(updated=${updated != null})"
+                )
+
+                // Перепланируем: теперь у задачи может включиться умный пинг
+                // (если autoRemindEnabled = true и dueDate нет/в прошлом)
+                // или задача замолчит (если autoRemindEnabled = false).
+                val refreshed = withContext(Dispatchers.IO) { db.taskDao().getById(taskId) }
+                if (refreshed != null) {
+                    TaskReminderScheduler.schedule(context, refreshed)
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "handleReminder: clearRemindAt error: ${e.message}")
+            }
         }
     }
 
@@ -139,7 +190,7 @@ class TaskReminderReceiver : BroadcastReceiver() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun showNotification(context: Context, task: TaskEntity) {
+    private fun showNotification(context: Context, task: TaskEntity, isSmart: Boolean) {
         ensureChannel(context)
 
         // Клик по уведомлению открывает TaskListActivity
@@ -158,8 +209,13 @@ class TaskReminderReceiver : BroadcastReceiver() {
             pendingFlags
         )
 
-        val title = "🏠 Напоминание"
-        val body = task.title
+        // 🆕 v18.2.0 (шаг 2): разный заголовок для точного и умного пинга.
+        val title = if (isSmart) "🏠 Напоминание (умное)" else "🏠 Напоминание"
+        val body = if (isSmart) {
+            "Долго висит: ${task.title}"
+        } else {
+            task.title
+        }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -172,11 +228,18 @@ class TaskReminderReceiver : BroadcastReceiver() {
             .setContentIntent(pendingIntent)
             .build()
 
-        val notificationId = BASE_NOTIFICATION_ID + task.id.hashCode()
+        // ID уведомления: точный и умный для одной задачи НЕ должны
+        // перекрывать друг друга (на всякий случай), поэтому
+        // для умного — отдельный суффикс.
+        val notificationId = if (isSmart) {
+            BASE_NOTIFICATION_ID + task.id.hashCode() + 1
+        } else {
+            BASE_NOTIFICATION_ID + task.id.hashCode()
+        }
 
         try {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
-            Logger.log(TAG, "showNotification: shown for '$body' (id=$notificationId)")
+            Logger.log(TAG, "showNotification: shown for '$body' (id=$notificationId, smart=$isSmart)")
         } catch (e: SecurityException) {
             Logger.log(TAG, "showNotification security error: ${e.message}")
         }
