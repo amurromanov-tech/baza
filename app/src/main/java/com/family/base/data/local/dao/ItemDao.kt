@@ -589,6 +589,67 @@ interface ItemDao {
     suspend fun getItemsByParentIds(folderIds: List<String>): List<ItemEntity>
 
     // ============================================================
+    // 🆕 v20.1.1: СТАТИСТИКА ПАПОК (количество + сумма)
+    // ============================================================
+
+    /**
+     * 🆕 v20.1.1: агрегаты по СПИСКУ папок за один запрос — чтобы
+     * не делать N+1 при отрисовке списка каталога.
+     *
+     * Считаем только прямых детей-предметов:
+     *  - parentItemId IS NULL — предметы внутри предметов-контейнеров
+     *    не учитываем, иначе счётчик папки раздуется;
+     *  - isArchived = 0 — архивные в папке не видны;
+     *  - isDeleted = 0 — tombstones не считаем.
+     *
+     * Сумма: SUM(price * quantity). Если у всех детей price = NULL,
+     * COALESCE вернёт 0.0 — отличаем «нет цены» от «пусто» по itemCount.
+     *
+     * ВАЖНО: parentId здесь — это id папки, а не предмета.
+     */
+    @Query("""
+        SELECT parentId AS folderId,
+               COUNT(*) AS itemCount,
+               COALESCE(SUM(price * quantity), 0.0) AS totalPrice
+        FROM items
+        WHERE parentId IN (:folderIds)
+          AND parentItemId IS NULL
+          AND isArchived = 0
+          AND isDeleted = 0
+        GROUP BY parentId
+    """)
+    suspend fun getFolderStatsShallow(folderIds: List<String>): List<FolderStatsRow>
+
+    /**
+     * 🆕 v20.1.1: рекурсивная статистика для системной папки «Покупки».
+     *
+     * Предметы лежат в подпапках «Покупка DD.MM.YYYY #N», поэтому
+     * обходим дерево папок через CTE (по folders.parentId), затем
+     * агрегируем предметы по всем найденным папкам.
+     *
+     * Возвращает null, если в дереве нет ни одного подходящего предмета
+     * (COUNT(*) в агрегатном запросе без GROUP BY всегда даёт строку,
+     * поэтому проверяем itemCount > 0 в коде).
+     */
+    @Query("""
+        WITH RECURSIVE folder_tree(id) AS (
+            SELECT :folderId
+            UNION ALL
+            SELECT f.id FROM folders f
+            INNER JOIN folder_tree ft ON f.parentId = ft.id
+        )
+        SELECT :folderId AS folderId,
+               COUNT(*) AS itemCount,
+               COALESCE(SUM(price * quantity), 0.0) AS totalPrice
+        FROM items
+        WHERE parentId IN (SELECT id FROM folder_tree)
+          AND parentItemId IS NULL
+          AND isArchived = 0
+          AND isDeleted = 0
+    """)
+    suspend fun getFolderStatsRecursive(folderId: String): FolderStatsRow?
+
+    // ============================================================
     // ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
     // ============================================================
 
@@ -707,4 +768,13 @@ interface ItemDao {
 data class ArchiveStatsRow(
     val archivedReason: String?,
     val total: Double?
+)
+
+// ============================================================
+// 🆕 v20.1.1: МОДЕЛЬ ДЛЯ СТАТИСТИКИ ПАПКИ (количество + сумма)
+// ============================================================
+data class FolderStatsRow(
+    val folderId: String,
+    val itemCount: Int,
+    val totalPrice: Double
 )
