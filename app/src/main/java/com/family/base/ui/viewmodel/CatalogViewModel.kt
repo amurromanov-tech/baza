@@ -38,6 +38,17 @@ import java.util.UUID
  *  - deleteFolder: содержимое подпапки «🛒 Покупок» уезжает
  *    в корень «🛒 Списка покупок», а не в корень базы;
  *  - unarchiveItem: страховка от «битого» parentId.
+ *
+ * 🆕 v19 (№10): tombstones.
+ *  - deleteItem / deleteFolder → markItemDeleted / markFolderDeleted,
+ *    без hard-delete. Удаление уходит через changelog, чтобы
+ *    разойтись по всем устройствам.
+ *  - При частичном списании, если original.quantity == 0 — tombstone,
+ *    а не hard-delete.
+ *  - При слиянии части с оригиналом — tombstone.
+ *  - Фото живой tombstone НЕ удаляем сразу: это сделает cleanup
+ *    через TOMBSTONE_RETENTION_MS (1 год) вместе с физическим
+ *    удалением записи и файла с Диска.
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -171,6 +182,9 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v19 (№10): tombstone вместо hard-delete.
+     */
     suspend fun detachAllChildrenAndDelete(itemId: String): Boolean {
         return try {
             val item = db.itemDao().getItemById(itemId)
@@ -181,9 +195,11 @@ class CatalogViewModel(
             val detached = repository.detachAllChildren(itemId)
             Logger.log(TAG, "detachAllChildrenAndDelete: detached $detached children from $itemId")
 
-            db.itemDao().deleteItem(item)
-            ImageUtils.deleteLocalImage(appContext(), itemId)
-            OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
+            val now = System.currentTimeMillis()
+            db.itemDao().markItemDeleted(itemId, now, currentUser)
+            db.itemDao().getItemById(itemId)?.let { fresh ->
+                OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+            }
 
             writeHistory(
                 itemId = itemId,
@@ -193,7 +209,7 @@ class CatalogViewModel(
                 newValue = null
             )
 
-            Logger.log(TAG, "detachAllChildrenAndDelete: parent $itemId deleted")
+            Logger.log(TAG, "detachAllChildrenAndDelete: parent $itemId tombstoned")
             onContentsChanged()
             true
         } catch (e: Exception) {
@@ -352,14 +368,20 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v19 (№10): tombstone вместо hard-delete.
+     */
     suspend fun detachAllFolderChildrenAndDelete(folderId: String): Boolean {
         return try {
             detachAllFolderChildren(folderId)
 
             val folder = withContext(Dispatchers.IO) { db.folderDao().getFolderById(folderId) }
             if (folder != null) {
-                withContext(Dispatchers.IO) { db.folderDao().deleteFolderById(folderId) }
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
+                val now = System.currentTimeMillis()
+                db.folderDao().markFolderDeleted(folderId, now, currentUser)
+                db.folderDao().getFolderById(folderId)?.let { fresh ->
+                    OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                }
 
                 writeHistory(
                     itemId = folderId,
@@ -516,10 +538,8 @@ class CatalogViewModel(
 
     /**
      * 🆕 v17.0.10: восстановление из архива.
-     *
-     * Страховка: если parentId предмета битый (папки нет) —
-     * вернуть предмет в корень «🛒 Списка покупок»,
-     * а не оставлять с висячим parentId.
+     * 🆕 v19: слияние части с оригиналом — tombstone (а не hard-delete),
+     * чтобы «часть» не воскресла через changelog с другого устройства.
      */
     suspend fun unarchiveItem(itemId: String) {
         try {
@@ -536,7 +556,6 @@ class CatalogViewModel(
 
             if (originalId == null) {
                 db.itemDao().unarchiveItem(itemId, System.currentTimeMillis())
-                // после unarchive — выставляем безопасный parentId, если он отличался
                 val fresh = db.itemDao().getItemById(itemId)
                 if (fresh != null && fresh.parentId != safeParentId) {
                     val fixed = fresh.copy(parentId = safeParentId)
@@ -569,10 +588,13 @@ class CatalogViewModel(
                     db.itemDao().updateItem(updatedOriginal)
                     OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
-                    db.itemDao().deleteItemById(itemId)
-                    OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-
-                    ImageUtils.deleteLocalImage(appContext(), itemId)
+                    // 🆕 v19: tombstone вместо hard-delete.
+                    val now = System.currentTimeMillis()
+                    db.itemDao().markItemDeleted(itemId, now, currentUser)
+                    db.itemDao().getItemById(itemId)?.let { fresh ->
+                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                    }
+                    // Фото не удаляем — cleanup через год удалит запись и фото.
 
                     writeHistory(
                         itemId = originalId,
@@ -687,6 +709,7 @@ class CatalogViewModel(
             val oldParentId = item.parentId
 
             if (count == item.quantity) {
+                // Полное списание → архив (НЕ tombstone — архив это архив).
                 db.itemDao().archiveItem(itemId, reasonKey, now, note)
                 db.itemDao().getItemById(itemId)?.let { fresh ->
                     OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -751,11 +774,12 @@ class CatalogViewModel(
 
                 val newQty = item.quantity - count
                 if (newQty == 0) {
-                    withContext(Dispatchers.IO) {
-                        db.itemDao().deleteItemById(itemId)
+                    // 🆕 v19 (№10): tombstone вместо hard-delete.
+                    db.itemDao().markItemDeleted(itemId, now, currentUser)
+                    db.itemDao().getItemById(itemId)?.let { fresh ->
+                        OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
-                    OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
-                    ImageUtils.deleteLocalImage(appContext(), itemId)
+                    // Фото не удаляем — cleanup через год удалит.
 
                     writeHistory(
                         itemId = newId,
@@ -765,7 +789,7 @@ class CatalogViewModel(
                         newValue = "Списано $count шт. (оригинал удалён, ${getArchiveReasonText(reasonKey)})"
                     )
 
-                    Logger.log(TAG, "writeOffItem: partial → original deleted (qty was $count)")
+                    Logger.log(TAG, "writeOffItem: partial → original tombstoned (qty was $count)")
                 } else {
                     val updatedOriginal = item.copy(
                         quantity = newQty,
@@ -1105,10 +1129,11 @@ class CatalogViewModel(
      * «Покупка DD.MM.YYYY #N»), то её содержимое (активные + архивные)
      * уезжает в корень «🛒 Списка покупок», а не в корень базы.
      *
-     * Для всех остальных папок поведение прежнее — всё в корень (null).
+     * 🆕 v19 (№10): сама папка теперь помечается tombstone, а не удаляется
+     * физически. Это нужно, чтобы удаление разошлось по всем устройствам
+     * и не «воскресло» при merge. Cleanup удалит запись через 1 год.
      */
-   
-           suspend fun deleteFolder(folderId: String) {
+    suspend fun deleteFolder(folderId: String) {
         try {
             val folder = db.folderDao().getFolderById(folderId)
 
@@ -1151,8 +1176,11 @@ class CatalogViewModel(
                     }
                 }
 
-                db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folderName)
+                // 🆕 v19: tombstone вместо hard-delete.
+                db.folderDao().markFolderDeleted(folderId, now, currentUser)
+                db.folderDao().getFolderById(folderId)?.let { fresh ->
+                    OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                }
 
                 writeHistory(
                     itemId = folderId,
@@ -1168,8 +1196,11 @@ class CatalogViewModel(
 
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
-                db.folderDao().deleteFolderById(folderId)
-                OutboxLogger.folderDeleted(db, folderId, currentUser, folderName)
+                // 🆕 v19: tombstone вместо hard-delete.
+                db.folderDao().markFolderDeleted(folderId, now, currentUser)
+                db.folderDao().getFolderById(folderId)?.let { fresh ->
+                    OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                }
 
                 writeHistory(
                     itemId = folderId,
@@ -1185,6 +1216,7 @@ class CatalogViewModel(
             Logger.log(TAG, "Error deleting folder: ${e.message}")
         }
     }
+
     // ============================================================
     // ПЕРЕМЕЩЕНИЯ
     // ============================================================
@@ -1526,16 +1558,26 @@ class CatalogViewModel(
         if (text.length <= max) text else text.take(max) + "…"
 
     // ============================================================
-    // УДАЛЕНИЕ
+    // УДАЛЕНИЕ (TOMBSTONE, №10 v19)
     // ============================================================
 
+    /**
+     * 🆕 v19 (№10): tombstone вместо hard-delete.
+     *
+     * Фото НЕ удаляем сразу — оно уйдёт вместе с cleanup через 1 год.
+     * Иначе при синке фото может быть удалено на одном устройстве,
+     * а другое устройство ещё не получило tombstone — и увидит
+     * «битую» карточку.
+     */
     suspend fun deleteItem(itemId: String) {
         try {
             val item = db.itemDao().getItemById(itemId)
             if (item != null) {
-                db.itemDao().deleteItem(item)
-                ImageUtils.deleteLocalImage(appContext(), itemId)
-                OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
+                val now = System.currentTimeMillis()
+                db.itemDao().markItemDeleted(itemId, now, currentUser)
+                db.itemDao().getItemById(itemId)?.let { fresh ->
+                    OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+                }
 
                 writeHistory(
                     itemId = itemId,
@@ -1574,9 +1616,11 @@ class CatalogViewModel(
                 return
             }
 
-            db.itemDao().deleteItem(item)
-            ImageUtils.deleteLocalImage(appContext(), itemId)
-            OutboxLogger.itemDeleted(db, itemId, currentUser, item.name)
+            val now = System.currentTimeMillis()
+            db.itemDao().markItemDeleted(itemId, now, currentUser)
+            db.itemDao().getItemById(itemId)?.let { fresh ->
+                OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+            }
 
             writeHistory(
                 itemId = itemId,
@@ -1586,7 +1630,7 @@ class CatalogViewModel(
                 newValue = null
             )
 
-            Logger.log(TAG, "deleteItemSafely: deleted $itemId")
+            Logger.log(TAG, "deleteItemSafely: tombstone set for $itemId")
             onSuccess()
             onContentsChanged()
         } catch (e: Exception) {
@@ -1628,8 +1672,11 @@ class CatalogViewModel(
                 return
             }
 
-            db.folderDao().deleteFolderById(folderId)
-            OutboxLogger.folderDeleted(db, folderId, currentUser, folder.name)
+            val now = System.currentTimeMillis()
+            db.folderDao().markFolderDeleted(folderId, now, currentUser)
+            db.folderDao().getFolderById(folderId)?.let { fresh ->
+                OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
+            }
 
             writeHistory(
                 itemId = folderId,
@@ -1639,7 +1686,7 @@ class CatalogViewModel(
                 newValue = null
             )
 
-            Logger.log(TAG, "deleteFolderSafely: deleted $folderId")
+            Logger.log(TAG, "deleteFolderSafely: tombstone set for $folderId")
             onSuccess()
             onContentsChanged()
         } catch (e: Exception) {
