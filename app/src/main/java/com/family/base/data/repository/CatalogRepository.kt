@@ -6,6 +6,7 @@ import com.family.base.BaseApplication
 import com.family.base.Config
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.*
 import com.family.base.data.remote.YandexDiskApi
 import com.family.base.data.remote.model.UserModel
@@ -60,7 +61,7 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     suspend fun getAllFolders(): List<FolderEntity> {
-        return db.folderDao().getAllFolders()
+        return db.folderDao().getAllLiveFolders()
     }
 
     suspend fun createFolder(name: String, parentId: String?, parentPath: String?, creator: String): FolderEntity {
@@ -89,16 +90,64 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     /**
-     * Удаление папки.
+     * Удаление папки — tombstone (№10 v19).
+     *
      * ⚠️ Системные папки (isSystem = true) удалять НЕЛЬЗЯ.
+     * Физически запись не стирается: isDeleted = 1, syncStatus = 'pending',
+     * deleteConfirmed = 0. Уедет через changelog, чтобы удаление
+     * разошлось по всем устройствам и не воскресло при merge.
+     *
+     * @param folderId  id удаляемой папки.
+     * @param deletedBy кто удалил (AppUser.name).
      */
-    suspend fun deleteFolder(folderId: String) {
+    suspend fun deleteFolder(folderId: String, deletedBy: String) {
         val folder = db.folderDao().getFolderById(folderId)
-        if (folder?.isSystem == true) {
+        if (folder == null) {
+            Logger.log(TAG, "deleteFolder: folder not found $folderId")
+            return
+        }
+        if (folder.isSystem) {
             Logger.log(TAG, "deleteFolder: BLOCKED for system folder $folderId")
             return
         }
-        db.folderDao().deleteFolderById(folderId)
+        if (folder.isDeleted) {
+            Logger.log(TAG, "deleteFolder: already tombstone $folderId")
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        db.folderDao().markFolderDeleted(folderId, now, deletedBy)
+
+        val updated = db.folderDao().getFolderById(folderId) ?: return
+        OutboxLogger.folderChanged(
+            db = db,
+            folder = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = deletedBy
+        )
+        Logger.log(TAG, "deleteFolder: tombstone set for $folderId by $deletedBy")
+    }
+
+    /**
+     * Подтвердить tombstone папки после успешного PUSH.
+     * Вызывается из SyncManager.
+     */
+    suspend fun confirmFolderDeleted(folderId: String) {
+        db.folderDao().confirmFolderDeleted(folderId)
+    }
+
+    /**
+     * Физическое удаление подтверждённых tombstones папок старше thresholdMs.
+     * Вызывается из cleanup.
+     *
+     * @return количество физически удалённых записей.
+     */
+    suspend fun cleanupOldFolderTombstones(thresholdMs: Long): Int {
+        val ids = db.folderDao().getConfirmedFoldersOlderThan(thresholdMs)
+        if (ids.isEmpty()) return 0
+        db.folderDao().hardDeleteConfirmedFolders(ids)
+        Logger.log(TAG, "cleanupOldFolderTombstones: removed ${ids.size} folders")
+        return ids.size
     }
 
     /**
@@ -118,7 +167,7 @@ class CatalogRepository(private val db: AppDatabase) {
                 path = existing.path
             )
             db.folderDao().updateFolder(safe)
-            Logger.log(TAG, "updateFolderSafe: system folder $${updated.id} — protected fields unchanged")
+            Logger.log(TAG, "updateFolderSafe: system folder ${updated.id} — protected fields unchanged")
             return
         }
         db.folderDao().updateFolder(updated)
@@ -147,8 +196,64 @@ class CatalogRepository(private val db: AppDatabase) {
         db.itemDao().updateQuantity(itemId, newQty)
     }
 
-    suspend fun deleteItem(itemId: String) {
-        db.itemDao().getItemById(itemId)?.let { db.itemDao().deleteItem(it) }
+    /**
+     * Удаление предмета — tombstone (№10 v19).
+     *
+     * Физически запись не стирается: isDeleted = 1, syncStatus = 'pending',
+     * deleteConfirmed = 0. Уедет через changelog, чтобы удаление
+     * разошлось по всем устройствам и не воскресло при merge.
+     *
+     * Архив (isArchived = 1) — НЕ tombstone. Архивные предметы остаются
+     * в базе навсегда. Tombstone ставится только на ошибочно
+     * занесённые данные, которые пользователь хочет удалить.
+     *
+     * @param itemId    id удаляемого предмета.
+     * @param deletedBy кто удалил (AppUser.name).
+     */
+    suspend fun deleteItem(itemId: String, deletedBy: String) {
+        val item = db.itemDao().getItemById(itemId)
+        if (item == null) {
+            Logger.log(TAG, "deleteItem: not found $itemId")
+            return
+        }
+        if (item.isDeleted) {
+            Logger.log(TAG, "deleteItem: already tombstone $itemId")
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        db.itemDao().markItemDeleted(itemId, now, deletedBy)
+
+        val updated = db.itemDao().getItemById(itemId) ?: return
+        OutboxLogger.itemChanged(
+            db = db,
+            item = updated,
+            action = OutboxEntity.ACTION_UPDATE,
+            changedBy = deletedBy
+        )
+        Logger.log(TAG, "deleteItem: tombstone set for $itemId by $deletedBy")
+    }
+
+    /**
+     * Подтвердить tombstone предмета после успешного PUSH.
+     * Вызывается из SyncManager.
+     */
+    suspend fun confirmItemDeleted(itemId: String) {
+        db.itemDao().confirmItemDeleted(itemId)
+    }
+
+    /**
+     * Физическое удаление подтверждённых tombstones предметов старше thresholdMs.
+     * Вызывается из cleanup.
+     *
+     * @return количество физически удалённых записей.
+     */
+    suspend fun cleanupOldItemTombstones(thresholdMs: Long): Int {
+        val ids = db.itemDao().getConfirmedItemsOlderThan(thresholdMs)
+        if (ids.isEmpty()) return 0
+        db.itemDao().hardDeleteConfirmedItems(ids)
+        Logger.log(TAG, "cleanupOldItemTombstones: removed ${ids.size} items")
+        return ids.size
     }
 
     // ============================================================
@@ -605,25 +710,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ЧТЕНИЕ С ДИСКА
     // ============================================================
 
-    /**
-     * Читает timestamp из /BAZA/.last_modified.
-     *
-     * 🆕 B1.1: переписано через NetworkCallExecutor.
-     *  - Больше НЕ делает getDiskResources (это был лишний запрос).
-     *  - Сразу запрашивает download URL:
-     *      * 404 → 0L (файла нет — это валидный ответ, не ошибка);
-     *      * 200 → скачивает тело и парсит timestamp;
-     *      * 5xx/DNS/timeout → retry до 3 попыток.
-     *  - Возвращает:
-     *      * Long (>= 0) — успешное чтение;
-     *      * null — ошибка сети после всех ретраев.
-     *
-     * Раньше делал 3 запроса (getResources + getDownloadUrl + download)
-     * и мог висеть 30+ секунд на плохой сети. Теперь — 1-2 запроса
-     * и ограниченный бюджет по времени.
-     *
-     * 🆕 B3: путь — из DiskPaths.LAST_MODIFIED.
-     */
     suspend fun getDiskLastModified(): Long? {
         if (isDnsBlocked()) {
             Logger.log(TAG, "getDiskLastModified: DNS blocked")
@@ -641,27 +727,21 @@ class CatalogRepository(private val db: AppDatabase) {
             label = "getDiskLastModified",
             treat404AsSuccess = true
         ) {
-            // Шаг 1: получить ссылку на скачивание.
-            // getDiskResources НЕ вызываем — 404 тут обрабатывается тем же кодом.
             val urlResponse = api.getDiskDownloadUrl(auth, path)
             val urlCode = urlResponse.code()
 
             if (urlCode == 404) {
-                // Файла нет — валидный ответ. Значение null, код 404.
                 return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, 404)
             }
             if (!urlResponse.isSuccessful) {
-                // Пробрасываем код наружу — executor решит (retry для 5xx).
                 return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, urlCode)
             }
 
             val href = urlResponse.body()?.href
             if (href == null) {
-                // Странный ответ 200 без href — считаем как 5xx (retry).
                 return@runHttpSafely NetworkCallExecutor.HttpOutcome(null, 500)
             }
 
-            // Шаг 2: скачать тело.
             val downloadResponse = api.downloadFile(href)
             val dlCode = downloadResponse.code()
             if (!downloadResponse.isSuccessful) {
@@ -670,7 +750,6 @@ class CatalogRepository(private val db: AppDatabase) {
 
             val json = downloadResponse.body()?.string()
             if (json.isNullOrEmpty()) {
-                // Пустой файл — валидный ответ, timestamp = 0.
                 return@runHttpSafely NetworkCallExecutor.HttpOutcome(0L, 200)
             }
 
@@ -940,16 +1019,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * 🆕 Тихая загрузка фото предмета в виде сырых байтов (без декодирования в Bitmap).
-     * Используется в ItemDetailActivity для фонового докачивания фото при открытии карточки.
-     *
-     * Возвращает:
-     *  - ByteArray — если файл на Диске есть и скачался;
-     *  - null — если файла нет (404), нет сети, нет токена или любая другая ошибка.
-     *
-     * 🆕 B3: путь — из DiskPaths.itemImage().
-     */
     suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
         return withContext(Dispatchers.IO) {
             try {
@@ -1000,24 +1069,9 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 v17.2.7: ВОССТАНОВЛЕНИЕ (RESTORE)
+    // ВОССТАНОВЛЕНИЕ (RESTORE)
     // ============================================================
 
-    /**
-     * 🆕 v17.2.7: скачать restore-файл с Яндекс.Диска.
-     *
-     * Файлы лежат в /BAZA/restore/ и имеют имена:
-     *   - restore_items.json
-     *   - restore_folders.json
-     *   - restore_history.json
-     *   - restore_tasks.json
-     *
-     * Возвращает:
-     *   - String — сырой JSON, если файл есть и скачался;
-     *   - null — если файла нет (404), нет сети, нет токена или ошибка.
-     *
-     * 🆕 B3: путь — из DiskPaths.restoreFile().
-     */
     suspend fun downloadRestoreFile(fileName: String): String? {
         return withContext(Dispatchers.IO) {
             try {
@@ -1067,16 +1121,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * 🆕 v17.2.7: загрузить restore-файл на Яндекс.Диск.
-     *
-     * Кладёт JSON в /BAZA/restore/{fileName}.
-     * Используется, если restore-файлы формируются на телефоне.
-     *
-     * Возвращает true при успехе, false при ошибке.
-     *
-     * 🆕 B3: путь — из DiskPaths.restoreFile().
-     */
     suspend fun uploadRestoreFile(fileName: String, json: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
