@@ -41,21 +41,19 @@ import java.util.Locale
 /**
  * Экран «Домашние дела».
  *
- * 🆕 v20.0.0 (шаг 3): переработка окна.
- *  - Список группируется по времени: Просрочено / Сегодня / Завтра /
- *    На этой неделе / Потом / Без напоминаний. Пустые секции не показываются.
- *  - Сборка через ConcatAdapter: TaskSectionHeaderAdapter (заголовки)
- *    + TaskAdapter (карточки). TaskAdapter и item_task.xml не менялись.
- *  - Фильтры:
- *      · ACTIVE — группировка по времени (без выполненных);
- *      · DONE   — плоский список выполненных (все в одной секции «✅ Выполненные»);
- *      · ALL    — группировка активных + отдельная секция «✅ Выполненные» в конце.
- *  - Сортировка внутри секций — по-прежнему TaskSortPreferences.
+ * 🆕 v20.0.0 (шаг 3): группировка по времени
+ * (Просрочено / Сегодня / Завтра / На этой неделе / Потом / Без напоминаний)
+ * через ConcatAdapter: TaskSectionHeaderAdapter + TaskAdapter.
  *
- * Остальное — как раньше:
- *  - создание/редактирование через диалог (см. showEditDialog);
- *  - напоминания AlarmManager: schedule/cancel;
- *  - удаление — tombstone (softDelete с deletedBy).
+ * 🆕 v20.1.0 (Вариант A): убрано глобальное время суток из диалога.
+ *  - В диалоге больше нет «🕐 Изменить» для глобального времени.
+ *  - Остался только глобальный бегунок switchReminder (вкл/выкл напоминаний).
+ *  - Точное напоминание per-task задаётся через «Когда напомнить»
+ *    (textRemindAt / btnPickRemindAt / btnClearRemindAt).
+ *  - Умный пинг для задач без remindAt срабатывает в фиксированное 08:00
+ *    (см. TaskReminderScheduler.DEFAULT_REMINDER_HOUR).
+ *  - TaskReminderPreferences.getHour/getMinute/setTime/getTimeLabel
+ *    больше не вызываются из UI.
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -67,7 +65,6 @@ class TaskListActivity : AppCompatActivity() {
     private lateinit var repository: TaskRepository
     private lateinit var tokenStorage: TokenStorage
 
-    // 🆕 v20.0.0 (шаг 3): два адаптера + ConcatAdapter
     private lateinit var taskAdapter: TaskAdapter
     private lateinit var headerAdapter: TaskSectionHeaderAdapter
     private lateinit var concatAdapter: ConcatAdapter
@@ -106,7 +103,6 @@ class TaskListActivity : AppCompatActivity() {
         chipDone = findViewById(R.id.chipDone)
         chipAll = findViewById(R.id.chipAll)
 
-        // Toolbar: навигация «назад» + меню сортировки
         val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
         toolbar?.setNavigationOnClickListener { finish() }
         toolbar?.inflateMenu(R.menu.menu_task_list)
@@ -120,19 +116,13 @@ class TaskListActivity : AppCompatActivity() {
             }
         }
 
-        // 🆕 v20.0.0 (шаг 3): карточки задач
         taskAdapter = TaskAdapter(
             onToggleDone = { task -> toggleDone(task) },
             onEdit = { task -> showEditDialog(task) },
             onDelete = { task -> confirmDelete(task) }
         )
 
-        // 🆕 v20.0.0 (шаг 3): заголовки секций
         headerAdapter = TaskSectionHeaderAdapter()
-
-        // 🆕 v20.0.0 (шаг 3): ConcatAdapter — заголовки + задачи.
-        // Порядок в ConcatAdapter: [header1][tasks1][header2][tasks2]…
-        // Пересобирается в submitSections() при каждой загрузке.
         concatAdapter = ConcatAdapter()
 
         rvTasks.layoutManager = LinearLayoutManager(this)
@@ -231,7 +221,6 @@ class TaskListActivity : AppCompatActivity() {
             }
             val tasks = applySort(raw)
 
-            // 🆕 v20.0.0 (шаг 3): группировка по времени.
             val sections: List<TaskSection> = when (currentFilter) {
                 Filter.ACTIVE -> TaskSectionGrouper.groupActive(tasks)
                 Filter.DONE -> TaskSectionGrouper.groupDone(tasks)
@@ -263,25 +252,9 @@ class TaskListActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.0.0 (шаг 3): собрать ConcatAdapter из секций.
-     *
-     * Для каждой секции добавляем два «под-адаптера»:
-     *  1) headerAdapter с одним заголовком (нужен локальный экземпляр,
-     *     потому что ConcatAdapter хранит список адаптеров, а не данных);
-     *  2) TaskAdapter с карточками этой секции.
-     *
-     * ⚠️ ConcatAdapter нельзя «переиспользовать» с разными наборами
-     * данных — проще пересоздать набор и передать его в concatAdapter.
-     * Это дёшево: список задач и так перечитывается целиком.
-     */
     private fun submitSections(sections: List<TaskSection>) {
         val newAdapters = mutableListOf<RecyclerView.Adapter<*>>()
 
-        // Заголовки и карточки идут парами. Для заголовка используем
-        // локальный экземпляр TaskSectionHeaderAdapter, чтобы у каждой
-        // секции был свой набор данных (иначе все заголовки показывали бы
-        // последний набор).
         for (section in sections) {
             val header = TaskSectionHeaderAdapter()
             header.submit(
@@ -295,8 +268,6 @@ class TaskListActivity : AppCompatActivity() {
             )
             newAdapters.add(header)
 
-            // Каждая секция — свой TaskAdapter с колбэками.
-            // Так проще: не нужно пересобирать один адаптер с «дырками».
             val cards = TaskAdapter(
                 onToggleDone = { task -> toggleDone(task) },
                 onEdit = { task -> showEditDialog(task) },
@@ -306,12 +277,9 @@ class TaskListActivity : AppCompatActivity() {
             newAdapters.add(cards)
         }
 
-        // Полная пересборка ConcatAdapter
         concatAdapter.removeAdapter(taskAdapter)
         concatAdapter.removeAdapter(headerAdapter)
 
-        // Проще: создать новый ConcatAdapter и передать в RecyclerView.
-        // (RecyclerView пересоздаст ViewHolder'ы, но список маленький.)
         val fresh = ConcatAdapter(newAdapters)
         rvTasks.adapter = fresh
     }
@@ -396,12 +364,10 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
+        // Глобальный бегунок «напоминания включены» (без времени)
         val switchReminder = view.findViewById<SwitchCompat>(R.id.switchReminder)
-        val layoutReminderTime = view.findViewById<View>(R.id.layoutReminderTime)
-        val textReminderTime = view.findViewById<TextView>(R.id.textReminderTime)
-        val btnPickReminderTime = view.findViewById<View>(R.id.btnPickReminderTime)
-        val textReminderHint = view.findViewById<TextView>(R.id.textReminderHint)
 
+        // Per-task точное напоминание
         val textRemindAt = view.findViewById<TextView>(R.id.textRemindAt)
         val btnPickRemindAt = view.findViewById<View>(R.id.btnPickRemindAt)
         val btnClearRemindAt = view.findViewById<View>(R.id.btnClearRemindAt)
@@ -451,6 +417,13 @@ class TaskListActivity : AppCompatActivity() {
         switchAutoRemind.isChecked = pendingAutoRemind
         textAutoRemindHint.visibility = if (pendingAutoRemind) View.VISIBLE else View.GONE
 
+        // Глобальный флаг
+        switchReminder.isChecked = TaskReminderPreferences.isEnabled(this)
+        switchReminder.setOnCheckedChangeListener { _, _ ->
+            // Ничего не делаем здесь: флаг применится в applyGlobalReminderSetting
+            // при сохранении задачи. Это чтобы не перепланировать всё на каждый чек.
+        }
+
         updateDueDateLabel()
         updateRemindAtLabel()
 
@@ -480,37 +453,6 @@ class TaskListActivity : AppCompatActivity() {
         btnClearDate.setOnClickListener {
             pendingDueDate = null
             updateDueDateLabel()
-        }
-
-        fun updateReminderTimeLabel() {
-            textReminderTime.text = TaskReminderPreferences.getTimeLabel(this)
-        }
-
-        fun updateReminderVisibility() {
-            val visible = switchReminder.isChecked
-            layoutReminderTime.visibility = if (visible) View.VISIBLE else View.GONE
-            textReminderHint.visibility = if (visible) View.VISIBLE else View.GONE
-        }
-
-        switchReminder.isChecked = TaskReminderPreferences.isEnabled(this)
-        updateReminderTimeLabel()
-        updateReminderVisibility()
-
-        switchReminder.setOnCheckedChangeListener { _, _ ->
-            updateReminderVisibility()
-        }
-
-        btnPickReminderTime.setOnClickListener {
-            val h = TaskReminderPreferences.getHour(this)
-            val m = TaskReminderPreferences.getMinute(this)
-            TimePickerDialog(
-                this,
-                { _, hour, minute ->
-                    TaskReminderPreferences.setTime(this, hour, minute)
-                    updateReminderTimeLabel()
-                },
-                h, m, true
-            ).show()
         }
 
         btnPickRemindAt.setOnClickListener {
@@ -636,9 +578,17 @@ class TaskListActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /**
+     * 🆕 v20.1.0 (Вариант A): дефолтное точное напоминание для новой задачи —
+     * «сегодня 08:00», а если сейчас уже позже 08:00 — «завтра 08:00».
+     *
+     * Раньше был захардкожен 19:00. Теперь соответствует фиксированному
+     * времени умного пинга (08:00), чтобы пользователь видел «одно время»
+     * и не путался.
+     */
     private fun defaultRemindAt(): Long {
         val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 19)
+        cal.set(Calendar.HOUR_OF_DAY, 8)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
@@ -648,6 +598,13 @@ class TaskListActivity : AppCompatActivity() {
         return cal.timeInMillis
     }
 
+    /**
+     * 🆕 v20.1.0 (Вариант A): глобальный флаг «напоминания включены».
+     *
+     * Время суток больше не глобальное — его тут нет.
+     * - включили: rescheduleAll (если раньше было выключено);
+     * - выключили: cancelAll.
+     */
     private fun applyGlobalReminderSetting(enabled: Boolean) {
         try {
             val wasEnabled = TaskReminderPreferences.isEnabled(this)
@@ -656,11 +613,7 @@ class TaskListActivity : AppCompatActivity() {
             if (enabled) {
                 if (!wasEnabled) {
                     TaskReminderScheduler.rescheduleAll(this)
-                    Toast.makeText(
-                        this,
-                        "Напоминания включены (${TaskReminderPreferences.getTimeLabel(this)})",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this, "Напоминания включены", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 if (wasEnabled) {
