@@ -9,10 +9,14 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import com.family.base.R
+import com.family.base.data.local.dao.FolderStatsRow
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.ui.FullscreenImageActivity
 import com.family.base.util.ImageUtils
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
+import java.util.Locale
 
 class CatalogAdapter(
     private val onFolderClick: (FolderEntity) -> Unit,
@@ -26,7 +30,7 @@ class CatalogAdapter(
      * Один общий объект вместо одного Int — чтобы каждая системная папка
      * показывала СВОЁ число:
      *  - home_tasks     → активные задачи;
-     *  - purchases      → предметы в корне «Покупок» (обычно 0);
+     *  - purchases      → предметы в «Покупках» рекурсивно (v17.0.9);
      *  - shopping_list  → предметы в корне «Списка покупок» («купить»).
      */
     data class SystemFolderCounters(
@@ -38,6 +42,33 @@ class CatalogAdapter(
     private var items: List<Any> = emptyList()
 
     private var systemFolderCounters: SystemFolderCounters = SystemFolderCounters()
+
+    /**
+     * 🆕 v20.1.1: агрегаты по обычным папкам — количество + сумма.
+     * Ключ — folderId. Заполняется из MainActivity одним batch-запросом
+     * (getFolderStatsShallow), чтобы не делать N+1 при отрисовке.
+     *
+     * Если для папки нет записи — info у неё пустой (как раньше).
+     */
+    private var folderStats: Map<String, FolderStatsRow> = emptyMap()
+
+    /**
+     * 🆕 v20.1.1: агрегат для системной «🛒 Покупки» — рекурсивно.
+     * Сюда же кладётся itemCount, чтобы не дублировать purchasesItems
+     * из systemFolderCounters (там только число). Сумма — только здесь.
+     */
+    private var purchasesStats: FolderStatsRow? = null
+
+    /**
+     * 🆕 v20.1.1: единый формат денег для карточек.
+     * Целые — без копеек; дробные — с двумя знаками, запятая.
+     * Разряды — пробел (4 560).
+     */
+    private val moneyFormat: DecimalFormat by lazy {
+        val symbols = DecimalFormatSymbols(Locale.getDefault())
+        symbols.groupingSeparator = ' '
+        DecimalFormat("#,##0.##", symbols)
+    }
 
     fun submitList(newItems: List<Any>) {
         items = newItems
@@ -51,6 +82,25 @@ class CatalogAdapter(
     fun setSystemFolderCounters(counters: SystemFolderCounters) {
         if (systemFolderCounters == counters) return
         systemFolderCounters = counters
+        notifyDataSetChanged()
+    }
+
+    /**
+     * 🆕 v20.1.1: обновить статистику обычных папок (batch).
+     * Если ничего не изменилось — не перерисовываем.
+     */
+    fun setFolderStats(stats: Map<String, FolderStatsRow>) {
+        if (folderStats == stats) return
+        folderStats = stats
+        notifyDataSetChanged()
+    }
+
+    /**
+     * 🆕 v20.1.1: обновить статистику системной «Покупок».
+     */
+    fun setPurchasesStats(stats: FolderStatsRow?) {
+        if (purchasesStats == stats) return
+        purchasesStats = stats
         notifyDataSetChanged()
     }
 
@@ -105,7 +155,9 @@ class CatalogAdapter(
             }
 
             holder.name.text = entry.name
-            holder.info.text = ""
+
+            // 🆕 v20.1.1: «📦 N · 💰 X ₽» мелким текстом под названием.
+            holder.info.text = buildFolderInfoText(entry.id)
             holder.expiryInfo.visibility = View.GONE
             holder.lentInfo.visibility = View.GONE
 
@@ -119,15 +171,35 @@ class CatalogAdapter(
     }
 
     /**
+     * 🆕 v20.1.1: текст «📦 N · 💰 X ₽» для обычной папки.
+     *
+     *  - нет статистики (папку только что создали / список обновляется) → "" ;
+     *  - N = 0 → "" (пустая папка — как раньше, без шума) ;
+     *  - N > 0, total = 0 → "📦 N предмет(а/ов)" (цены нет ни у одного) ;
+     *  - N > 0, total > 0 → "📦 N · 💰 X ₽" .
+     */
+    private fun buildFolderInfoText(folderId: String): String {
+        val stats = folderStats[folderId] ?: return ""
+        if (stats.itemCount <= 0) return ""
+
+        val countPart = "📦 ${stats.itemCount} ${pluralItems(stats.itemCount)}"
+        if (stats.totalPrice <= 0.0) return countPart
+
+        return "$countPart · 💰 ${formatMoney(stats.totalPrice)} ₽"
+    }
+
+    /**
      * 🆕 v16.0.14: отрисовка системной папки по её systemKey.
      *  - home_tasks     → 🏠 + «📋 N активных»
-     *  - purchases      → 🧾 + «🛒 N покупок»
+     *  - purchases      → 🧾 + «🛒 N предметов · 💰 X ₽»
      *  - shopping_list  → 🛒 + «🛒 N купить»
      *
      * 🆕 v17.2.8: иконки системных папок:
      *  - home_tasks     → ic_home (как было);
      *  - purchases      → ic_purchases_receipt (чек);
      *  - shopping_list  → ic_shopping_list_cart (тележка).
+     *
+     * 🆕 v20.1.1: для «Покупок» добавлена сумма по всем подпапкам.
      */
     private fun bindSystemFolder(holder: ViewHolder, entry: FolderEntity) {
         val context = holder.itemView.context
@@ -155,11 +227,16 @@ class CatalogAdapter(
                 }
                 holder.name.text = entry.name
 
+                // 🆕 v20.1.1: количество берём из systemFolderCounters (как раньше),
+                // сумму — из purchasesStats. Если stats ещё не пришли — показываем
+                // только количество, без «💰 0 ₽» (иначе выглядит как ошибка).
                 val n = systemFolderCounters.purchasesItems
-                holder.info.text = if (n > 0) {
-                    "🛒 $n ${pluralItems(n)}"
-                } else {
-                    "🛒 Пусто"
+                val total = purchasesStats?.totalPrice ?: 0.0
+
+                holder.info.text = when {
+                    n <= 0 -> "🛒 Пусто"
+                    total > 0.0 -> "🛒 $n ${pluralItems(n)} · 💰 ${formatMoney(total)} ₽"
+                    else -> "🛒 $n ${pluralItems(n)}"
                 }
             }
 
@@ -210,6 +287,27 @@ class CatalogAdapter(
         }
     }
 
+    /**
+     * 🆕 v20.1.1: единый формат денег.
+     *  - целые → «4 560»;
+     *  - дробные → «4 560,5» (без хвостовых нулей, запятая как десятичный
+     *    разделитель в русской локали — DecimalFormat сам подставит).
+     *
+     * ВАЖНО: сумму в карточке папки показываем БЕЗ копеек, если они нулевые,
+     * чтобы «💰 4 560 ₽» не превращалось в «💰 4 560,00 ₽».
+     */
+    private fun formatMoney(value: Double): String {
+        return try {
+            if (value == value.toLong().toDouble()) {
+                moneyFormat.format(value.toLong())
+            } else {
+                moneyFormat.format(value)
+            }
+        } catch (e: Exception) {
+            value.toString()
+        }
+    }
+
     // ============================================================
     // ПРЕДМЕТ
     // ============================================================
@@ -248,12 +346,9 @@ class CatalogAdapter(
             infoParts.add("×${entry.quantity}")
         }
         if (entry.price != null && entry.price != 0.0) {
-            val priceStr = if (entry.price % 1.0 == 0.0) {
-                entry.price.toInt().toString()
-            } else {
-                String.format("%.2f", entry.price)
-            }
-            infoParts.add("${priceStr} ₽")
+            // 🆕 v20.1.1: используем общий formatMoney — единый вид
+            // и здесь, и в папках.
+            infoParts.add("${formatMoney(entry.price)} ₽")
         }
         holder.info.text = infoParts.joinToString("  •  ")
 
