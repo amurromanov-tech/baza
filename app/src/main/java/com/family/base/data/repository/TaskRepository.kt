@@ -1,7 +1,6 @@
 package com.family.base.data.repository
 
 import android.content.Context
-import com.family.base.AppUser
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.OutboxLogger
 import com.family.base.data.local.entity.FolderEntity
@@ -18,7 +17,7 @@ import kotlinx.coroutines.withContext
  *  - Автосоздание системной папки при старте
  *  - Логику повторов (создание клона при выполнении)
  *  - Счётчик активных задач
- *  - Soft-delete
+ *  - Soft-delete (tombstone, №10 v19)
  *  - 🆕 v15: логирование изменений в outbox (changelog)
  *
  * НЕ отвечает за синхронизацию — это в CatalogRepository / SyncManager.
@@ -85,8 +84,21 @@ class TaskRepository(
         taskDao.getDoneSorted()
     }
 
+    /**
+     * Читает задачу по id БЕЗ фильтра isDeleted — включая tombstones.
+     * Нужна для:
+     *  - TaskReminderReceiver (должен увидеть, что задача уже tombstone);
+     *  - mergeData при сравнении версий.
+     */
     suspend fun getById(id: String): TaskEntity? = withContext(Dispatchers.IO) {
         taskDao.getById(id)
+    }
+
+    /**
+     * Читает «живую» задачу (не tombstone). Для UI-операций.
+     */
+    suspend fun getLiveById(id: String): TaskEntity? = withContext(Dispatchers.IO) {
+        taskDao.getLiveById(id)
     }
 
     suspend fun getActiveCount(): Int = withContext(Dispatchers.IO) {
@@ -259,30 +271,63 @@ class TaskRepository(
     }
 
     // ============================================================
-    // УДАЛЕНИЕ (soft)
+    // УДАЛЕНИЕ (TOMBSTONE, №10 v19)
     // ============================================================
 
     /**
-     * Soft-delete: помечает isDeleted = true.
-     * Задача остаётся в БД и синкается как удалённая,
-     * чтобы удаление разошлось по всем устройствам.
+     * Помечает задачу как tombstone (soft-delete).
      *
-     * 🆕 v15: изменение уходит в outbox (ACTION_UPDATE, потому что
-     * задача не физически удалена, а помечена флагом).
+     * Задача остаётся в БД и синкается как удалённая через changelog,
+     * чтобы удаление разошлось по всем устройствам и не «воскресло»
+     * при merge со старой версией с Диска.
+     *
+     * В UI такие задачи не показываются (фильтр isDeleted = 0 в DAO).
+     *
+     * deleteConfirmed = 0 — PUSH ещё не подтверждён. Как только
+     * SyncManager успешно отправит changelog — выставит 1 через
+     * confirmTaskDeleted(). Через год cleanup физически удалит запись.
+     *
+     * @param taskId     id удаляемой задачи.
+     * @param deletedBy  кто удалил (AppUser.name на момент удаления).
      */
-    suspend fun softDelete(taskId: String) = withContext(Dispatchers.IO) {
+    suspend fun softDelete(taskId: String, deletedBy: String) = withContext(Dispatchers.IO) {
         val task = taskDao.getById(taskId) ?: return@withContext
-        val updated = task.copy(
-            isDeleted = true,
-            updatedAt = System.currentTimeMillis()
-        )
-        taskDao.update(updated)
+        if (task.isDeleted) return@withContext
+
+        val now = System.currentTimeMillis()
+        taskDao.markTaskDeleted(taskId, now, deletedBy)
+
+        // Перечитываем, чтобы в outbox уехали актуальные поля
+        // (isDeleted=1, deletedAt, deletedBy, deleteConfirmed=0, updatedAt).
+        val updated = taskDao.getById(taskId) ?: return@withContext
         OutboxLogger.taskChanged(
             db = db,
             task = updated,
             action = OutboxEntity.ACTION_UPDATE,
-            changedBy = updated.createdBy
+            changedBy = deletedBy
         )
+    }
+
+    /**
+     * Подтвердить tombstone после успешного PUSH в changelog.
+     * Вызывается из SyncManager.
+     */
+    suspend fun confirmTaskDeleted(taskId: String) = withContext(Dispatchers.IO) {
+        taskDao.confirmTaskDeleted(taskId)
+    }
+
+    /**
+     * Физическое удаление подтверждённых tombstones старше указанного времени.
+     * Вызывается из cleanup-логики SyncManager (раз в N дней).
+     *
+     * @param thresholdMs timestamp, раньше которого tombstones считаются старыми.
+     * @return количество физически удалённых записей.
+     */
+    suspend fun cleanupOldTombstones(thresholdMs: Long): Int = withContext(Dispatchers.IO) {
+        val ids = taskDao.getConfirmedTasksOlderThan(thresholdMs)
+        if (ids.isEmpty()) return@withContext 0
+        taskDao.hardDeleteConfirmedTasks(ids)
+        ids.size
     }
 
     // ============================================================
