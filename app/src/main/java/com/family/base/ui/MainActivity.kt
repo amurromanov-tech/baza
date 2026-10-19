@@ -340,43 +340,48 @@ class MainActivity : AppCompatActivity() {
  // ============================================================
  // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
  // 🆕 v20.1.1: + статистика обычных папок и сумма «Покупок»
+ // 🆕 v20.1.3: полный смешанный обход (папки + предметы + вложенные)
  // ============================================================
  /**
   * Загружает три счётчика системных папок и статистику обычных папок:
   *  - home_tasks     → активные задачи (taskDao.getActiveCount);
-  *  - purchases      → 🆕 v17.0.9: предметы в «Покупках» РЕКУРСИВНО
-  *                     (включая подпапки «Покупка DD.MM.YYYY #N»)
-  *                     🆕 v20.1.1: + сумма по всем подпапкам;
+  *  - purchases      → предметы в «Покупках» РЕКУРСИВНО, включая
+  *                     вложенные в предметы папки/предметы
+  *                     (🆕 v20.1.3: единый источник — getFolderStatsDeep);
   *  - shopping_list  → предметы в корне «Списка покупок» (shallow).
   *
-  * 🆕 v20.1.1: дополнительно собирает агрегаты (📦 N · 💰 X ₽)
-  * для всех обычных папок, которые сейчас на экране, и передаёт их
-  * в адаптер. Один batch-запрос — без N+1.
-  *
-  * 🆕 v20.1.2: обычные папки теперь считаются РЕКУРСИВНО — как «Покупки».
-  * «Продукты», «Лекарства», «Вещи» и т.д. показывают количество и сумму
-  * по всем своим подпапкам.
+  * 🆕 v20.1.3: для обычных папок используем getFolderStatsDeep —
+  * полный смешанный обход (папки + прямые предметы + вложенные
+  * папки предметов + вложенные предметы). Один SQL-запрос на все
+  * папки, без N+1.
   */
  private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
          try {
              val counters = withContext(Dispatchers.IO) {
                  val homeTasks = db.taskDao().getActiveCount()
-                 // 🆕 v17.0.9: считаем рекурсивно — предметы лежат в подпапках «Покупка DD.MM.YYYY #N»
-                 val purchases = db.itemDao()
-                     .countItemsInFolderRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
+
+                 // 🆕 v20.1.3: и количество, и сумма «Покупок» —
+                 // из одного источника getFolderStatsDeep.
+                 // Иначе количество считалось бы без вложений,
+                 // а сумма — с вложениями (расхождение в UI).
+                 val purchasesStats = db.itemDao()
+                     .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
+                     .firstOrNull()
+                 val purchasesItems = purchasesStats?.itemCount ?: 0
+
                  val shoppingList = db.itemDao()
                      .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+
                  CatalogAdapter.SystemFolderCounters(
                      homeTasksActive = homeTasks,
-                     purchasesItems = purchases,
+                     purchasesItems = purchasesItems,
                      shoppingListItems = shoppingList
                  )
              }
              adapter.setSystemFolderCounters(counters)
 
              // 🆕 v20.1.1: статистика обычных папок + сумма «Покупок».
-             // Делаем ПОСЛЕ счётчиков, чтобы UI не мигал пустыми info.
              loadFolderStats()
          } catch (e: Exception) {
              Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
@@ -388,14 +393,8 @@ class MainActivity : AppCompatActivity() {
   * 🆕 v20.1.1: собирает агрегаты по обычным папкам текущего экрана
   * и рекурсивный агрегат по «Покупкам», передаёт в адаптер.
   *
-  * Список папок берём из viewModel.currentEntries.value — это те же
-  * объекты, что сейчас на экране. Для них одним batch-запросом
-  * достаём количество и сумму.
-  *
-  * 🆕 v20.1.2: для обычных папок используем РЕКУРСИВНЫЙ batch-запрос
-  * (getFolderStatsRecursiveBatch) — «Продукты» считает всё, что лежит
-  * в её подпапках, как «🛒 Покупки». Один SQL-запрос на все папки,
-  * без N+1.
+  * 🆕 v20.1.3: оба агрегата — через getFolderStatsDeep, чтобы
+  * учитывались вложенные папки и вложенные предметы (см. ItemDao).
   */
  private fun loadFolderStats() {
      lifecycleScope.launch {
@@ -408,19 +407,20 @@ class MainActivity : AppCompatActivity() {
                  .map { it.id }
 
              val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
-                 // 🆕 v20.1.2: batch по обычным папкам — рекурсивно, один запрос
+                 // 🆕 v20.1.3: batch по обычным папкам — полный смешанный обход
                  val map: Map<String, FolderStatsRow> =
                      if (ordinaryFolderIds.isEmpty()) {
                          emptyMap()
                      } else {
                          db.itemDao()
-                             .getFolderStatsRecursiveBatch(ordinaryFolderIds)
+                             .getFolderStatsDeep(ordinaryFolderIds)
                              .associateBy { it.folderId }
                      }
 
-                 // рекурсивно по «Покупкам» — один запрос (без изменений)
+                 // рекурсивно по «Покупкам» — тем же методом, единый источник
                  val pStats = db.itemDao()
-                     .getFolderStatsRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
+                     .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
+                     .firstOrNull()
 
                  Pair(map, pStats)
              }
