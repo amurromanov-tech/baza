@@ -7,43 +7,145 @@ import android.content.Intent
 import android.os.Build
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.TaskEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 /**
  * Планировщик напоминаний о задачах через AlarmManager.
  *
- * 🆕 Замена WorkManager на AlarmManager — точное время срабатывания.
+ * 🆕 v18.2.0 (Шаг 1): ФИКС ПАДЕНИЯ НА ГЛАВНОМ ПОТОКЕ.
  *
- * Как работает:
- *  - schedule(task) — ставит точный alarm на время напоминания для конкретной задачи.
- *    Время = dueDate задачи, приведённый к часу:минуте из TaskReminderPreferences
- *    (глобальная настройка «во сколько напоминать в день дедлайна»).
- *  - cancel(taskId) — снимает alarm для задачи.
- *  - cancelAll() — снимает alarms для ВСЕХ задач (при выключении напоминаний).
- *  - rescheduleAll() — перечитывает все активные задачи и перепланирует alarms
- *    (используется BootReceiver после перезагрузки/обновления).
+ * Было: rescheduleAll()/cancelAll() вызывали getAllTasksBlocking() прямо
+ * в вызывающем потоке. Из BaseApplication.onCreate и BootReceiver.onReceive
+ * это главный поток → Room бросал IllegalStateException
+ * "Cannot access database on the main thread", ловился в try/catch,
+ * и НИ ОДНА задача не планировалась. Отсюда «утром ничего не пришло».
  *
- * Использует setExactAndAllowWhileIdle (RTC_WAKEUP) — срабатывает точно,
- * даже в Doze. На Android 12+ требует разрешение SCHEDULE_EXACT_ALARM;
- * если его нет — fallback на setAndAllowWhileIdle (менее точный, но не молчит).
+ * Стало:
+ *  - чтение задач вынесено в runBlocking(Dispatchers.IO) внутри
+ *    suspend-версий rescheduleAllSuspend()/cancelAllSuspend();
+ *  - старые синхронные rescheduleAll()/cancelAll() оставлены как обёртки
+ *    для обратной совместимости (BootReceiver, BaseApplication),
+ *    но внутри они тоже читают БД в IO-потоке.
  *
- * Все методы обёрнуты в try/catch — ошибка планировщика не должна ронять приложение.
+ * 🆕 v18.2.0: задачи без dueDate БОЛЬШЕ НЕ отменяются молча.
+ * Раньше schedule() при dueDate == null вызывал cancel() — это
+ * скрывало проблему и мешало будущему Пути 2 (remindAt). Теперь
+ * при dueDate == null просто пропускаем (alarm не ставим и не снимаем),
+ * а cancel() вызывается только при явных условиях (done/deleted/disabled).
+ *
+ * ⚠️ Путь 2 (remindAt) и Путь 3 (autoRemind) будут добавлены на Шагах 3–4.
+ * Здесь пока только точная дата из dueDate — как было, но без падений.
  */
 object TaskReminderScheduler {
 
     private const val TAG = "TaskReminderScheduler"
 
+    // ============================================================
+    // СИНХРОННЫЕ ОБЁРТКИ (для BootReceiver / BaseApplication)
+    // ============================================================
+
+    /**
+     * Перепланировать все активные задачи.
+     *
+     * Синхронная обёртка: читает БД в IO-потоке через runBlocking,
+     * чтобы не упасть на главном потоке (BootReceiver.onReceive,
+     * BaseApplication.onCreate).
+     *
+     * Если можешь вызвать suspend-версию (rescheduleAllSuspend) —
+     * лучше вызывай её из корутины, без runBlocking.
+     */
+    fun rescheduleAll(context: Context) {
+        try {
+            if (!TaskReminderPreferences.isEnabled(context)) {
+                Logger.log(TAG, "rescheduleAll: reminders disabled, skip")
+                return
+            }
+            val tasks = readAllTasksBlockingFromIo(context)
+            doRescheduleAll(context, tasks)
+        } catch (e: Exception) {
+            Logger.log(TAG, "rescheduleAll error: ${e.message}")
+        }
+    }
+
+    /**
+     * Suspend-версия rescheduleAll. Предпочтительна, если вызывающий код
+     * уже в корутине (applicationScope.launch { }).
+     */
+    suspend fun rescheduleAllSuspend(context: Context) {
+        try {
+            if (!TaskReminderPreferences.isEnabled(context)) {
+                Logger.log(TAG, "rescheduleAllSuspend: reminders disabled, skip")
+                return
+            }
+            val tasks = withContext(Dispatchers.IO) {
+                AppDatabase.getInstance(context).taskDao().getAllTasksBlocking()
+            }
+            doRescheduleAll(context, tasks)
+        } catch (e: Exception) {
+            Logger.log(TAG, "rescheduleAllSuspend error: ${e.message}")
+        }
+    }
+
+    /**
+     * Снять alarms для ВСЕХ задач (когда пользователь выключает напоминания).
+     *
+     * Синхронная обёртка: чтение БД — в IO-потоке.
+     */
+    fun cancelAll(context: Context) {
+        try {
+            val tasks = readAllTasksBlockingFromIo(context)
+            var cancelled = 0
+            for (task in tasks) {
+                cancel(context, task.id)
+                cancelled++
+            }
+            Logger.log(TAG, "cancelAll: cancelled=$cancelled")
+        } catch (e: Exception) {
+            Logger.log(TAG, "cancelAll error: ${e.message}")
+        }
+    }
+
+    /**
+     * Suspend-версия cancelAll.
+     */
+    suspend fun cancelAllSuspend(context: Context) {
+        try {
+            val tasks = withContext(Dispatchers.IO) {
+                AppDatabase.getInstance(context).taskDao().getAllTasksBlocking()
+            }
+            var cancelled = 0
+            for (task in tasks) {
+                cancel(context, task.id)
+                cancelled++
+            }
+            Logger.log(TAG, "cancelAllSuspend: cancelled=$cancelled")
+        } catch (e: Exception) {
+            Logger.log(TAG, "cancelAllSuspend error: ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // ПЛАНИРОВАНИЕ ОДНОЙ ЗАДАЧИ
+    // ============================================================
+
     /**
      * Поставить (или переставить) alarm для конкретной задачи.
      *
-     * Условия, при которых alarm не ставится:
-     *  - напоминания выключены глобально;
-     *  - у задачи нет dueDate;
-     *  - задача уже выполнена или удалена;
-     *  - вычисленное время напоминания уже в прошлом.
+     * Условия, при которых alarm НЕ ставится:
+     *  - напоминания выключены глобально → cancel (убираем устаревший);
+     *  - задача уже выполнена или удалена → cancel;
+     *  - у задачи нет dueDate → ПРОПУСКАЕМ (не cancel! см. ниже);
+     *  - вычисленное время в прошлом → cancel.
      *
-     * Если задача не подходит под условия — существующий alarm для неё
-     * снимается (чтобы не висел устаревший).
+     * 🆕 Почему при dueDate == null теперь НЕ cancel:
+     * Раньше cancel() скрывал проблему — задачи без даты молча
+     * оставались без напоминаний, и это выглядело как «баг AlarmManager».
+     * Теперь мы просто не трогаем alarm: если он был поставлен ранее
+     * (например, из remindAt на будущем Шаге 2) — он останется.
+     * Если его не было — его и не будет, но это осознанно.
      */
     fun schedule(context: Context, task: TaskEntity) {
         try {
@@ -61,8 +163,9 @@ object TaskReminderScheduler {
 
             val dueDate = task.dueDate
             if (dueDate == null) {
-                Logger.log(TAG, "schedule(${task.id}): no dueDate, cancel")
-                cancel(context, task.id)
+                // 🆕 НЕ cancel — просто пропускаем. На Шагах 3–4 здесь
+                // подключится remindAt / autoRemind.
+                Logger.log(TAG, "schedule(${task.id}): no dueDate, skip (Path 2/3 not implemented yet)")
                 return
             }
 
@@ -95,7 +198,6 @@ object TaskReminderScheduler {
                     "schedule(${task.id}): exact alarm at ${formatTime(triggerAt)} (task='${task.title}')"
                 )
             } else {
-                // Нет разрешения на точные alarms — fallback на неточный, но не молчим.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     alarmManager.setAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
@@ -134,77 +236,46 @@ object TaskReminderScheduler {
         }
     }
 
-    /**
-     * 🆕 Снять alarms для ВСЕХ задач.
-     *
-     * Используется, когда пользователь выключает напоминания глобально
-     * (applyGlobalReminderSetting → cancelAll). Без этого уже стоящие
-     * alarms остались бы и сработали бы один раз после выключения.
-     *
-     * Читает задачи из БД синхронно (getAllTasksBlocking) — как и rescheduleAll,
-     * это допустимо в контексте onReceive / лёгкой операции UI.
-     */
-    fun cancelAll(context: Context) {
-        try {
-            val db = AppDatabase.getInstance(context)
-            val tasks = db.taskDao().getAllTasksBlocking()
-
-            var cancelled = 0
-            for (task in tasks) {
-                cancel(context, task.id)
-                cancelled++
-            }
-            Logger.log(TAG, "cancelAll: cancelled=$cancelled")
-        } catch (e: Exception) {
-            Logger.log(TAG, "cancelAll error: ${e.message}")
-        }
-    }
-
-    /**
-     * Перепланировать все активные задачи.
-     *
-     * Используется BootReceiver после перезагрузки/обновления приложения:
-     * система стирает все alarms при выключении, их надо восстановить.
-     *
-     * Читает задачи из БД синхронно (getAllTasksBlocking) — BootReceiver
-     * не корутина, а таблица маленькая, запрос быстрый.
-     */
-    fun rescheduleAll(context: Context) {
-        try {
-            if (!TaskReminderPreferences.isEnabled(context)) {
-                Logger.log(TAG, "rescheduleAll: reminders disabled, skip")
-                return
-            }
-
-            val db = AppDatabase.getInstance(context)
-            val tasks = db.taskDao().getAllTasksBlocking()
-
-            var scheduled = 0
-            var skipped = 0
-            for (task in tasks) {
-                if (task.isDone || task.isDeleted || task.dueDate == null) {
-                    skipped++
-                    continue
-                }
-                schedule(context, task)
-                scheduled++
-            }
-            Logger.log(TAG, "rescheduleAll: scheduled=$scheduled, skipped=$skipped")
-        } catch (e: Exception) {
-            Logger.log(TAG, "rescheduleAll error: ${e.message}")
-        }
-    }
-
     // ============================================================
     // ВНУТРЕННЕЕ
     // ============================================================
 
     /**
+     * Читает ВСЕ задачи из БД в IO-потоке через runBlocking.
+     * Нужна только для синхронных обёрток (BootReceiver, BaseApplication).
+     *
+     * runBlocking здесь безопасен: вызывающий код уже не главный поток
+     * (мы внутри runBlocking переключились на Dispatchers.IO).
+     */
+    private fun readAllTasksBlockingFromIo(context: Context): List<TaskEntity> {
+        return runBlocking(Dispatchers.IO) {
+            AppDatabase.getInstance(context).taskDao().getAllTasksBlocking()
+        }
+    }
+
+    /**
+     * Общая логика перепланирования: проходим по всем задачам,
+     * планируем/пропускаем/снимаем. Вынесено, чтобы не дублировать
+     * между rescheduleAll() и rescheduleAllSuspend().
+     */
+    private fun doRescheduleAll(context: Context, tasks: List<TaskEntity>) {
+        var scheduled = 0
+        var skipped = 0
+        for (task in tasks) {
+            if (task.isDone || task.isDeleted || task.dueDate == null) {
+                skipped++
+                continue
+            }
+            schedule(context, task)
+            scheduled++
+        }
+        Logger.log(TAG, "rescheduleAll: scheduled=$scheduled, skipped=$skipped")
+    }
+
+    /**
      * Вычисляет точное время срабатывания alarm:
      * берёт дату из dueDate (год/месяц/день) и подставляет час:минуту
      * из TaskReminderPreferences (глобальная настройка «во сколько напоминать»).
-     *
-     * Пример: dueDate = 25.10.2026 00:00, настройка 09:30 → trigger = 25.10.2026 09:30.
      */
     private fun computeTriggerAtMillis(context: Context, dueDate: Long): Long {
         val due = Calendar.getInstance().apply { timeInMillis = dueDate }
@@ -222,7 +293,6 @@ object TaskReminderScheduler {
 
     /**
      * Собирает PendingIntent на TaskReminderReceiver для конкретной задачи.
-     * requestCode = хэш taskId — чтобы у разных задач были разные PendingIntent.
      */
     private fun buildPendingIntent(context: Context, taskId: String): PendingIntent {
         val intent = Intent(context, TaskReminderReceiver::class.java).apply {
@@ -244,8 +314,6 @@ object TaskReminderScheduler {
 
     /**
      * Проверка, можно ли ставить точные alarms.
-     * На Android 12+ требуется разрешение SCHEDULE_EXACT_ALARM.
-     * На более старых — всегда можно.
      */
     private fun canScheduleExact(alarmManager: AlarmManager): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
