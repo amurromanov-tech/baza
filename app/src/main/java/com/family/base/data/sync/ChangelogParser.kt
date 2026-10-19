@@ -21,13 +21,20 @@ import com.google.gson.JsonSyntaxException
  *       - если локальный новее → пропускаем (наш выигрыш).
  *  3. При применении принудительно ставим syncStatus = "synced",
  *     чтобы не зациклить пересылку (иначе получим ping-pong между устройствами).
- *  4. Для item/folder delete — физическое удаление.
- *     Для task delete — ставим isDeleted = true (soft-delete).
+ *  4. 🆕 v19 (№10): удаления приходят как tombstones (isDeleted = true).
+ *     Для старых клиентов, которые шлют ACTION_DELETE — переводим их
+ *     в tombstone локально (не hard-delete), чтобы удаление
+ *     не «воскресло» при следующем merge.
+ *     Локальный tombstone с более новым updatedAt побеждает —
+ *     живая remote-запись его не перезаписывает.
  *  5. Для history — append-only, просто INSERT IGNORE по id.
  *     Никаких merge: если запись с таким id уже есть, пропускаем.
  *  6. Пакет фиксируется в processed_changelogs всегда (кроме явных ошибок).
  *
  * Парсер НЕ пишет в outbox — входящие изменения не надо отправлять обратно.
+ * deleteConfirmed = 1 у применённых tombstones ставим сразу: раз запись
+ * пришла с Диска, значит PUSH уже прошёл, и cleanup может её удалить
+ * через CLEANUP_RETENTION_MS (1 год).
  */
 class ChangelogParser(
     private val db: AppDatabase,
@@ -137,8 +144,12 @@ class ChangelogParser(
     private suspend fun applyItemEntry(entry: ChangelogEntry): Boolean {
         val local = db.itemDao().getItemById(entry.entityId)
 
+        // ── ACTION_DELETE (старый формат: hard-delete с удалённого устройства) ──
+        // Переводим в tombstone локально, не hard-delete. Иначе при следующем
+        // merge remote-запись с третьего устройства «воскресит» предмет.
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
+                // Локально записи нет — удалять нечего.
                 Logger.log(TAG, "applyItem DELETE: id=${entry.entityId} not found locally, skip")
                 return false
             }
@@ -149,11 +160,18 @@ class ChangelogParser(
                 )
                 return false
             }
-            db.itemDao().deleteItem(local)
-            Logger.log(TAG, "applyItem DELETE: id=${entry.entityId} '${local.name}' removed")
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyItem DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.itemDao().markItemDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            // Раз tombstone пришёл с Диска — он уже разошёлся, подтверждаем.
+            db.itemDao().confirmItemDeleted(entry.entityId)
+            Logger.log(TAG, "applyItem DELETE → tombstone: id=${entry.entityId} '${local.name}'")
             return true
         }
 
+        // ── PARSE PAYLOAD ──
         val remote: ItemEntity = try {
             gson.fromJson(entry.payloadJson, ItemEntity::class.java)
         } catch (e: Exception) {
@@ -161,14 +179,39 @@ class ChangelogParser(
             return false
         }
 
-        val remoteSynced = remote.copy(syncStatus = ItemEntity.SYNC_STATUS_SYNCED)
+        // Tombstone пришёл с Диска → он уже разошёлся, ставим deleteConfirmed = true.
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = ItemEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = ItemEntity.SYNC_STATUS_SYNCED)
+        }
 
+        // ── INSERT (локально нет) ──
         if (local == null) {
             db.itemDao().insertItem(remoteSynced)
-            Logger.log(TAG, "applyItem INSERT: id=${entry.entityId} '${remoteSynced.name}' (action=${entry.action})")
+            Logger.log(
+                TAG,
+                "applyItem INSERT: id=${entry.entityId} '${remoteSynced.name}' " +
+                    "(action=${entry.action}, isDeleted=${remoteSynced.isDeleted})"
+            )
             return true
         }
 
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        // Локальный tombstone + remote живой + локальный не старше → skip.
+        if (local.isDeleted && !remoteSynced.isDeleted && local.updatedDate >= remoteSynced.updatedDate) {
+            Logger.log(
+                TAG,
+                "applyItem SKIP: local tombstone wins (local.updatedDate=${local.updatedDate} " +
+                    ">= remote.updatedDate=${remoteSynced.updatedDate}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedDate > local.updatedDate) {
             val merged = remoteSynced.copy(
                 imageUrl = remoteSynced.imageUrl ?: local.imageUrl,
@@ -178,7 +221,8 @@ class ChangelogParser(
             db.itemDao().updateItem(merged)
             Logger.log(
                 TAG,
-                "applyItem UPDATE: id=${entry.entityId} '${merged.name}' (remote newer: ${remoteSynced.updatedDate} > ${local.updatedDate})"
+                "applyItem UPDATE: id=${entry.entityId} '${merged.name}' " +
+                    "(remote newer: ${remoteSynced.updatedDate} > ${local.updatedDate}, isDeleted=${merged.isDeleted})"
             )
             return true
         } else {
@@ -197,6 +241,7 @@ class ChangelogParser(
     private suspend fun applyFolderEntry(entry: ChangelogEntry): Boolean {
         val local = db.folderDao().getFolderById(entry.entityId)
 
+        // ── ACTION_DELETE (старый формат) → tombstone локально ──
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyFolder DELETE: id=${entry.entityId} not found locally, skip")
@@ -213,11 +258,17 @@ class ChangelogParser(
                 )
                 return false
             }
-            db.folderDao().deleteFolderById(entry.entityId)
-            Logger.log(TAG, "applyFolder DELETE: id=${entry.entityId} '${local.name}' removed")
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyFolder DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.folderDao().markFolderDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            db.folderDao().confirmFolderDeleted(entry.entityId)
+            Logger.log(TAG, "applyFolder DELETE → tombstone: id=${entry.entityId} '${local.name}'")
             return true
         }
 
+        // ── PARSE PAYLOAD ──
         val remote: FolderEntity = try {
             gson.fromJson(entry.payloadJson, FolderEntity::class.java)
         } catch (e: Exception) {
@@ -225,14 +276,43 @@ class ChangelogParser(
             return false
         }
 
-        val remoteSynced = remote.copy(syncStatus = FolderEntity.SYNC_STATUS_SYNCED)
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = FolderEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = FolderEntity.SYNC_STATUS_SYNCED)
+        }
 
+        // ── INSERT ──
         if (local == null) {
             db.folderDao().insertFolder(remoteSynced)
-            Logger.log(TAG, "applyFolder INSERT: id=${entry.entityId} '${remoteSynced.name}' (action=${entry.action})")
+            Logger.log(
+                TAG,
+                "applyFolder INSERT: id=${entry.entityId} '${remoteSynced.name}' " +
+                    "(action=${entry.action}, isDeleted=${remoteSynced.isDeleted})"
+            )
             return true
         }
 
+        // ── ЗАЩИТА СИСТЕМНОЙ ПАПКИ ──
+        if (local.isSystem && remoteSynced.isDeleted) {
+            Logger.log(TAG, "applyFolder SKIP: cannot tombstone system folder ${entry.entityId}")
+            return false
+        }
+
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
+            Logger.log(
+                TAG,
+                "applyFolder SKIP: local tombstone wins (local.updatedAt=${local.updatedAt} " +
+                    ">= remote.updatedAt=${remoteSynced.updatedAt}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedAt > local.updatedAt) {
             val merged = if (local.isSystem || remoteSynced.isSystem) {
                 remoteSynced.copy(
@@ -253,7 +333,8 @@ class ChangelogParser(
             db.folderDao().updateFolder(merged)
             Logger.log(
                 TAG,
-                "applyFolder UPDATE: id=${entry.entityId} '${merged.name}' (remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt})"
+                "applyFolder UPDATE: id=${entry.entityId} '${merged.name}' " +
+                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, isDeleted=${merged.isDeleted})"
             )
             return true
         } else {
@@ -272,6 +353,7 @@ class ChangelogParser(
     private suspend fun applyTaskEntry(entry: ChangelogEntry): Boolean {
         val local = db.taskDao().getById(entry.entityId)
 
+        // ── ACTION_DELETE (старый формат) → tombstone локально ──
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyTask DELETE: id=${entry.entityId} not found locally, skip")
@@ -284,16 +366,17 @@ class ChangelogParser(
                 )
                 return false
             }
-            val softDeleted = local.copy(
-                isDeleted = true,
-                updatedAt = System.currentTimeMillis(),
-                syncStatus = TaskEntity.SYNC_STATUS_SYNCED
-            )
-            db.taskDao().update(softDeleted)
-            Logger.log(TAG, "applyTask SOFT-DELETE: id=${entry.entityId} '${local.title}'")
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyTask DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.taskDao().markTaskDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            db.taskDao().confirmTaskDeleted(entry.entityId)
+            Logger.log(TAG, "applyTask DELETE → tombstone: id=${entry.entityId} '${local.title}'")
             return true
         }
 
+        // ── PARSE PAYLOAD ──
         val remote: TaskEntity = try {
             gson.fromJson(entry.payloadJson, TaskEntity::class.java)
         } catch (e: Exception) {
@@ -301,19 +384,43 @@ class ChangelogParser(
             return false
         }
 
-        val remoteSynced = remote.copy(syncStatus = TaskEntity.SYNC_STATUS_SYNCED)
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = TaskEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = TaskEntity.SYNC_STATUS_SYNCED)
+        }
 
+        // ── INSERT ──
         if (local == null) {
             db.taskDao().insert(remoteSynced)
-            Logger.log(TAG, "applyTask INSERT: id=${entry.entityId} '${remoteSynced.title}' (action=${entry.action})")
+            Logger.log(
+                TAG,
+                "applyTask INSERT: id=${entry.entityId} '${remoteSynced.title}' " +
+                    "(action=${entry.action}, isDeleted=${remoteSynced.isDeleted})"
+            )
             return true
         }
 
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
+            Logger.log(
+                TAG,
+                "applyTask SKIP: local tombstone wins (local.updatedAt=${local.updatedAt} " +
+                    ">= remote.updatedAt=${remoteSynced.updatedAt}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedAt > local.updatedAt) {
             db.taskDao().update(remoteSynced)
             Logger.log(
                 TAG,
-                "applyTask UPDATE: id=${entry.entityId} '${remoteSynced.title}' (remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt})"
+                "applyTask UPDATE: id=${entry.entityId} '${remoteSynced.title}' " +
+                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, isDeleted=${remoteSynced.isDeleted})"
             )
             return true
         } else {
@@ -326,7 +433,7 @@ class ChangelogParser(
     }
 
     // ============================================================
-    // 🆕 v16.2: HISTORY (append-only)
+    // HISTORY (append-only)
     // ============================================================
 
     /**
@@ -339,8 +446,6 @@ class ChangelogParser(
      *  - Поля oldValue / newValue / itemName приходят полностью из payload.
      */
     private suspend fun applyHistoryEntry(entry: ChangelogEntry): Boolean {
-        // Для истории update/delete не используются.
-        // Если всё же пришли — просто пропускаем.
         if (entry.action != OutboxEntity.ACTION_CREATE) {
             Logger.log(
                 TAG,
@@ -356,14 +461,12 @@ class ChangelogParser(
             return false
         }
 
-        // Проверка дубликата по id
         val existingIds = db.historyDao().getAllIds()
         if (remote.id in existingIds) {
             Logger.log(TAG, "applyHistory SKIP: id=${remote.id} already exists")
             return false
         }
 
-        // Вставляем через insertAll (IGNORE) — на случай гонок
         db.historyDao().insertAll(listOf(remote))
         Logger.log(
             TAG,
