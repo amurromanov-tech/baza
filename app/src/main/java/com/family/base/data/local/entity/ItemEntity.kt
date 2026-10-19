@@ -1,5 +1,6 @@
 package com.family.base.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
@@ -92,10 +93,13 @@ data class ItemEntity(
      *  - "pending" — запись изменена локально, ждёт отправки в changelog.
      *  - "conflict" — конфликт при merge (задел на будущее, сейчас не используется).
      *
-     * Значение по умолчанию после миграции v14 → v15 = "synced":
-     * все существующие записи считаются уже синхронизированными,
-     * чтобы первый запуск v15 не заливал на Диск всю базу.
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "synced" —
+     * чтобы схема Entity совпадала с фактической схемой БД,
+     * созданной миграцией v14→v15 (ALTER TABLE ... DEFAULT 'synced').
+     * Без этого Room при открытии падал с
+     * "Migration didn't properly handle: items".
      */
+    @ColumnInfo(defaultValue = "synced")
     val syncStatus: String = SYNC_STATUS_SYNCED,
 
     // ===== TOMBSTONE (v19, №10) =====
@@ -108,7 +112,13 @@ data class ItemEntity(
      * В UI такие предметы не показываются.
      * Архив (isArchived) и списание — НЕ tombstone, это отдельные
      * операции, которые остаются в базе навсегда.
+     *
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0" —
+     * миграция добавила колонку через
+     * ALTER TABLE items ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0,
+     * поэтому Room ожидает именно defaultValue='0'.
      */
+    @ColumnInfo(defaultValue = "0")
     val isDeleted: Boolean = false,
 
     /**
@@ -128,7 +138,10 @@ data class ItemEntity(
      * false — tombstone ещё не разошёлся через changelog.
      * true  — PUSH в changelog прошёл успешно; через 1 год cleanup
      *         может физически удалить запись из базы.
+     *
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0".
      */
+    @ColumnInfo(defaultValue = "0")
     val deleteConfirmed: Boolean = false
 ) {
     fun computeExpiryFields() {
