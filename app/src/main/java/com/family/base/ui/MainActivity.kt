@@ -31,6 +31,7 @@ import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.dao.FolderStatsRow
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityMainBinding
@@ -338,13 +339,19 @@ class MainActivity : AppCompatActivity() {
 
  // ============================================================
  // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
+ // 🆕 v20.1.1: + статистика обычных папок и сумма «Покупок»
  // ============================================================
  /**
-  * Загружает три счётчика:
+  * Загружает три счётчика системных папок и статистику обычных папок:
   *  - home_tasks     → активные задачи (taskDao.getActiveCount);
   *  - purchases      → 🆕 v17.0.9: предметы в «Покупках» РЕКУРСИВНО
-  *                     (включая подпапки «Покупка DD.MM.YYYY #N»);
+  *                     (включая подпапки «Покупка DD.MM.YYYY #N»)
+  *                     🆕 v20.1.1: + сумма по всем подпапкам;
   *  - shopping_list  → предметы в корне «Списка покупок» (shallow).
+  *
+  * 🆕 v20.1.1: дополнительно собирает агрегаты (📦 N · 💰 X ₽)
+  * для всех обычных папок, которые сейчас на экране, и передаёт их
+  * в адаптер. Один batch-запрос getFolderStatsShallow — без N+1.
   */
  private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
@@ -363,8 +370,56 @@ class MainActivity : AppCompatActivity() {
                  )
              }
              adapter.setSystemFolderCounters(counters)
+
+             // 🆕 v20.1.1: статистика обычных папок + сумма «Покупок».
+             // Делаем ПОСЛЕ счётчиков, чтобы UI не мигал пустыми info.
+             loadFolderStats()
          } catch (e: Exception) {
              Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
+         }
+     }
+ }
+
+ /**
+  * 🆕 v20.1.1: собирает агрегаты по обычным папкам текущего экрана
+  * и рекурсивный агрегат по «Покупкам», передаёт в адаптер.
+  *
+  * Список папок берём из viewModel.currentEntries.value — это те же
+  * объекты, что сейчас на экране. Для них одним batch-запросом
+  * достаём количество и сумму прямых предметов.
+  */
+ private fun loadFolderStats() {
+     lifecycleScope.launch {
+         try {
+             val entries = viewModel.currentEntries.value ?: return@launch
+
+             val ordinaryFolderIds = entries
+                 .filterIsInstance<FolderEntity>()
+                 .filter { !it.isSystem }
+                 .map { it.id }
+
+             val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
+                 // batch по обычным папкам — один запрос
+                 val map: Map<String, FolderStatsRow> =
+                     if (ordinaryFolderIds.isEmpty()) {
+                         emptyMap()
+                     } else {
+                         db.itemDao()
+                             .getFolderStatsShallow(ordinaryFolderIds)
+                             .associateBy { it.folderId }
+                     }
+
+                 // рекурсивно по «Покупкам» — один запрос
+                 val pStats = db.itemDao()
+                     .getFolderStatsRecursive(FolderEntity.SYSTEM_ID_PURCHASES)
+
+                 Pair(map, pStats)
+             }
+
+             adapter.setFolderStats(statsMap)
+             adapter.setPurchasesStats(purchasesStats)
+         } catch (e: Exception) {
+             Logger.log(TAG, "loadFolderStats error: ${e.message}")
          }
      }
  }
