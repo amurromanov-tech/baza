@@ -100,13 +100,36 @@ data class TaskEntity(
      */
     val sortOrder: Int = 0,
 
+    // ===== TOMBSTONE (v19, №10) =====
     /**
      * Soft-delete для синка.
-     * Удалённые задачи помечаются true и синкаются,
-     * чтобы удаление разошлось по всем устройствам.
+     * Удалённые задачи помечаются true и синкаются через changelog,
+     * чтобы удаление разошлось по всем устройствам и не «воскресло»
+     * при merge со старой версией с Диска.
+     *
      * В UI такие задачи не показываются.
      */
     val isDeleted: Boolean = false,
+
+    /**
+     * Когда удалена (timestamp, millis).
+     * NULL — если ещё не удалена.
+     */
+    val deletedAt: Long? = null,
+
+    /**
+     * Кто удалил (AppUser.name).
+     * NULL — если ещё не удалена.
+     */
+    val deletedBy: String? = null,
+
+    /**
+     * Подтверждён ли tombstone.
+     * false — tombstone ещё не разошёлся через changelog.
+     * true  — PUSH в changelog прошёл успешно; через 1 год cleanup
+     *         может физически удалить запись из базы.
+     */
+    val deleteConfirmed: Boolean = false,
 
     // ===== СИНХРОНИЗАЦИЯ (v15) =====
     /**
