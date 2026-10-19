@@ -58,6 +58,17 @@ import kotlinx.coroutines.withContext
  *   - Local-only при diskIsNewer теперь помечаются tombstone,
  *     а не удаляются физически: чтобы удаление разошлось на другие
  *     устройства и не воскресло через changelog.
+ *
+ * 🆕 v18.2.0 (шаг 2): напоминания задач (Путь 2 + Путь 3).
+ *   - TaskEntity получил remindAt и autoRemindEnabled.
+ *   - mergeData → блок TASKS: disk-версия перезаписывает локальную
+ *     целиком (включая remindAt/autoRemindEnabled) по общему правилу
+ *     updatedAt — это правильно: если на другом устройстве поменяли
+ *     «Когда напомнить» или выключили умный пинг, это должно разойтись.
+ *   - Отдельной «защиты remindAt» не добавляем: updatedAt уже покрывает
+ *     конфликт. Если хочется поменять remindAt на устройстве A, а B
+ *     ещё не получил — updatedAt у A станет новее, и B применит его.
+ *     Если B поменяет позже — его updatedAt будет ещё новее.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -687,17 +698,6 @@ class SyncViewModel(
 
             // ================================================================
             // 🆕 v17.2.7: ФЛАГ «folders отсутствуют на Диске»
-            //
-            // Если с Диска пришло 0 folders, а локально они есть —
-            // это признак того, что folders.json на Диске отсутствует
-            // или битый. В этом случае НЕЛЬЗЯ применять items:
-            // items без папок-родителей потеряют parentId и превратятся
-            // в «осиротевшие», а алгоритм удаления local-only снесёт
-            // всё, что не попало в неполный items.json с Диска.
-            //
-            // ⚠️ Раньше этот флаг защищал только folders — и именно это
-            // привело к инциденту 16.10.2026, когда пропало ~190 предметов.
-            // Теперь флаг блокирует весь merge.
             // ================================================================
             val foldersAreMissing = diskFolders.isEmpty() && localFoldersCount > 0
 
@@ -712,9 +712,6 @@ class SyncViewModel(
 
             // ================================================================
             // 🆕 v17.2.7: ЗАЩИТА ОТ СТАРОГО items.json
-            //
-            // Если max(updatedDate) на Диске < max(updatedDate) локально —
-            // значит items.json на Диске устарел. Не удаляем local-only items.
             // ================================================================
             val diskItemsMaxUpdated = diskItems.maxOfOrNull { it.updatedDate } ?: 0L
             val localItemsMaxUpdated = db.itemDao().getAllItemsRaw().maxOfOrNull { it.updatedDate } ?: 0L
@@ -781,8 +778,7 @@ class SyncViewModel(
                     }
                 }
 
-                // 🆕 v19: удаление local-only при diskIsNewer — теперь tombstone,
-                // а не hard-delete. Не трогаем свои tombstones и системные.
+                // 🆕 v19: удаление local-only при diskIsNewer — теперь tombstone.
                 if (diskIsNewer) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders()
@@ -861,7 +857,6 @@ class SyncViewModel(
                         .filter { it.id !in diskItemIds }
                     for (item in localOnlyItems) {
                         if (item.isDeleted) {
-                            // Наш tombstone, ещё не уехал — не трогаем.
                             continue
                         }
                         if (item.updatedDate < diskLastModified) {
@@ -905,6 +900,7 @@ class SyncViewModel(
                 var insertedCount = 0
                 var updatedCount = 0
                 var tombstonedCount = 0
+                var remindAtUpdatedCount = 0
 
                 diskTasks.forEach { diskTask ->
                     val local = localMap[diskTask.id]
@@ -940,6 +936,22 @@ class SyncViewModel(
                         db.taskDao().insert(diskTask)
                         insertedCount++
                     } else if (diskTask.updatedAt > local.updatedAt) {
+                        // 🆕 v18.2.0 (шаг 2): disk-версия перезаписывает локальную
+                        // целиком, включая remindAt и autoRemindEnabled.
+                        // Это правильно: если на другом устройстве поменяли
+                        // «Когда напомнить» или выключили умный пинг — это
+                        // должно разойтись. updatedAt уже покрывает конфликт.
+                        if (diskTask.remindAt != local.remindAt ||
+                            diskTask.autoRemindEnabled != local.autoRemindEnabled
+                        ) {
+                            remindAtUpdatedCount++
+                            Logger.log(
+                                TAG,
+                                "mergeData: task UPDATE reminds (id=${diskTask.id}, " +
+                                    "remindAt ${local.remindAt} -> ${diskTask.remindAt}, " +
+                                    "autoRemind ${local.autoRemindEnabled} -> ${diskTask.autoRemindEnabled})"
+                            )
+                        }
                         db.taskDao().update(diskTask)
                         updatedCount++
                     }
@@ -947,7 +959,8 @@ class SyncViewModel(
                 Logger.log(
                     TAG,
                     "mergeData: tasks merged (inserted=$insertedCount, updated=$updatedCount, " +
-                        "tombstoned=$tombstonedCount, local=${localTasks.size}, disk=${diskTasks.size})"
+                        "tombstoned=$tombstonedCount, remindUpdated=$remindAtUpdatedCount, " +
+                        "local=${localTasks.size}, disk=${diskTasks.size})"
                 )
             }
 
