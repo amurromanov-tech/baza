@@ -18,13 +18,25 @@ import java.util.UUID
  * 🆕 v18.1.2 (fix миграции 18→19): добавлены indices для
  * isDeleted и (deleteConfirmed, deletedAt).
  *
- * Миграция 18→19 создаёт индексы:
- *   CREATE INDEX index_tasks_isDeleted ON tasks(isDeleted);
- *   CREATE INDEX index_tasks_deleteConfirmed_deletedAt ON tasks(deleteConfirmed, deletedAt);
+ * 🆕 v18.2.0 (шаг 2, миграция 19→20): Путь 2 + Путь 3 напоминаний.
+ *  - remindAt          — точный момент напоминания (Путь 2). NULL = нет точного.
+ *  - autoRemindEnabled — умный пинг «пока не сделаю» (Путь 3). По умолчанию true.
  *
- * Без @Entity(indices=...) Room ожидал indices=[], а в БД они есть —
- * валидация схемы падала с "Migration didn't properly handle: tasks".
- * Теперь ожидаемые и фактические индексы совпадают.
+ * Семантика напоминаний (приоритет в TaskReminderScheduler):
+ *  1) remindAt задан и ещё не сработал → точный пинг в remindAt;
+ *  2) remindAt нет, но dueDate есть → пинг в dueDate - N минут (дефолт из дедлайна);
+ *  3) ни remindAt, ни dueDate нет, но autoRemindEnabled = true → умный пинг
+ *     по расписанию (важные — ежедневно, обычные — раз в 2 дня);
+ *  4) autoRemindEnabled = false и точных пингов нет → задача молчит.
+ *
+ * ⚠️ Миграция 19→20 добавляет:
+ *   ALTER TABLE tasks ADD COLUMN remindAt INTEGER                   (nullable, без DEFAULT)
+ *   ALTER TABLE tasks ADD COLUMN autoRemindEnabled INTEGER NOT NULL DEFAULT 1
+ *
+ * Поэтому:
+ *  - remindAt — БЕЗ @ColumnInfo(defaultValue): в SQL колонка nullable без DEFAULT;
+ *  - autoRemindEnabled — С @ColumnInfo(defaultValue = "1"): в SQL DEFAULT 1.
+ * Иначе Room снова разойдётся по схеме (инцидент 18.1.0–18.1.2, правило №34).
  */
 @Entity(
     tableName = "tasks",
@@ -33,6 +45,16 @@ import java.util.UUID
         Index(
             value = ["deleteConfirmed", "deletedAt"],
             name = "index_tasks_deleteConfirmed_deletedAt"
+        ),
+        // 🆕 v18.2.0 (шаг 2): индекс под выборку задач для умного пинга
+        // и под точные напоминания. Миграция 19→20 создаёт:
+        //   CREATE INDEX index_tasks_remindAt ON tasks(remindAt);
+        //   CREATE INDEX index_tasks_autoRemindEnabled_isDone_isDeleted
+        //     ON tasks(autoRemindEnabled, isDone, isDeleted);
+        Index(value = ["remindAt"], name = "index_tasks_remindAt"),
+        Index(
+            value = ["autoRemindEnabled", "isDone", "isDeleted"],
+            name = "index_tasks_autoRemindEnabled_isDone_isDeleted"
         )
     ]
 )
@@ -89,6 +111,8 @@ data class TaskEntity(
 
     /**
      * Когда создана (timestamp).
+     * Используется Пути 3 для расчёта «возраста» задачи:
+     * умный пинг считается от createdAt, а не от dueDate.
      */
     val createdAt: Long = System.currentTimeMillis(),
 
@@ -121,6 +145,37 @@ data class TaskEntity(
      * Меньше — выше.
      */
     val sortOrder: Int = 0,
+
+    // ===== НАПОМИНАНИЯ (v18.2.0, шаг 2: Путь 2 + Путь 3) =====
+
+    /**
+     * 🆕 v18.2.0 (Путь 2): точный момент напоминания (timestamp, millis).
+     *
+     * NULL — точного пинга нет. Тогда scheduler пробует:
+     *  - dueDate (если есть) — пинг за N минут до;
+     *  - autoRemindEnabled (Путь 3) — умный пинг по возрасту задачи.
+     *
+     * ⚠️ БЕЗ @ColumnInfo(defaultValue): миграция 19→20 добавляет колонку
+     * как nullable без DEFAULT. Если поставить defaultValue — Room
+     * снова разойдётся по схеме (правило №34).
+     */
+    val remindAt: Long? = null,
+
+    /**
+     * 🆕 v18.2.0 (Путь 3): включён ли умный пинг «пока не сделаю».
+     *
+     * true  — если точный пинг не сработал / не задан, scheduler периодически
+     *         напоминает о задаче: важные — ежедневно, обычные — раз в 2 дня,
+     *         просроченные — ежедневно. Пинг считается от createdAt.
+     * false — задача молчит, если нет точного remindAt и dueDate.
+     *
+     * По умолчанию true: даже задача без даты получит хотя бы один пинг.
+     *
+     * 🆕 Миграция 19→20: ALTER TABLE tasks ADD COLUMN autoRemindEnabled INTEGER NOT NULL DEFAULT 1.
+     * Поэтому @ColumnInfo(defaultValue = "1") — иначе Room снова разойдётся.
+     */
+    @ColumnInfo(defaultValue = "1")
+    val autoRemindEnabled: Boolean = true,
 
     // ===== TOMBSTONE (v19, №10) =====
     /**
