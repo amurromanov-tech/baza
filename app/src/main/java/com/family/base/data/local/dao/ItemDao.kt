@@ -70,34 +70,18 @@ interface ItemDao {
     // 🆕 v15: СИНХРОНИЗАЦИЯ
     // ============================================================
 
-    /**
-     * Все items со статусом pending — для SyncManager.
-     * Включает tombstones (у них syncStatus = 'pending', пока не уехали).
-     */
     @Query("SELECT * FROM items WHERE syncStatus = 'pending'")
     suspend fun getItemsBySyncStatusPending(): List<ItemEntity>
 
-    /**
-     * Все items со статусом synced — для отладки.
-     */
     @Query("SELECT * FROM items WHERE syncStatus = 'synced'")
     suspend fun getItemsBySyncStatusSynced(): List<ItemEntity>
 
-    /**
-     * Обновить syncStatus у одного item.
-     */
     @Query("UPDATE items SET syncStatus = :status WHERE id = :itemId")
     suspend fun updateSyncStatus(itemId: String, status: String)
 
-    /**
-     * Пометить все переданные items как synced.
-     */
     @Query("UPDATE items SET syncStatus = 'synced' WHERE id IN (:ids)")
     suspend fun markItemsSynced(ids: List<String>)
 
-    /**
-     * Пометить все переданные items как pending.
-     */
     @Query("UPDATE items SET syncStatus = 'pending' WHERE id IN (:ids)")
     suspend fun markItemsPending(ids: List<String>)
 
@@ -105,10 +89,6 @@ interface ItemDao {
     // ВЛОЖЕННОСТЬ (parentItemId) — предмет внутри предмета
     // ============================================================
 
-    /**
-     * Прямые дети предмета (неархивные, не tombstone), отсортированы по имени.
-     * Используется в карточке предмета — секция «📦 Вложенные».
-     */
     @Query("""
         SELECT * FROM items 
         WHERE parentItemId = :parentItemId 
@@ -118,10 +98,6 @@ interface ItemDao {
     """)
     suspend fun getItemsByParentItem(parentItemId: String): List<ItemEntity>
 
-    /**
-     * Прямые дети предмета БЕЗ фильтра архива и tombstone.
-     * Используется при синхронизации и каскадных операциях.
-     */
     @Query("""
         SELECT * FROM items 
         WHERE parentItemId = :parentItemId 
@@ -129,9 +105,6 @@ interface ItemDao {
     """)
     suspend fun getItemsByParentItemRaw(parentItemId: String): List<ItemEntity>
 
-    /**
-     * Есть ли у предмета неархивные и не-tombstone дети (только прямые).
-     */
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM items 
@@ -142,9 +115,6 @@ interface ItemDao {
     """)
     suspend fun hasItemChildren(itemId: String): Boolean
 
-    /**
-     * Количество неархивных и не-tombstone прямых детей предмета.
-     */
     @Query("""
         SELECT COUNT(*) FROM items 
         WHERE parentItemId = :itemId 
@@ -153,12 +123,6 @@ interface ItemDao {
     """)
     suspend fun getItemChildCount(itemId: String): Int
 
-    /**
-     * Отвязать всех прямых детей от предмета-родителя.
-     * Используется при «удалить родителя, отвязав детей».
-     * Работает и с tombstones — они тоже отвязываются, чтобы
-     * не висели с битым parentItemId.
-     */
     @Query("""
         UPDATE items 
         SET parentItemId = NULL, updatedDate = :date 
@@ -166,10 +130,6 @@ interface ItemDao {
     """)
     suspend fun clearItemParentItem(parentItemId: String, date: Long)
 
-    /**
-     * Все потомки рекурсивно (прямые + вложенные на любую глубину).
-     * Возвращает только id — для каскадных операций.
-     */
     @Query("""
         WITH RECURSIVE descendants(id) AS (
             SELECT id FROM items WHERE parentItemId = :rootId
@@ -190,7 +150,6 @@ interface ItemDao {
 
     // ============================================================
     // АРХИВАЦИЯ
-    // Архив — это НЕ tombstone. Архивные предметы остаются в базе навсегда.
     // ============================================================
 
     @Query("""
@@ -486,7 +445,6 @@ interface ItemDao {
 
     // ============================================================
     // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ПРЕДМЕТЫ
-    // Ремонт НЕ трогает tombstones — они не «осиротевшие», они удалённые.
     // ============================================================
 
     @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId AND isDeleted = 0")
@@ -592,21 +550,6 @@ interface ItemDao {
     // 🆕 v20.1.1: СТАТИСТИКА ПАПОК (количество + сумма)
     // ============================================================
 
-    /**
-     * 🆕 v20.1.1: агрегаты по СПИСКУ папок за один запрос — чтобы
-     * не делать N+1 при отрисовке списка каталога.
-     *
-     * Считаем только прямых детей-предметов:
-     *  - parentItemId IS NULL — предметы внутри предметов-контейнеров
-     *    не учитываем, иначе счётчик папки раздуется;
-     *  - isArchived = 0 — архивные в папке не видны;
-     *  - isDeleted = 0 — tombstones не считаем.
-     *
-     * Сумма: SUM(price * quantity). Если у всех детей price = NULL,
-     * COALESCE вернёт 0.0 — отличаем «нет цены» от «пусто» по itemCount.
-     *
-     * ВАЖНО: parentId здесь — это id папки, а не предмета.
-     */
     @Query("""
         SELECT parentId AS folderId,
                COUNT(*) AS itemCount,
@@ -620,17 +563,6 @@ interface ItemDao {
     """)
     suspend fun getFolderStatsShallow(folderIds: List<String>): List<FolderStatsRow>
 
-    /**
-     * 🆕 v20.1.1: рекурсивная статистика для системной папки «Покупки».
-     *
-     * Предметы лежат в подпапках «Покупка DD.MM.YYYY #N», поэтому
-     * обходим дерево папок через CTE (по folders.parentId), затем
-     * агрегируем предметы по всем найденным папкам.
-     *
-     * Возвращает null, если в дереве нет ни одного подходящего предмета
-     * (COUNT(*) в агрегатном запросе без GROUP BY всегда даёт строку,
-     * поэтому проверяем itemCount > 0 в коде).
-     */
     @Query("""
         WITH RECURSIVE folder_tree(id) AS (
             SELECT :folderId
@@ -649,23 +581,6 @@ interface ItemDao {
     """)
     suspend fun getFolderStatsRecursive(folderId: String): FolderStatsRow?
 
-    /**
-     * 🆕 v20.1.2: рекурсивная статистика сразу по СПИСКУ папок —
-     * один запрос, без N+1.
-     *
-     * Для каждой папки из :folderIds строим своё поддерево
-     * (root_id запоминает, от какой папки из списка пошёл обход),
-     * затем LEFT JOIN с items — чтобы папки без предметов тоже
-     * попали в результат (itemCount = 0, totalPrice = 0.0).
-     *
-     * Нужен для корня «Домашнего каталога»: «Продукты», «Лекарства»,
-     * «Вещи» и т.д. теперь показывают количество и сумму по ВСЕМ
-     * вложенным подпапкам, как «🛒 Покупки».
-     *
-     * ⚠️ Если передать и родителя, и его потомка — предметы потомка
-     * попадут в счётчики обоих. Для корня каталога это не проблема
-     * (там только папки верхнего уровня), но помнить надо.
-     */
     @Query("""
         WITH RECURSIVE folder_tree(root_id, id) AS (
             SELECT id, id FROM folders WHERE id IN (:folderIds)
@@ -686,6 +601,81 @@ interface ItemDao {
         GROUP BY ft.root_id
     """)
     suspend fun getFolderStatsRecursiveBatch(folderIds: List<String>): List<FolderStatsRow>
+
+    /**
+     * 🆕 v20.1.3: ПОЛНЫЙ СМЕШАННЫЙ обход — папки + прямые предметы
+     * + папки, вложенные в предметы + вложенные предметы (на глубину
+     * до 2 «волн»).
+     *
+     * Зачем: у предмета может быть вложенная папка (parentItemId),
+     * а в ней — свои предметы. Простой рекурсивный CTE по folders.parentId
+     * такие папки не видит, потому что у них parentId = NULL.
+     *
+     * Пример:
+     *   📁 Комната
+     *     📦 Холодильник (100 ₽)
+     *       📁 Полка 1 → 📦 Молоко (10 ₽)
+     *       📁 Полка 2 → 📦 Сыр (20 ₽)
+     *
+     * Для «Комнаты» вернёт itemCount = 3, totalPrice = 130.0.
+     *
+     * Ограничение: цепочка «папка → предмет → папка → предмет → …»
+     * глубже 2 уровней не покрывается. Для домашнего каталога это
+     * нереальная структура, но помнить надо.
+     */
+    @Query("""
+        WITH RECURSIVE
+        folder_tree(root_id, folder_id) AS (
+            SELECT id, id FROM folders WHERE id IN (:folderIds)
+            UNION
+            SELECT ft.root_id, f.id
+            FROM folders f
+            INNER JOIN folder_tree ft ON f.parentId = ft.folder_id
+            WHERE f.isDeleted = 0
+        ),
+        item_tree(root_id, item_id) AS (
+            SELECT ft.root_id, i.id
+            FROM items i
+            INNER JOIN folder_tree ft ON i.parentId = ft.folder_id
+            WHERE i.isArchived = 0 AND i.isDeleted = 0
+            UNION
+            SELECT it.root_id, c.id
+            FROM items c
+            INNER JOIN item_tree it ON c.parentItemId = it.item_id
+            WHERE c.isArchived = 0 AND c.isDeleted = 0
+            UNION
+            SELECT it.root_id, f.id
+            FROM folders f
+            INNER JOIN item_tree it ON f.parentItemId = it.item_id
+            WHERE f.isDeleted = 0
+        ),
+        folder_tree2(root_id, folder_id) AS (
+            SELECT root_id, folder_id FROM folder_tree
+            UNION
+            SELECT it.root_id, f.id
+            FROM folders f
+            INNER JOIN item_tree it ON f.parentItemId = it.item_id
+            WHERE f.isDeleted = 0
+        ),
+        item_tree2(root_id, item_id) AS (
+            SELECT ft.root_id, i.id
+            FROM items i
+            INNER JOIN folder_tree2 ft ON i.parentId = ft.folder_id
+            WHERE i.isArchived = 0 AND i.isDeleted = 0
+            UNION
+            SELECT it.root_id, c.id
+            FROM items c
+            INNER JOIN item_tree2 it ON c.parentItemId = it.item_id
+            WHERE c.isArchived = 0 AND c.isDeleted = 0
+        )
+        SELECT it.root_id AS folderId,
+               COUNT(*) AS itemCount,
+               COALESCE(SUM(i.price * i.quantity), 0.0) AS totalPrice
+        FROM item_tree2 it
+        INNER JOIN items i ON i.id = it.item_id
+        GROUP BY it.root_id
+    """)
+    suspend fun getFolderStatsDeep(folderIds: List<String>): List<FolderStatsRow>
 
     // ============================================================
     // ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
@@ -745,14 +735,6 @@ interface ItemDao {
     // 🆕 v19 (№10): TOMBSTONES
     // ============================================================
 
-    /**
-     * Пометить предмет как удалённый (tombstone).
-     * Не стирает запись физически — она остаётся в базе
-     * и уедет через changelog, чтобы удаление разошлось по всем устройствам.
-     *
-     * Ставит syncStatus = 'pending' — SyncManager отправит в outbox.
-     * deleteConfirmed = 0 — ещё не подтверждено, что PUSH прошёл.
-     */
     @Query("""
         UPDATE items SET
             isDeleted = 1,
@@ -765,17 +747,9 @@ interface ItemDao {
     """)
     suspend fun markItemDeleted(itemId: String, date: Long, user: String?)
 
-    /**
-     * Пометить tombstone как подтверждённый — PUSH в changelog прошёл успешно.
-     * После этого через CLEANUP_RETENTION_MS (1 год) cleanup физически удалит запись.
-     */
     @Query("UPDATE items SET deleteConfirmed = 1 WHERE id = :itemId")
     suspend fun confirmItemDeleted(itemId: String)
 
-    /**
-     * Подтверждённые tombstones старше указанного времени — для cleanup.
-     * Возвращает id, которые можно физически удалить.
-     */
     @Query("""
         SELECT id FROM items
         WHERE isDeleted = 1
@@ -785,17 +759,9 @@ interface ItemDao {
     """)
     suspend fun getConfirmedItemsOlderThan(thresholdMs: Long): List<String>
 
-    /**
-     * Физическое удаление подтверждённых tombstones по списку id.
-     * Используется cleanup раз в N дней для очистки базы.
-     */
     @Query("DELETE FROM items WHERE id IN (:ids)")
     suspend fun hardDeleteConfirmedItems(ids: List<String>)
 
-    /**
-     * Все tombstones — для диагностики / отладки merge.
-     * В UI не используется.
-     */
     @Query("SELECT * FROM items WHERE isDeleted = 1")
     suspend fun getAllTombstones(): List<ItemEntity>
 }
