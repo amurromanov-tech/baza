@@ -17,6 +17,13 @@ import com.family.base.util.Logger
  *
  * Для History никакого syncStatus нет — история append-only,
  * поэтому метод historyAdded просто пишет в outbox.
+ *
+ * 🆕 v18.2.0 (шаг 2): TaskEntity получил новые поля remindAt и autoRemindEnabled.
+ * OutboxHelper.logTask(...) сериализует задачу через Gson целиком
+ * (payloadJson = gson.toJson(task)), поэтому новые поля уезжают в changelog
+ * автоматически, без изменений в этом файле. Единственное, что мы делаем
+ * здесь — фиксируем это комментарием, чтобы при будущих правках
+ * никто не добавил ручную сборку payload без remindAt/autoRemindEnabled.
  */
 object OutboxLogger {
 
@@ -102,6 +109,13 @@ object OutboxLogger {
     // TASK
     // ============================================================
 
+    /**
+     * Записать изменение задачи в outbox.
+     *
+     * 🆕 v18.2.0 (шаг 2): задача сериализуется через Gson целиком,
+     * поэтому remindAt и autoRemindEnabled уезжают в changelog
+     * автоматически. НЕ переписывать payload вручную — потеряются поля.
+     */
     suspend fun taskChanged(
         db: AppDatabase,
         task: TaskEntity,
