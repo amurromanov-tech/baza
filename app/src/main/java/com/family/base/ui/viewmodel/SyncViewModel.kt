@@ -44,11 +44,20 @@ import kotlinx.coroutines.withContext
  * 🆕 v17.2.7 (после инцидента «пропали предметы»):
  *   - В mergeData() добавлен флаг foldersAreMissing: если с Диска пришло
  *     0 folders, а локально они есть — БЛОКИРУЕМ не только merge folders,
- *     но и merge items/history/tasks. Иначе получается рассинхрон:
- *     folders защищены, а items удаляются как «local-only».
+ *     но и merge items/history/tasks.
  *   - Добавлена проверка «данные с Диска старше локальных»:
  *     если max(diskItems.updatedDate) < max(localItems.updatedDate),
- *     НЕ удаляем local-only items. Это защита от старого items.json.
+ *     НЕ удаляем local-only items.
+ *
+ * 🆕 v19 (№10): tombstones.
+ *   - Локальный tombstone не перезаписывается живой disk-версией,
+ *     если его updatedAt >= disk.updatedAt. Это ключевая защита
+ *     от «воскрешения» удалённых предметов.
+ *   - Если disk-версия — tombstone (isDeleted = true), применяем её
+ *     и ставим deleteConfirmed = true (пришла с Диска → PUSH уже прошёл).
+ *   - Local-only при diskIsNewer теперь помечаются tombstone,
+ *     а не удаляются физически: чтобы удаление разошлось на другие
+ *     устройства и не воскресло через changelog.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -726,6 +735,41 @@ class SyncViewModel(
             } else {
                 diskFolders.forEach { diskFolder ->
                     val local = db.folderDao().getFolderById(diskFolder.id)
+
+                    // 🆕 v19 (№10): защита от воскрешения tombstone.
+                    if (local != null && local.isDeleted && !diskFolder.isDeleted &&
+                        local.updatedAt >= diskFolder.updatedAt
+                    ) {
+                        Logger.log(
+                            TAG,
+                            "mergeData: folder SKIP tombstone (local=${local.id}, " +
+                                "local.updatedAt=${local.updatedAt} >= disk=${diskFolder.updatedAt})"
+                        )
+                        return@forEach
+                    }
+
+                    // 🆕 v19: системную папку нельзя затомбить даже disk-версией.
+                    if (local != null && local.isSystem && diskFolder.isDeleted) {
+                        Logger.log(TAG, "mergeData: folder SKIP tombstone for system folder ${diskFolder.id}")
+                        return@forEach
+                    }
+
+                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
+                    if (diskFolder.isDeleted) {
+                        val mergedTombstone = diskFolder.copy(
+                            deleteConfirmed = true
+                        )
+                        if (local == null) {
+                            db.folderDao().insertFolder(mergedTombstone)
+                            Logger.log(TAG, "mergeData: folder INSERT tombstone ${diskFolder.id}")
+                        } else if (diskFolder.updatedAt > local.updatedAt) {
+                            db.folderDao().updateFolder(mergedTombstone)
+                            Logger.log(TAG, "mergeData: folder UPDATE tombstone ${diskFolder.id}")
+                        }
+                        return@forEach
+                    }
+
+                    // Обычный merge (живая disk-версия).
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
@@ -737,17 +781,28 @@ class SyncViewModel(
                     }
                 }
 
+                // 🆕 v19: удаление local-only при diskIsNewer — теперь tombstone,
+                // а не hard-delete. Не трогаем свои tombstones и системные.
                 if (diskIsNewer) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
-                    val localOnlyFolders = db.folderDao().getAllFolders().filter { it.id !in diskFolderIds }
+                    val localOnlyFolders = db.folderDao().getAllFolders()
+                        .filter { it.id !in diskFolderIds }
                     for (folder in localOnlyFolders) {
                         if (folder.isSystem) {
                             Logger.log(TAG, "mergeData: KEEPING system folder ${folder.id} '${folder.name}' (never delete)")
                             continue
                         }
+                        if (folder.isDeleted) {
+                            Logger.log(TAG, "mergeData: KEEPING local tombstone folder ${folder.id} (own tombstone)")
+                            continue
+                        }
                         if (folder.updatedAt < diskLastModified) {
-                            Logger.log(TAG, "mergeData: DELETING local-only folder ${folder.id} '${folder.name}'")
-                            db.folderDao().deleteFolderById(folder.id)
+                            Logger.log(TAG, "mergeData: TOMBSTONE local-only folder ${folder.id} '${folder.name}'")
+                            db.folderDao().markFolderDeleted(
+                                folderId = folder.id,
+                                date = System.currentTimeMillis(),
+                                user = "sync"
+                            )
                         }
                     }
                 }
@@ -759,6 +814,35 @@ class SyncViewModel(
             } else {
                 diskItems.forEach { diskItem ->
                     val local = db.itemDao().getItemById(diskItem.id)
+
+                    // 🆕 v19: защита от воскрешения tombstone.
+                    if (local != null && local.isDeleted && !diskItem.isDeleted &&
+                        local.updatedDate >= diskItem.updatedDate
+                    ) {
+                        Logger.log(
+                            TAG,
+                            "mergeData: item SKIP tombstone (local=${local.id}, " +
+                                "local.updatedDate=${local.updatedDate} >= disk=${diskItem.updatedDate})"
+                        )
+                        return@forEach
+                    }
+
+                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
+                    if (diskItem.isDeleted) {
+                        val mergedTombstone = diskItem.copy(
+                            deleteConfirmed = true
+                        )
+                        if (local == null) {
+                            db.itemDao().insertItem(mergedTombstone)
+                            Logger.log(TAG, "mergeData: item INSERT tombstone ${diskItem.id}")
+                        } else if (diskItem.updatedDate > local.updatedDate) {
+                            db.itemDao().updateItem(mergedTombstone)
+                            Logger.log(TAG, "mergeData: item UPDATE tombstone ${diskItem.id}")
+                        }
+                        return@forEach
+                    }
+
+                    // Обычный merge.
                     if (local == null) {
                         db.itemDao().insertItem(diskItem)
                     } else if (diskItem.updatedDate > local.updatedDate) {
@@ -770,16 +854,23 @@ class SyncViewModel(
                     }
                 }
 
-                // 🆕 v17.2.7: не удаляем local-only items, если diskItemsAreOlder
+                // 🆕 v19: local-only — tombstone вместо hard-delete.
                 if (diskIsNewer && !diskItemsAreOlder) {
-                    val ctx = appContext()
                     val diskItemIds = diskItems.map { it.id }.toSet()
-                    val localOnlyItems = db.itemDao().getAllItemsRaw().filter { it.id !in diskItemIds }
+                    val localOnlyItems = db.itemDao().getAllItemsRaw()
+                        .filter { it.id !in diskItemIds }
                     for (item in localOnlyItems) {
+                        if (item.isDeleted) {
+                            // Наш tombstone, ещё не уехал — не трогаем.
+                            continue
+                        }
                         if (item.updatedDate < diskLastModified) {
-                            Logger.log(TAG, "mergeData: DELETING local-only item ${item.id} '${item.name}'")
-                            db.itemDao().deleteItem(item)
-                            ImageUtils.deleteLocalImage(ctx, item.id)
+                            Logger.log(TAG, "mergeData: TOMBSTONE local-only item ${item.id} '${item.name}'")
+                            db.itemDao().markItemDeleted(
+                                itemId = item.id,
+                                date = System.currentTimeMillis(),
+                                user = "sync"
+                            )
                         }
                     }
                 } else if (diskItemsAreOlder) {
@@ -813,9 +904,38 @@ class SyncViewModel(
                 val localMap = localTasks.associateBy { it.id }
                 var insertedCount = 0
                 var updatedCount = 0
+                var tombstonedCount = 0
 
                 diskTasks.forEach { diskTask ->
                     val local = localMap[diskTask.id]
+
+                    // 🆕 v19: защита от воскрешения tombstone.
+                    if (local != null && local.isDeleted && !diskTask.isDeleted &&
+                        local.updatedAt >= diskTask.updatedAt
+                    ) {
+                        Logger.log(
+                            TAG,
+                            "mergeData: task SKIP tombstone (local=${local.id}, " +
+                                "local.updatedAt=${local.updatedAt} >= disk=${diskTask.updatedAt})"
+                        )
+                        return@forEach
+                    }
+
+                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
+                    if (diskTask.isDeleted) {
+                        val mergedTombstone = diskTask.copy(
+                            deleteConfirmed = true
+                        )
+                        if (local == null) {
+                            db.taskDao().insert(mergedTombstone)
+                            tombstonedCount++
+                        } else if (diskTask.updatedAt > local.updatedAt) {
+                            db.taskDao().update(mergedTombstone)
+                            tombstonedCount++
+                        }
+                        return@forEach
+                    }
+
                     if (local == null) {
                         db.taskDao().insert(diskTask)
                         insertedCount++
@@ -824,7 +944,11 @@ class SyncViewModel(
                         updatedCount++
                     }
                 }
-                Logger.log(TAG, "mergeData: tasks merged (inserted=$insertedCount, updated=$updatedCount, local=${localTasks.size}, disk=${diskTasks.size})")
+                Logger.log(
+                    TAG,
+                    "mergeData: tasks merged (inserted=$insertedCount, updated=$updatedCount, " +
+                        "tombstoned=$tombstonedCount, local=${localTasks.size}, disk=${diskTasks.size})"
+                )
             }
 
             if (diskIsNewer) {
