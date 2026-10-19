@@ -29,28 +29,35 @@ interface ItemDao {
     @Delete
     suspend fun deleteItem(item: ItemEntity)
 
+    /**
+     * Читает предмет по id БЕЗ фильтра isDeleted — нужно для синка
+     * и для операций, которые должны видеть tombstones (например,
+     * mergeData при проверке «а не удалён ли уже»).
+     */
     @Query("SELECT * FROM items WHERE id = :id")
     suspend fun getItemById(id: String): ItemEntity?
 
-    /** Прямое удаление по id (без загрузки сущности) */
+    /** Прямое удаление по id (без загрузки сущности). Только для cleanup tombstones. */
     @Query("DELETE FROM items WHERE id = :itemId")
     suspend fun deleteItemById(itemId: String)
 
     // ============================================================
     // ЗАПРОСЫ БЕЗ АРХИВА (ДЛЯ ОСНОВНОГО СПИСКА)
+    // Фильтр isDeleted = 0 обязателен — tombstones не показываем.
     // ============================================================
 
-    @Query("SELECT * FROM items WHERE isArchived = 0")
+    @Query("SELECT * FROM items WHERE isArchived = 0 AND isDeleted = 0")
     suspend fun getAllItems(): List<ItemEntity>
 
-    @Query("SELECT * FROM items WHERE parentId = :parentId AND isArchived = 0")
+    @Query("SELECT * FROM items WHERE parentId = :parentId AND isArchived = 0 AND isDeleted = 0")
     suspend fun getItemsByParent(parentId: String?): List<ItemEntity>
 
-    @Query("SELECT * FROM items WHERE addedDate BETWEEN :startDate AND :endDate AND isArchived = 0")
+    @Query("SELECT * FROM items WHERE addedDate BETWEEN :startDate AND :endDate AND isArchived = 0 AND isDeleted = 0")
     suspend fun getItemsByDateRange(startDate: Long, endDate: Long): List<ItemEntity>
 
     // ============================================================
-    // ЗАПРОСЫ БЕЗ ФИЛЬТРА АРХИВА (ДЛЯ СИНХРОНИЗАЦИИ)
+    // ЗАПРОСЫ БЕЗ ФИЛЬТРОВ (ДЛЯ СИНХРОНИЗАЦИИ)
+    // Видят ВСЁ, включая tombstones и архив — нужны для changelog.
     // ============================================================
 
     @Query("SELECT * FROM items")
@@ -65,6 +72,7 @@ interface ItemDao {
 
     /**
      * Все items со статусом pending — для SyncManager.
+     * Включает tombstones (у них syncStatus = 'pending', пока не уехали).
      */
     @Query("SELECT * FROM items WHERE syncStatus = 'pending'")
     suspend fun getItemsBySyncStatusPending(): List<ItemEntity>
@@ -98,19 +106,20 @@ interface ItemDao {
     // ============================================================
 
     /**
-     * Прямые дети предмета (неархивные), отсортированы по имени.
+     * Прямые дети предмета (неархивные, не tombstone), отсортированы по имени.
      * Используется в карточке предмета — секция «📦 Вложенные».
      */
     @Query("""
         SELECT * FROM items 
         WHERE parentItemId = :parentItemId 
           AND isArchived = 0 
+          AND isDeleted = 0
         ORDER BY name ASC
     """)
     suspend fun getItemsByParentItem(parentItemId: String): List<ItemEntity>
 
     /**
-     * Прямые дети предмета БЕЗ фильтра архива.
+     * Прямые дети предмета БЕЗ фильтра архива и tombstone.
      * Используется при синхронизации и каскадных операциях.
      */
     @Query("""
@@ -121,35 +130,34 @@ interface ItemDao {
     suspend fun getItemsByParentItemRaw(parentItemId: String): List<ItemEntity>
 
     /**
-     * Есть ли у предмета неархивные дети (любого уровня вложенности — только прямые).
-     * Возвращает 1, если есть хотя бы один, иначе 0.
+     * Есть ли у предмета неархивные и не-tombstone дети (только прямые).
      */
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM items 
             WHERE parentItemId = :itemId 
               AND isArchived = 0
+              AND isDeleted = 0
         )
     """)
     suspend fun hasItemChildren(itemId: String): Boolean
 
     /**
-     * Количество неархивных прямых детей предмета.
+     * Количество неархивных и не-tombstone прямых детей предмета.
      */
     @Query("""
         SELECT COUNT(*) FROM items 
         WHERE parentItemId = :itemId 
           AND isArchived = 0
+          AND isDeleted = 0
     """)
     suspend fun getItemChildCount(itemId: String): Int
 
     /**
      * Отвязать всех прямых детей от предмета-родителя.
-     * Используется при «удалить родителя, отвязав детей» — дети становятся
-     * привязанными к папке родителя (parentId родителя) или корневыми.
-     *
-     * ВАЖНО: сам перенос parentId для детей делает репозиторий,
-     * здесь только очищаем parentItemId.
+     * Используется при «удалить родителя, отвязав детей».
+     * Работает и с tombstones — они тоже отвязываются, чтобы
+     * не висели с битым parentItemId.
      */
     @Query("""
         UPDATE items 
@@ -161,7 +169,6 @@ interface ItemDao {
     /**
      * Все потомки рекурсивно (прямые + вложенные на любую глубину).
      * Возвращает только id — для каскадных операций.
-     * SQLite поддерживает WITH RECURSIVE с версии 3.8.3 (Android API 21+).
      */
     @Query("""
         WITH RECURSIVE descendants(id) AS (
@@ -183,6 +190,7 @@ interface ItemDao {
 
     // ============================================================
     // АРХИВАЦИЯ
+    // Архив — это НЕ tombstone. Архивные предметы остаются в базе навсегда.
     // ============================================================
 
     @Query("""
@@ -214,85 +222,77 @@ interface ItemDao {
     """)
     suspend fun unarchiveItem(itemId: String, date: Long)
 
-    @Query("SELECT * FROM items WHERE isArchived = 1 ORDER BY archivedDate DESC")
+    @Query("SELECT * FROM items WHERE isArchived = 1 AND isDeleted = 0 ORDER BY archivedDate DESC")
     suspend fun getArchivedItems(): List<ItemEntity>
 
-    @Query("SELECT * FROM items WHERE isArchived = 1 AND archivedReason = :reason ORDER BY archivedDate DESC")
+    @Query("SELECT * FROM items WHERE isArchived = 1 AND archivedReason = :reason AND isDeleted = 0 ORDER BY archivedDate DESC")
     suspend fun getArchivedItemsByReason(reason: String): List<ItemEntity>
 
     // ============================================================
     // ЧАСТИЧНОЕ СПИСАНИЕ (originalId)
     // ============================================================
 
-    /**
-     * Все архивные записи, отделённые от указанного предмета
-     * (при частичном списании).
-     */
-    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 1")
+    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 1 AND isDeleted = 0")
     suspend fun getItemsByOriginalId(originalId: String): List<ItemEntity>
 
-    /**
-     * Активные (неархивные) записи, отделённые от указанного предмета.
-     * На случай, если оригинал вернули, а «части» ещё живы.
-     */
-    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 0")
+    @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 0 AND isDeleted = 0")
     suspend fun getActiveItemsByOriginalId(originalId: String): List<ItemEntity>
 
     // ============================================================
     // ЗАЙМ (ВЫДАЧА)
     // ============================================================
 
-    @Query("SELECT * FROM items WHERE isLent = 1 AND isArchived = 0 ORDER BY lentDate DESC")
+    @Query("SELECT * FROM items WHERE isLent = 1 AND isArchived = 0 AND isDeleted = 0 ORDER BY lentDate DESC")
     suspend fun getLentItems(): List<ItemEntity>
 
-    @Query("SELECT * FROM items WHERE isLent = 1 AND lentTo = :personName ORDER BY lentDate DESC")
+    @Query("SELECT * FROM items WHERE isLent = 1 AND lentTo = :personName AND isDeleted = 0 ORDER BY lentDate DESC")
     suspend fun getLentItemsByPerson(personName: String): List<ItemEntity>
 
-    @Query("SELECT COUNT(*) FROM items WHERE isLent = 1 AND isArchived = 0")
+    @Query("SELECT COUNT(*) FROM items WHERE isLent = 1 AND isArchived = 0 AND isDeleted = 0")
     suspend fun getLentItemsCount(): Int
 
     // ============================================================
     // СТАТИСТИКА АРХИВА
     // ============================================================
 
-    @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 1 AND price IS NOT NULL")
+    @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 1 AND price IS NOT NULL AND isDeleted = 0")
     suspend fun getTotalArchivedSum(): Double?
 
-    @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 0 AND price IS NOT NULL")
+    @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 0 AND price IS NOT NULL AND isDeleted = 0")
     suspend fun getTotalActiveSum(): Double?
 
     @Query("""
         SELECT archivedReason, SUM(price * quantity) as total
         FROM items 
-        WHERE isArchived = 1 AND price IS NOT NULL 
+        WHERE isArchived = 1 AND price IS NOT NULL AND isDeleted = 0
         GROUP BY archivedReason
     """)
     suspend fun getArchivedStatsByReason(): List<ArchiveStatsRow>
 
-    @Query("SELECT COUNT(*) FROM items WHERE isArchived = 1")
+    @Query("SELECT COUNT(*) FROM items WHERE isArchived = 1 AND isDeleted = 0")
     suspend fun getArchivedItemsCount(): Int
 
-    @Query("SELECT COUNT(*) FROM items WHERE isArchived = 0")
+    @Query("SELECT COUNT(*) FROM items WHERE isArchived = 0 AND isDeleted = 0")
     suspend fun getActiveItemsCount(): Int
 
     // ============================================================
     // СТАТИСТИКА ЗАЙМА
     // ============================================================
 
-    @Query("SELECT SUM(price * quantity) FROM items WHERE isLent = 1 AND isArchived = 0 AND price IS NOT NULL")
+    @Query("SELECT SUM(price * quantity) FROM items WHERE isLent = 1 AND isArchived = 0 AND price IS NOT NULL AND isDeleted = 0")
     suspend fun getTotalLentSum(): Double?
 
-    @Query("SELECT DISTINCT lentTo FROM items WHERE isLent = 1 AND lentTo IS NOT NULL AND isArchived = 0")
+    @Query("SELECT DISTINCT lentTo FROM items WHERE isLent = 1 AND lentTo IS NOT NULL AND isArchived = 0 AND isDeleted = 0")
     suspend fun getLentPersons(): List<String>
 
     // ============================================================
     // ПОИСК ПО ШТРИХ-КОДУ / QR-КОДУ
     // ============================================================
 
-    @Query("SELECT * FROM items WHERE barcode = :barcode AND isArchived = 0")
+    @Query("SELECT * FROM items WHERE barcode = :barcode AND isArchived = 0 AND isDeleted = 0")
     suspend fun getItemsByBarcode(barcode: String): List<ItemEntity>
 
-    @Query("SELECT * FROM items WHERE barcode = :barcode")
+    @Query("SELECT * FROM items WHERE barcode = :barcode AND isDeleted = 0")
     suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
 
     // ============================================================
@@ -301,7 +301,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (price IS NULL OR price = 0)
         ORDER BY name ASC
     """)
@@ -309,7 +309,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND expiryDate IS NULL
           AND (itemType = 'food' OR itemType = 'medicine')
         ORDER BY name ASC
@@ -318,7 +318,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (barcode IS NULL OR barcode = '')
         ORDER BY name ASC
     """)
@@ -326,7 +326,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (description IS NULL OR description = '')
         ORDER BY name ASC
     """)
@@ -334,7 +334,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (itemType IS NULL OR itemType = '')
         ORDER BY name ASC
     """)
@@ -342,7 +342,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND isLent = 1 
           AND lentDate IS NOT NULL 
           AND lentDate < :thresholdDate
@@ -352,7 +352,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND expiryDate IS NOT NULL 
           AND expiryDate < :now
         ORDER BY expiryDate ASC
@@ -361,25 +361,17 @@ interface ItemDao {
 
     // -------- РЕВИЗИЯ --------
 
-    /**
-     * Предметы БЕЗ ревизии (lastRevisionDate IS NULL).
-     * Вариант A: не пересекается с «ревизия > 30 дней».
-     */
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND lastRevisionDate IS NULL
         ORDER BY name ASC
     """)
     suspend fun getItemsWithoutRevision(): List<ItemEntity>
 
-    /**
-     * Предметы, у которых ревизия была, но давно
-     * (lastRevisionDate IS NOT NULL AND lastRevisionDate < :thresholdDate).
-     */
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND lastRevisionDate IS NOT NULL 
           AND lastRevisionDate < :thresholdDate
         ORDER BY lastRevisionDate ASC
@@ -390,7 +382,7 @@ interface ItemDao {
 
     @Query("""
         SELECT barcode FROM items
-        WHERE isArchived = 0
+        WHERE isArchived = 0 AND isDeleted = 0
           AND barcode IS NOT NULL
           AND barcode != ''
         GROUP BY barcode
@@ -400,7 +392,7 @@ interface ItemDao {
 
     @Query("""
         SELECT * FROM items
-        WHERE isArchived = 0
+        WHERE isArchived = 0 AND isDeleted = 0
           AND barcode = :barcode
         ORDER BY addedDate ASC
     """)
@@ -410,14 +402,14 @@ interface ItemDao {
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (price IS NULL OR price = 0)
     """)
     suspend fun countItemsWithoutPrice(): Int
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND expiryDate IS NULL
           AND (itemType = 'food' OR itemType = 'medicine')
     """)
@@ -425,28 +417,28 @@ interface ItemDao {
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (barcode IS NULL OR barcode = '')
     """)
     suspend fun countItemsWithoutBarcode(): Int
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (description IS NULL OR description = '')
     """)
     suspend fun countItemsWithoutDescription(): Int
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (itemType IS NULL OR itemType = '')
     """)
     suspend fun countItemsWithoutType(): Int
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND isLent = 1 
           AND lentDate IS NOT NULL 
           AND lentDate < :thresholdDate
@@ -455,7 +447,7 @@ interface ItemDao {
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND expiryDate IS NOT NULL 
           AND expiryDate < :now
     """)
@@ -463,14 +455,14 @@ interface ItemDao {
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND lastRevisionDate IS NULL
     """)
     suspend fun countItemsWithoutRevision(): Int
 
     @Query("""
         SELECT COUNT(*) FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND lastRevisionDate IS NOT NULL 
           AND lastRevisionDate < :thresholdDate
     """)
@@ -478,12 +470,12 @@ interface ItemDao {
 
     @Query("""
         SELECT COUNT(*) FROM items
-        WHERE isArchived = 0
+        WHERE isArchived = 0 AND isDeleted = 0
           AND barcode IS NOT NULL
           AND barcode != ''
           AND barcode IN (
               SELECT barcode FROM items
-              WHERE isArchived = 0
+              WHERE isArchived = 0 AND isDeleted = 0
                 AND barcode IS NOT NULL
                 AND barcode != ''
               GROUP BY barcode
@@ -494,14 +486,15 @@ interface ItemDao {
 
     // ============================================================
     // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ПРЕДМЕТЫ
+    // Ремонт НЕ трогает tombstones — они не «осиротевшие», они удалённые.
     // ============================================================
 
-    @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId")
+    @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId AND isDeleted = 0")
     suspend fun moveItemsToRoot(folderId: String)
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND parentId IS NOT NULL 
           AND parentId NOT IN (SELECT id FROM folders)
     """)
@@ -510,30 +503,30 @@ interface ItemDao {
     @Query("""
         UPDATE items 
         SET parentId = NULL 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND parentId IS NOT NULL 
           AND parentId NOT IN (SELECT id FROM folders)
     """)
     suspend fun fixOrphanItems()
 
     // ============================================================
-    // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ВЛОЖЕННЫЕ (родитель-предмет удалён)
+    // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ВЛОЖЕННЫЕ
     // ============================================================
 
     @Query("""
         SELECT * FROM items 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND parentItemId IS NOT NULL 
-          AND parentItemId NOT IN (SELECT id FROM items)
+          AND parentItemId NOT IN (SELECT id FROM items WHERE isDeleted = 0)
     """)
     suspend fun getOrphanNestedItems(): List<ItemEntity>
 
     @Query("""
         UPDATE items 
         SET parentItemId = NULL 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND parentItemId IS NOT NULL 
-          AND parentItemId NOT IN (SELECT id FROM items)
+          AND parentItemId NOT IN (SELECT id FROM items WHERE isDeleted = 0)
     """)
     suspend fun fixOrphanNestedItems()
 
@@ -541,110 +534,72 @@ interface ItemDao {
     // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
     // ============================================================
 
-      @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != ''")
+    @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != '' AND isDeleted = 0")
     suspend fun getAllItemsWithImageUrl(): List<ItemEntity>
 
     @Query("UPDATE items SET imageUrl = NULL WHERE id = :itemId")
     suspend fun clearImageUrl(itemId: String)
 
     // ============================================================
-    // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
+    // СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
     // ============================================================
 
-    /**
-     * Количество неархивных предметов НЕПОСРЕДСТВЕННО в папке.
-     * Не считает предметы в подпапках и не считает вложенные в предметы.
-     *
-     * Используется:
-     *  - для счётчика «🛒 N покупок» на плитке «🛒 Покупки»
-     *    (в подпапках «Покупка DD.MM.YYYY #N»);
-     *  - для счётчика «🛒 N купить» на плитке «🛒 Список покупок».
-     */
-     @Query("""
-     SELECT COUNT(*) FROM items
-     WHERE parentId = :folderId
-       AND parentItemId IS NULL
-       AND isArchived = 0
- """)
- suspend fun countItemsInFolderShallow(folderId: String): Int
+    @Query("""
+        SELECT COUNT(*) FROM items
+        WHERE parentId = :folderId
+          AND parentItemId IS NULL
+          AND isArchived = 0
+          AND isDeleted = 0
+    """)
+    suspend fun countItemsInFolderShallow(folderId: String): Int
 
- /**
-  * 🆕 v17.0.9: количество неархивных предметов в папке И ВСЕХ её подпапках (рекурсивно).
-  * Не считает вложенные предметы (parentItemId IS NULL).
-  *
-  * Используется:
-  *  - для счётчика «🛒 N покупок» на плитке «🛒 Покупки»
-  *    (предметы лежат в подпапках «Покупка DD.MM.YYYY #N»).
-  */
- @Query("""
-     WITH RECURSIVE folder_tree(id) AS (
-         SELECT :folderId
-         UNION ALL
-         SELECT f.id FROM folders f
-         INNER JOIN folder_tree ft ON f.parentId = ft.id
-     )
-     SELECT COUNT(*) FROM items
-     WHERE parentId IN (SELECT id FROM folder_tree)
-       AND parentItemId IS NULL
-       AND isArchived = 0
- """)
- suspend fun countItemsInFolderRecursive(folderId: String): Int
+    @Query("""
+        WITH RECURSIVE folder_tree(id) AS (
+            SELECT :folderId
+            UNION ALL
+            SELECT f.id FROM folders f
+            INNER JOIN folder_tree ft ON f.parentId = ft.id
+        )
+        SELECT COUNT(*) FROM items
+        WHERE parentId IN (SELECT id FROM folder_tree)
+          AND parentItemId IS NULL
+          AND isArchived = 0
+          AND isDeleted = 0
+    """)
+    suspend fun countItemsInFolderRecursive(folderId: String): Int
 
-    /**
-     * 🆕 v16.0.15: неархивные предметы НЕПОСРЕДСТВЕННО в папке.
-     * Используется на экране «🛒 Список покупок»:
-     *  - фильтр «Купить» — корень системной «Списка покупок»;
-     *  - фильтр «Куплено» — набор подпапок «Покупок».
-     */
     @Query("""
         SELECT * FROM items
         WHERE parentId = :folderId
           AND parentItemId IS NULL
           AND isArchived = 0
+          AND isDeleted = 0
         ORDER BY name COLLATE NOCASE ASC
     """)
     suspend fun getItemsInFolderShallow(folderId: String): List<ItemEntity>
 
-    /**
-     * 🆕 v16.0.15: неархивные предметы, у которых parentId — один из переданных.
-     * Нужно для фильтра «Куплено» (несколько подпапок «Покупок» сразу).
-     * Возвращает плоский список, сортировка по имени.
-     */
     @Query("""
         SELECT * FROM items
         WHERE parentId IN (:folderIds)
           AND parentItemId IS NULL
           AND isArchived = 0
+          AND isDeleted = 0
         ORDER BY name COLLATE NOCASE ASC
     """)
     suspend fun getItemsByParentIds(folderIds: List<String>): List<ItemEntity>
 
     // ============================================================
-    // 🆕 v17.0.9: ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
+    // ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
     // ============================================================
 
-    /**
-     * 🆕 v17.0.9: количество ВСЕХ предметов в папке — включая архивные.
-     * Используется при удалении пустой папки покупки:
-     * если по активным папка пуста, но есть архивные — их надо
-     * перенести в корень «Списка покупок», а папку удалить.
-     */
     @Query("""
         SELECT COUNT(*) FROM items
         WHERE parentId = :folderId
           AND parentItemId IS NULL
+          AND isDeleted = 0
     """)
     suspend fun countItemsInFolderIncludingArchived(folderId: String): Int
 
-    /**
-     * 🆕 v17.0.9: перенести ВСЕ архивные предметы из папки в нового родителя
-     * и пометить их как pending (чтобы уехали через changelog).
-     *
-     * Возвращает количество перенесённых предметов.
-     * Используется при удалении пустой папки покупки:
-     * архивные предметы «переезжают» в корень «Списка покупок»,
-     * чтобы не остаться с висячим parentId.
-     */
     @Query("""
         UPDATE items
         SET parentId = :newParentId,
@@ -653,6 +608,7 @@ interface ItemDao {
             syncStatus = 'pending'
         WHERE parentId = :folderId
           AND isArchived = 1
+          AND isDeleted = 0
     """)
     suspend fun moveArchivedItemsFromFolder(
         folderId: String,
@@ -661,19 +617,9 @@ interface ItemDao {
     ): Int
 
     // ============================================================
-    // 🆕 v17.0.10: ПЕРЕНОС ВСЕХ ПРЕДМЕТОВ ИЗ ПАПКИ (ПРАВКА B)
+    // ПЕРЕНОС ВСЕХ ПРЕДМЕТОВ ИЗ ПАПКИ
     // ============================================================
 
-    /**
-     * 🆕 v17.0.10: перенести ВСЕ предметы папки (и активные, и архивные)
-     * в нового родителя, пометив их как pending (уедут через changelog).
-     *
-     * Возвращает количество перенесённых предметов.
-     *
-     * Используется при ручном удалении подпапки системной «🛒 Покупки»:
-     * содержимое «Покупка DD.MM.YYYY #N» (в т.ч. архивные) уезжает
-     * в корень «🛒 Списка покупок», а не в корень базы (null).
-     */
     @Query("""
         UPDATE items
         SET parentId = :newParentId,
@@ -681,6 +627,7 @@ interface ItemDao {
             updatedDate = :date,
             syncStatus = 'pending'
         WHERE parentId = :folderId
+          AND isDeleted = 0
     """)
     suspend fun moveAllItemsToFolder(
         folderId: String,
@@ -689,17 +636,69 @@ interface ItemDao {
     ): Int
 
     // ============================================================
-    // 🆕 v17.0.10: ПРОВЕРКА СУЩЕСТВОВАНИЯ ПАПКИ (ПРАВКА C)
+    // ПРОВЕРКА СУЩЕСТВОВАНИЯ ПАПКИ
+    // ============================================================
+
+    @Query("SELECT EXISTS(SELECT 1 FROM folders WHERE id = :folderId AND isDeleted = 0)")
+    suspend fun folderExists(folderId: String): Boolean
+
+    // ============================================================
+    // 🆕 v19 (№10): TOMBSTONES
     // ============================================================
 
     /**
-     * 🆕 v17.0.10: существует ли папка с таким id.
-     * Используется при восстановлении предмета из архива (unarchiveItem):
-     * если parentId битый (папки нет) — вернуть предмет
-     * в корень «🛒 Списка покупок», а не оставлять с висячим parentId.
+     * Пометить предмет как удалённый (tombstone).
+     * Не стирает запись физически — она остаётся в базе
+     * и уедет через changelog, чтобы удаление разошлось по всем устройствам.
+     *
+     * Ставит syncStatus = 'pending' — SyncManager отправит в outbox.
+     * deleteConfirmed = 0 — ещё не подтверждено, что PUSH прошёл.
      */
-    @Query("SELECT EXISTS(SELECT 1 FROM folders WHERE id = :folderId)")
-    suspend fun folderExists(folderId: String): Boolean
+    @Query("""
+        UPDATE items SET
+            isDeleted = 1,
+            deletedAt = :date,
+            deletedBy = :user,
+            deleteConfirmed = 0,
+            updatedDate = :date,
+            syncStatus = 'pending'
+        WHERE id = :itemId
+    """)
+    suspend fun markItemDeleted(itemId: String, date: Long, user: String?)
+
+    /**
+     * Пометить tombstone как подтверждённый — PUSH в changelog прошёл успешно.
+     * После этого через CLEANUP_RETENTION_MS (1 год) cleanup физически удалит запись.
+     */
+    @Query("UPDATE items SET deleteConfirmed = 1 WHERE id = :itemId")
+    suspend fun confirmItemDeleted(itemId: String)
+
+    /**
+     * Подтверждённые tombstones старше указанного времени — для cleanup.
+     * Возвращает id, которые можно физически удалить.
+     */
+    @Query("""
+        SELECT id FROM items
+        WHERE isDeleted = 1
+          AND deleteConfirmed = 1
+          AND deletedAt IS NOT NULL
+          AND deletedAt < :thresholdMs
+    """)
+    suspend fun getConfirmedItemsOlderThan(thresholdMs: Long): List<String>
+
+    /**
+     * Физическое удаление подтверждённых tombstones по списку id.
+     * Используется cleanup раз в N дней для очистки базы.
+     */
+    @Query("DELETE FROM items WHERE id IN (:ids)")
+    suspend fun hardDeleteConfirmedItems(ids: List<String>)
+
+    /**
+     * Все tombstones — для диагностики / отладки merge.
+     * В UI не используется.
+     */
+    @Query("SELECT * FROM items WHERE isDeleted = 1")
+    suspend fun getAllTombstones(): List<ItemEntity>
 }
 
 // ============================================================
