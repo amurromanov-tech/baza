@@ -1,5 +1,6 @@
 package com.family.base.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
@@ -64,10 +65,11 @@ data class FolderEntity(
      *  - "pending" — запись изменена локально, ждёт отправки в changelog.
      *  - "conflict" — конфликт при merge (задел на будущее, сейчас не используется).
      *
-     * Значение по умолчанию после миграции v14 → v15 = "synced":
-     * все существующие записи считаются уже синхронизированными,
-     * чтобы первый запуск v15 не заливал на Диск всю базу.
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "synced" —
+     * чтобы схема Entity совпадала с фактической схемой БД,
+     * созданной миграцией v14→v15 (ALTER TABLE ... DEFAULT 'synced').
      */
+    @ColumnInfo(defaultValue = "synced")
     val syncStatus: String = SYNC_STATUS_SYNCED,
 
     // ===== TOMBSTONE (v19, №10) =====
@@ -80,7 +82,10 @@ data class FolderEntity(
      * В UI такие папки не показываются.
      * Системные папки (isSystem = true) удалять нельзя — tombstone
      * для них не ставится никогда.
+     *
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0".
      */
+    @ColumnInfo(defaultValue = "0")
     val isDeleted: Boolean = false,
 
     /**
@@ -100,7 +105,10 @@ data class FolderEntity(
      * false — tombstone ещё не разошёлся через changelog.
      * true  — PUSH в changelog прошёл успешно; через 1 год cleanup
      *         может физически удалить запись из базы.
+     *
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0".
      */
+    @ColumnInfo(defaultValue = "0")
     val deleteConfirmed: Boolean = false
 ) {
     companion object {
