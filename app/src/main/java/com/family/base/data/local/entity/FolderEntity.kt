@@ -2,10 +2,32 @@ package com.family.base.data.local.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
 
-@Entity(tableName = "folders")
+/**
+ * 🆕 v18.1.2 (fix миграции 18→19): добавлены indices для
+ * isDeleted и (deleteConfirmed, deletedAt).
+ *
+ * Миграция 18→19 создаёт индексы:
+ *   CREATE INDEX index_folders_isDeleted ON folders(isDeleted);
+ *   CREATE INDEX index_folders_deleteConfirmed_deletedAt ON folders(deleteConfirmed, deletedAt);
+ *
+ * Без @Entity(indices=...) Room ожидал indices=[], а в БД они есть —
+ * валидация схемы падала с "Migration didn't properly handle: folders".
+ * Теперь ожидаемые и фактические индексы совпадают.
+ */
+@Entity(
+    tableName = "folders",
+    indices = [
+        Index(value = ["isDeleted"], name = "index_folders_isDeleted"),
+        Index(
+            value = ["deleteConfirmed", "deletedAt"],
+            name = "index_folders_deleteConfirmed_deletedAt"
+        )
+    ]
+)
 data class FolderEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
