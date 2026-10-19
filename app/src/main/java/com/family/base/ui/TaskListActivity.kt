@@ -42,23 +42,27 @@ import java.util.Locale
  * Повторяющиеся задачи при выполнении автоматически создают клон.
  *
  * 🆕 AlarmManager: напоминания теперь ставятся на конкретную задачу
- * (TaskReminderScheduler.schedule/cancel). Старый WorkManager-подход
- * с глобальным периодическим worker'ом больше не используется.
- * Глобальная настройка TaskReminderPreferences осталась — она задаёт
- * час:минуту, во сколько напоминать в день дедлайна, и общий флаг
+ * (TaskReminderScheduler.schedule/cancel). Глобальная настройка
+ * TaskReminderPreferences осталась — она задаёт час:минуту и общий флаг
  * «напоминания включены».
  *
  * 🆕 v16.0.12: сортировка списка.
- *  - кнопка в тулбаре (меню) → PopupMenu с 4 режимами + сброс;
- *  - режим хранится в TaskSortPreferences (SharedPreferences);
- *  - если режим DEFAULT — сортировка отдаётся на откуп TaskDao.
  *
  * 🆕 v19 (№10): удаление задачи — tombstone (softDelete с deletedBy).
+ *
+ * 🆕 v18.2.0 (шаг 2): Путь 2 + Путь 3.
+ *  - В диалоге создания/редактирования появился блок «Когда напомнить»:
+ *      · точное напоминание (remindAt) — по умолчанию «Сегодня 19:00»;
+ *      · чекбокс «Напоминать, пока не сделаю» (autoRemindEnabled) — по умолчанию true.
+ *  - При сохранении новые поля передаются в addTask/updateTask.
+ *  - Для уже существующих задач, где remindAt = null и autoRemindEnabled = true,
+ *    умный пинг включён по умолчанию (Путь 3) — задача без даты всё равно напомнит.
  */
 class TaskListActivity : AppCompatActivity() {
 
     private val TAG = "TaskListActivity"
     private val DATE_FMT = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    private val DATETIME_FMT = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
 
     private lateinit var db: AppDatabase
     private lateinit var repository: TaskRepository
@@ -145,10 +149,6 @@ class TaskListActivity : AppCompatActivity() {
     // СОРТИРОВКА
     // ============================================================
 
-    /**
-     * Показывает диалог выбора режима сортировки.
-     * 5 пунктов: 4 режима + «По умолчанию» (сброс).
-     */
     private fun showSortDialog() {
         val current = TaskSortPreferences.getMode(this)
 
@@ -186,13 +186,6 @@ class TaskListActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Применяет выбранный режим сортировки к списку.
-     * DEFAULT — оставляем как отдал DAO.
-     *
-     * Сортировка по дате — по createdAt (когда задача создана).
-     * Сортировка по имени — регистронезависимая.
-     */
     private fun applySort(tasks: List<TaskEntity>): List<TaskEntity> {
         return when (TaskSortPreferences.getMode(this)) {
             TaskSortPreferences.Mode.DEFAULT ->
@@ -254,15 +247,20 @@ class TaskListActivity : AppCompatActivity() {
                 if (task.isDone) {
                     withContext(Dispatchers.IO) { repository.markUndone(task.id) }
                     Logger.log(TAG, "toggleDone: undone ${task.id}")
-                    // 🆕 AlarmManager: если задачу вернули в работу — вернуть напоминание
-                    TaskReminderScheduler.schedule(this@TaskListActivity, task.copy(isDone = false))
+                    // 🆕 AlarmManager: если задачу вернули в работу — перечитать
+                    // актуальную версию и заново запланировать.
+                    val refreshed = withContext(Dispatchers.IO) { repository.getById(task.id) }
+                    if (refreshed != null) {
+                        TaskReminderScheduler.schedule(this@TaskListActivity, refreshed)
+                    }
                 } else {
                     val result = withContext(Dispatchers.IO) {
                         repository.markDone(task.id, currentUser)
                     }
                     Logger.log(TAG, "toggleDone: done ${task.id}, clone=${result?.second?.id}")
 
-                    // 🆕 AlarmManager: выполненная задача больше не напоминает
+                    // 🆕 AlarmManager: выполненная задача больше не напоминает.
+                    // cancel снимает оба alarm (точный и умный).
                     TaskReminderScheduler.cancel(this@TaskListActivity, task.id)
 
                     // Если создался клон (повторяющаяся задача) — поставить напоминание на него
@@ -293,7 +291,8 @@ class TaskListActivity : AppCompatActivity() {
                     withContext(Dispatchers.IO) {
                         repository.softDelete(task.id, currentUser)
                     }
-                    // 🆕 AlarmManager: удалённая задача больше не напоминает
+                    // 🆕 AlarmManager: удалённая задача больше не напоминает.
+                    // cancel снимает оба alarm (точный и умный).
                     TaskReminderScheduler.cancel(this@TaskListActivity, task.id)
                     Toast.makeText(this@TaskListActivity, "Удалено", Toast.LENGTH_SHORT).show()
                     loadTasks()
@@ -327,14 +326,32 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
-        // Напоминания (глобальная настройка «во сколько напоминать»)
+        // Глобальная настройка «напоминания включены» + «во сколько напоминать»
         val switchReminder = view.findViewById<SwitchCompat>(R.id.switchReminder)
         val layoutReminderTime = view.findViewById<View>(R.id.layoutReminderTime)
         val textReminderTime = view.findViewById<TextView>(R.id.textReminderTime)
         val btnPickReminderTime = view.findViewById<View>(R.id.btnPickReminderTime)
         val textReminderHint = view.findViewById<TextView>(R.id.textReminderHint)
 
+        // 🆕 v18.2.0 (шаг 2): Путь 2 + Путь 3
+        val textRemindAt = view.findViewById<TextView>(R.id.textRemindAt)
+        val btnPickRemindAt = view.findViewById<View>(R.id.btnPickRemindAt)
+        val btnClearRemindAt = view.findViewById<View>(R.id.btnClearRemindAt)
+        val switchAutoRemind = view.findViewById<SwitchCompat>(R.id.switchAutoRemind)
+        val textAutoRemindHint = view.findViewById<TextView>(R.id.textAutoRemindHint)
+
         var pendingDueDate: Long? = task?.dueDate
+
+        // 🆕 remindAt: null = умный пинг по умолчанию (Путь 3),
+        //            конкретное значение = точный пинг (Путь 2).
+        // Для новой задачи дефолт — «сегодня 19:00» (или «завтра 19:00»,
+        // если сейчас уже позже 19:00). Пользователь может сбросить.
+        var pendingRemindAt: Long? = task?.remindAt
+            ?: defaultRemindAt()
+
+        // 🆕 autoRemind: по умолчанию true (даже если точного remindAt нет,
+        // задача будет пинговаться по Пути 3).
+        var pendingAutoRemind: Boolean = task?.autoRemindEnabled ?: true
 
         fun updateDueDateLabel() {
             if (pendingDueDate == null) {
@@ -343,6 +360,18 @@ class TaskListActivity : AppCompatActivity() {
                 textDueDate.text = DATE_FMT.format(Date(pendingDueDate!!))
             }
         }
+
+        fun updateRemindAtLabel() {
+            if (pendingRemindAt == null) {
+                textRemindAt.text = "Не задано (только умный пинг)"
+            } else {
+                textRemindAt.text = DATETIME_FMT.format(Date(pendingRemindAt!!))
+            }
+        }
+
+        // ============================================================
+        // ЗАПОЛНЕНИЕ ПОЛЕЙ
+        // ============================================================
 
         if (task != null) {
             etTitle.setText(task.title)
@@ -364,7 +393,15 @@ class TaskListActivity : AppCompatActivity() {
             chipRecNone.isChecked = true
         }
 
+        switchAutoRemind.isChecked = pendingAutoRemind
+        textAutoRemindHint.visibility = if (pendingAutoRemind) View.VISIBLE else View.GONE
+
         updateDueDateLabel()
+        updateRemindAtLabel()
+
+        // ============================================================
+        // СЛУШАТЕЛИ
+        // ============================================================
 
         chipGroupRecurrence.setOnCheckedStateChangeListener { _, checkedIds ->
             val hasRecurrence = !checkedIds.contains(R.id.chipRecNone)
@@ -395,7 +432,7 @@ class TaskListActivity : AppCompatActivity() {
         }
 
         // ============================================================
-        // НАПОМИНАНИЯ: глобальный флаг + время дня
+        // ГЛОБАЛЬНАЯ НАСТРОЙКА «ВО СКОЛЬКО НАПОМИНАТЬ»
         // ============================================================
 
         fun updateReminderTimeLabel() {
@@ -428,6 +465,58 @@ class TaskListActivity : AppCompatActivity() {
                 h, m, true
             ).show()
         }
+
+        // ============================================================
+        // 🆕 ТОЧНОЕ НАПОМИНАНИЕ (Путь 2)
+        // ============================================================
+
+        btnPickRemindAt.setOnClickListener {
+            val cal = Calendar.getInstance()
+            pendingRemindAt?.let { cal.timeInMillis = it }
+
+            DatePickerDialog(
+                this,
+                { _, year, month, day ->
+                    val c = Calendar.getInstance()
+                    c.set(year, month, day, 0, 0, 0)
+                    c.set(Calendar.MILLISECOND, 0)
+                    // После выбора даты — сразу выбор времени, чтобы получить
+                    // полноценный remindAt, а не просто «этот день».
+                    val preH = cal.get(Calendar.HOUR_OF_DAY)
+                    val preM = cal.get(Calendar.MINUTE)
+                    TimePickerDialog(
+                        this,
+                        { _, hour, minute ->
+                            val c2 = c.clone() as Calendar
+                            c2.set(Calendar.HOUR_OF_DAY, hour)
+                            c2.set(Calendar.MINUTE, minute)
+                            c2.set(Calendar.SECOND, 0)
+                            c2.set(Calendar.MILLISECOND, 0)
+                            pendingRemindAt = c2.timeInMillis
+                            updateRemindAtLabel()
+                        },
+                        preH, preM, true
+                    ).show()
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH)
+            ).show()
+        }
+
+        btnClearRemindAt.setOnClickListener {
+            pendingRemindAt = null
+            updateRemindAtLabel()
+        }
+
+        switchAutoRemind.setOnCheckedChangeListener { _, isChecked ->
+            pendingAutoRemind = isChecked
+            textAutoRemindHint.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        // ============================================================
+        // ДИАЛОГ
+        // ============================================================
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(if (task == null) "Новая задача" else "Редактировать задачу")
@@ -475,16 +564,24 @@ class TaskListActivity : AppCompatActivity() {
                                     priority = priority,
                                     dueDate = pendingDueDate,
                                     recurrence = recurrence,
-                                    createdBy = currentUser
+                                    createdBy = currentUser,
+                                    // 🆕 v18.2.0 (шаг 2):
+                                    remindAt = pendingRemindAt,
+                                    autoRemindEnabled = pendingAutoRemind
                                 )
                                 newTask
                             } else {
+                                // ⚠️ Для существующих задач нельзя «молча» перезаписать
+                                // remindAt/autoRemindEnabled старыми значениями —
+                                // берём то, что пользователь выбрал в диалоге.
                                 val updated = task.copy(
                                     title = title,
                                     note = note,
                                     priority = priority,
                                     dueDate = pendingDueDate,
                                     recurrence = recurrence,
+                                    remindAt = pendingRemindAt,
+                                    autoRemindEnabled = pendingAutoRemind,
                                     updatedAt = System.currentTimeMillis()
                                 )
                                 repository.updateTask(updated)
@@ -492,7 +589,8 @@ class TaskListActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 🆕 AlarmManager: поставить (или снять) напоминание для задачи
+                        // 🆕 AlarmManager: поставить (или снять) напоминание для задачи.
+                        // schedule() сам разберётся: точный remindAt или умный пинг.
                         if (savedTask != null) {
                             TaskReminderScheduler.schedule(this@TaskListActivity, savedTask)
                         }
@@ -511,16 +609,26 @@ class TaskListActivity : AppCompatActivity() {
     }
 
     /**
+     * 🆕 v18.2.0 (шаг 2): дефолтное точное напоминание для новой задачи —
+     * «сегодня 19:00», а если сейчас уже позже 19:00 — «завтра 19:00».
+     *
+     * Это решает главную проблему: даже если пользователь ничего не выбрал,
+     * задача без даты всё равно пингует сегодня вечером.
+     */
+    private fun defaultRemindAt(): Long {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 19)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        if (cal.timeInMillis <= System.currentTimeMillis()) {
+            cal.add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return cal.timeInMillis
+    }
+
+    /**
      * 🆕 AlarmManager: сохранить глобальную настройку «напоминания включены».
-     *
-     * Сам alarm ставится не здесь, а per-task в schedule() после сохранения задачи.
-     * Здесь только:
-     *  - сохраняем флаг isEnabled в SharedPreferences;
-     *  - если включили — перепланируем все активные задачи (на случай, если
-     *    раньше напоминания были выключены и alarms не стояли);
-     *  - если выключили — снимаем все alarms (rescheduleAll не нужен).
-     *
-     * Ошибка планировщика не должна ронять приложение — всё в try/catch.
      */
     private fun applyGlobalReminderSetting(enabled: Boolean) {
         try {
@@ -529,7 +637,6 @@ class TaskListActivity : AppCompatActivity() {
 
             if (enabled) {
                 if (!wasEnabled) {
-                    // Включили только что — перепланируем всё, что было пропущено
                     TaskReminderScheduler.rescheduleAll(this)
                     Toast.makeText(
                         this,
@@ -537,9 +644,7 @@ class TaskListActivity : AppCompatActivity() {
                         Toast.LENGTH_SHORT
                     ).show()
                 }
-                // Если уже были включены — конкретный schedule() вызовется ниже для этой задачи
             } else {
-                // Выключили — снимаем все alarms
                 if (wasEnabled) {
                     TaskReminderScheduler.cancelAll(this)
                     Toast.makeText(this, "Напоминания выключены", Toast.LENGTH_SHORT).show()
