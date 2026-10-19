@@ -18,6 +18,7 @@ import com.family.base.util.TaskReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
@@ -36,6 +37,9 @@ class BaseApplication : Application(), ImageLoaderFactory {
         // Используется, например, для тихого скачивания фото
         // при открытии карточки предмета — задача не прерывается,
         // если пользователь свернул приложение или закрыл активити.
+        //
+        // 🆕 v18.2.0 (шаг 1): также используется для rescheduleAllSuspend —
+        // чтобы чтение БД для планировщика не шло через главный поток.
         // ============================================================
         val applicationScope: CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -97,17 +101,32 @@ class BaseApplication : Application(), ImageLoaderFactory {
         ensureReminderChannel(this)
 
         // 🆕 AlarmManager: восстановление напоминаний при холодном старте.
-        // Android стирает alarms при выключении, но на всякий случай
-        // (например, после обновления приложения, если BootReceiver
-        // не успел отработать) — перепланируем всё, что есть в БД.
+        //
+        // ⚠️ v18.2.0 (шаг 1): раньше здесь вызывался TaskReminderScheduler.rescheduleAll(this)
+        // прямо в onCreate → главный поток → Room бросал
+        // "Cannot access database on the main thread" → try/catch → ни одна
+        // задача не планировалась. Отсюда «утром ничего не пришло».
+        //
+        // Теперь запускаем через applicationScope (Dispatchers.IO) и
+        // suspend-версию rescheduleAllSuspend — чтение БД уходит с главного
+        // потока, а сам onCreate не блокируется.
+        //
         // В try/catch — если планировщик даст сбой, приложение продолжит работу.
         try {
             if (TaskReminderPreferences.isEnabled(this)) {
-                TaskReminderScheduler.rescheduleAll(this)
-                Logger.log("BaseApplication", "Task reminders rescheduled on cold start")
+                applicationScope.launch {
+                    try {
+                        TaskReminderScheduler.rescheduleAllSuspend(this@BaseApplication)
+                        Logger.log("BaseApplication", "Task reminders rescheduled on cold start (IO)")
+                    } catch (e: Exception) {
+                        Logger.log("BaseApplication", "Task reminders schedule error (IO): ${e.message}")
+                    }
+                }
+            } else {
+                Logger.log("BaseApplication", "Task reminders disabled — skip cold-start reschedule")
             }
         } catch (e: Exception) {
-            Logger.log("BaseApplication", "Task reminders schedule error: ${e.message}")
+            Logger.log("BaseApplication", "Task reminders launch error: ${e.message}")
         }
     }
 
