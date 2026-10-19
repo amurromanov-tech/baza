@@ -35,6 +35,14 @@ import com.google.gson.JsonSyntaxException
  * deleteConfirmed = 1 у применённых tombstones ставим сразу: раз запись
  * пришла с Диска, значит PUSH уже прошёл, и cleanup может её удалить
  * через CLEANUP_RETENTION_MS (1 год).
+ *
+ * 🆕 v18.2.0 (шаг 2): TaskEntity получил поля remindAt и autoRemindEnabled.
+ * При applyTaskEntry(...) payload парсится через
+ * gson.fromJson(entry.payloadJson, TaskEntity::class.java) — новые поля
+ * подхватываются автоматически (их сериализует OutboxHelper.logTask на
+ * стороне-отправителе). Никаких ручных копирований полей в этом файле
+ * делать НЕ нужно: remoteSynced = remote.copy(syncStatus=...) сохраняет
+ * remindAt и autoRemindEnabled как есть.
  */
 class ChangelogParser(
     private val db: AppDatabase,
@@ -350,6 +358,20 @@ class ChangelogParser(
     // TASK
     // ============================================================
 
+    /**
+     * Применить входящее изменение задачи.
+     *
+     * 🆕 v18.2.0 (шаг 2): TaskEntity получил remindAt и autoRemindEnabled.
+     * Парсинг через gson.fromJson(payloadJson, TaskEntity::class.java)
+     * подхватывает новые поля автоматически. remoteSynced = remote.copy(...)
+     * сохраняет remindAt и autoRemindEnabled как есть — никаких ручных
+     * копирований полей в этом методе не требуется.
+     *
+     * Важно: при UPDATE задача с Диска перезаписывает локальную ЦЕЛИКОМ
+     * (включая remindAt и autoRemindEnabled). Это правильно: если на другом
+     * устройстве пользователь поменял «Когда напомнить» или выключил умный
+     * пинг, это должно разойтись.
+     */
     private suspend fun applyTaskEntry(entry: ChangelogEntry): Boolean {
         val local = db.taskDao().getById(entry.entityId)
 
@@ -399,7 +421,8 @@ class ChangelogParser(
             Logger.log(
                 TAG,
                 "applyTask INSERT: id=${entry.entityId} '${remoteSynced.title}' " +
-                    "(action=${entry.action}, isDeleted=${remoteSynced.isDeleted})"
+                    "(action=${entry.action}, isDeleted=${remoteSynced.isDeleted}, " +
+                    "remindAt=${remoteSynced.remindAt}, autoRemind=${remoteSynced.autoRemindEnabled})"
             )
             return true
         }
@@ -420,7 +443,9 @@ class ChangelogParser(
             Logger.log(
                 TAG,
                 "applyTask UPDATE: id=${entry.entityId} '${remoteSynced.title}' " +
-                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, isDeleted=${remoteSynced.isDeleted})"
+                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, " +
+                    "isDeleted=${remoteSynced.isDeleted}, " +
+                    "remindAt=${remoteSynced.remindAt}, autoRemind=${remoteSynced.autoRemindEnabled})"
             )
             return true
         } else {
