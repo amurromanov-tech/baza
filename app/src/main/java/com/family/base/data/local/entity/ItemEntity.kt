@@ -96,7 +96,40 @@ data class ItemEntity(
      * все существующие записи считаются уже синхронизированными,
      * чтобы первый запуск v15 не заливал на Диск всю базу.
      */
-    val syncStatus: String = SYNC_STATUS_SYNCED
+    val syncStatus: String = SYNC_STATUS_SYNCED,
+
+    // ===== TOMBSTONE (v19, №10) =====
+    /**
+     * Soft-delete для синка.
+     * Удалённые предметы помечаются true и синкаются через changelog,
+     * чтобы удаление разошлось по всем устройствам и не «воскресло»
+     * при merge со старой версией с Диска.
+     *
+     * В UI такие предметы не показываются.
+     * Архив (isArchived) и списание — НЕ tombstone, это отдельные
+     * операции, которые остаются в базе навсегда.
+     */
+    val isDeleted: Boolean = false,
+
+    /**
+     * Когда удалён (timestamp, millis).
+     * NULL — если ещё не удалён.
+     */
+    val deletedAt: Long? = null,
+
+    /**
+     * Кто удалил (AppUser.name).
+     * NULL — если ещё не удалён.
+     */
+    val deletedBy: String? = null,
+
+    /**
+     * Подтверждён ли tombstone.
+     * false — tombstone ещё не разошёлся через changelog.
+     * true  — PUSH в changelog прошёл успешно; через 1 год cleanup
+     *         может физически удалить запись из базы.
+     */
+    val deleteConfirmed: Boolean = false
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
