@@ -1,5 +1,6 @@
 package com.family.base.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
@@ -108,6 +109,13 @@ data class TaskEntity(
      * при merge со старой версией с Диска.
      *
      * В UI такие задачи не показываются.
+     *
+     * ⚠️ v18.1.1 (fix миграции 18→19): НЕ ставим @ColumnInfo(defaultValue = "0")!
+     * Эта колонка была создана ещё в миграции v13→v14 через
+     * CREATE TABLE tasks (... isDeleted INTEGER NOT NULL, ...) — без DEFAULT.
+     * В схеме БД defaultValue = 'undefined', и Room ждёт то же.
+     * Если поставить defaultValue = "0" — снова будет расхождение,
+     * и БД не откроется.
      */
     val isDeleted: Boolean = false,
 
@@ -128,7 +136,12 @@ data class TaskEntity(
      * false — tombstone ещё не разошёлся через changelog.
      * true  — PUSH в changelog прошёл успешно; через 1 год cleanup
      *         может физически удалить запись из базы.
+     *
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0" —
+     * миграция добавила колонку через
+     * ALTER TABLE tasks ADD COLUMN deleteConfirmed INTEGER NOT NULL DEFAULT 0.
      */
+    @ColumnInfo(defaultValue = "0")
     val deleteConfirmed: Boolean = false,
 
     // ===== СИНХРОНИЗАЦИЯ (v15) =====
@@ -138,8 +151,11 @@ data class TaskEntity(
      *  - "pending" — запись изменена локально, ждёт отправки в changelog.
      *  - "conflict" — конфликт при merge (задел на будущее, сейчас не используется).
      *
-     * Значение по умолчанию после миграции v14 → v15 = "synced".
+     * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "synced" —
+     * миграция v14→v15 добавила колонку через
+     * ALTER TABLE tasks ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'.
      */
+    @ColumnInfo(defaultValue = "synced")
     val syncStatus: String = SYNC_STATUS_SYNCED
 ) {
     companion object {
