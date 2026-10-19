@@ -15,30 +15,38 @@ import java.util.Calendar
 /**
  * Планировщик напоминаний о задачах через AlarmManager.
  *
- * 🆕 v18.2.0 (шаг 1): ФИКС ПАДЕНИЯ НА ГЛАВНОМ ПОТОКЕ.
+ * 🆕 v20.0.0 (шаг 1): ФИКС ПАДЕНИЯ НА ГЛАВНОМ ПОТОКЕ.
  *  - Чтение БД для rescheduleAll/cancelAll вынесено в Dispatchers.IO.
  *
- * 🆕 v18.2.0 (шаг 2): ПУТЬ 2 (remindAt) + ПУТЬ 3 (умный пинг).
+ * 🆕 v20.0.0 (шаг 2): ПУТЬ 2 (remindAt) + ПУТЬ 3 (умный пинг).
+ *
+ * 🆕 v20.1.0 (Вариант A): УБРАНО ГЛОБАЛЬНОЕ ВРЕМЯ СУТОК.
+ *  - Раньше точный пинг от dueDate и умный пинг брали час:минуту
+ *    из TaskReminderPreferences (одна настройка на всё приложение).
+ *    Это путало: меняешь у одной задачи — «меняется у всех».
+ *  - Теперь время суток для этих расчётов — ФИКСИРОВАННОЕ:
+ *      DEFAULT_REMINDER_HOUR = 8, DEFAULT_REMINDER_MINUTE = 0
+ *    (8:00 утра локального времени).
+ *  - Точное напоминание (remindAt) по-прежнему per-task: пользователь
+ *    задаёт дату+время в диалоге, и это значение используется как есть.
+ *  - TaskReminderPreferences.getHour/getMinute больше не читаются.
+ *    Глобальный бегунок isEnabled/setEnabled остаётся (вкл/выкл
+ *    напоминаний).
  *
  * Приоритет напоминаний для одной задачи:
  *  1) remindAt задан и в будущем → точный alarm на remindAt (Путь 2).
  *  2) remindAt нет, dueDate задан и в будущем → точный alarm
- *     на dueDate - N минут (дефолт из дедлайна, тоже Путь 2).
+ *     на dueDate - 15 минут (Путь 2, время суток уже в dueDate).
  *  3) remindAt нет, dueDate нет или в прошлом, autoRemindEnabled = true
- *     → умный пинг (Путь 3): следующий раз — по важности:
+ *     → умный пинг (Путь 3) в 08:00 локального времени:
  *        - важные (HIGH/URGENT) → ежедневно;
  *        - обычные (NORMAL)     → раз в 2 дня;
  *        - низкие (LOW)         → раз в 3 дня.
- *     Просроченные (dueDate < now) пингуются ежедневно независимо от важности.
+ *     Просроченные (dueDate < now) пингуются ежедневно.
  *  4) autoRemindEnabled = false и точных пингов нет → задача молчит.
  *
- * Двойных уведомлений не будет: точный пинг подавляет умный
- * на этот день (scheduler выбирает ОДИН тип alarm на задачу).
- *
  * ⚠️ requestCode для точного и умного alarm РАЗНЫЕ
- * (taskId.hashCode() для точного, taskId.hashCode() + SMART_OFFSET
- * для умного). Иначе при переключении режима старый PendingIntent
- * мог бы «съесть» новый.
+ * (taskId.hashCode() для точного, +SMART_OFFSET для умного).
  *
  * ⚠️ Все методы обёрнуты в try/catch — ошибка планировщика
  * не должна ронять приложение.
@@ -52,6 +60,17 @@ object TaskReminderScheduler {
 
     /** За сколько минут до dueDate напоминать, если remindAt не задан. */
     private const val DUE_SOON_MINUTES = 15
+
+    /**
+     * 🆕 v20.1.0 (Вариант A): фиксированное время суток для умного пинга
+     * и для точного пинга от dueDate.
+     *
+     * Раньше бралось из TaskReminderPreferences (одна настройка на всех).
+     * Теперь — константа 08:00, чтобы не путать пользователя.
+     * Если понадобится per-task время — вернёмся к этому отдельно.
+     */
+    private const val DEFAULT_REMINDER_HOUR = 8
+    private const val DEFAULT_REMINDER_MINUTE = 0
 
     // ============================================================
     // СИНХРОННЫЕ ОБЁРТКИ (для BootReceiver / BaseApplication)
@@ -119,17 +138,8 @@ object TaskReminderScheduler {
     // ПЛАНИРОВАНИЕ ОДНОЙ ЗАДАЧИ
     // ============================================================
 
-    /**
-     * Поставить (или переставить) alarm для конкретной задачи.
-     *
-     * Снимает оба возможных alarm (точный и умный) и ставит тот,
-     * который сейчас имеет приоритет (см. шапку файла).
-     *
-     * Если ни одно условие не подходит — оба alarm снимаются.
-     */
     fun schedule(context: Context, task: TaskEntity) {
         try {
-            // Сначала всегда снимаем оба, чтобы не осталось устаревших.
             cancelExact(context, task.id)
             cancelSmart(context, task.id)
 
@@ -165,7 +175,7 @@ object TaskReminderScheduler {
 
             // ── ПУТЬ 3: умный пинг ──
             if (task.autoRemindEnabled) {
-                val nextSmartAt = computeNextSmartPingAt(context, task, now)
+                val nextSmartAt = computeNextSmartPingAt(task, now)
                 if (nextSmartAt > now) {
                     scheduleSmart(context, task.id, nextSmartAt)
                     return
@@ -178,9 +188,6 @@ object TaskReminderScheduler {
         }
     }
 
-    /**
-     * Снять ОБА alarm для задачи (точный и умный).
-     */
     fun cancel(context: Context, taskId: String) {
         cancelExact(context, taskId)
         cancelSmart(context, taskId)
@@ -303,22 +310,10 @@ object TaskReminderScheduler {
     // ============================================================
 
     /**
-     * Вычисляет момент следующего умного пинга.
-     *
-     * База — createdAt (возраст задачи), а не dueDate.
-     *
-     * Логика:
-     *  - если задача просрочена (dueDate < now) → следующий пинг «завтра утром»
-     *    (просрочка пингуется ежедневно, независимо от важности);
-     *  - иначе — интервал по важности:
-     *      URGENT / HIGH → 1 день
-     *      NORMAL        → 2 дня
-     *      LOW           → 3 дня
-     *    Следующий пинг = createdAt + N * intervalDays, сдвигаем вперёд,
-     *    пока не окажется в будущем. Время суток — из TaskReminderPreferences
-     *    (то же «утро», что и для точных напоминаний).
+     * 🆕 v20.1.0 (Вариант A): без чтения TaskReminderPreferences.
+     * Время суток — фиксированное DEFAULT_REMINDER_HOUR:MINUTE (08:00).
      */
-    private fun computeNextSmartPingAt(context: Context, task: TaskEntity, now: Long): Long {
+    private fun computeNextSmartPingAt(task: TaskEntity, now: Long): Long {
         val isOverdue = task.dueDate != null && task.dueDate < now
 
         val intervalDays = if (isOverdue) {
@@ -334,26 +329,24 @@ object TaskReminderScheduler {
         val baseAt = task.createdAt
         val intervalMs = intervalDays * 24L * 60L * 60L * 1000L
 
-        // Кандидат: base + N * interval. Если уже в прошлом — сдвигаем на день.
-        var candidate = alignToMorning(context, baseAt + intervalMs)
+        var candidate = alignToFixedMorning(baseAt + intervalMs)
         while (candidate <= now) {
-            candidate = alignToMorning(context, candidate + intervalMs)
+            candidate = alignToFixedMorning(candidate + intervalMs)
         }
         return candidate
     }
 
     /**
-     * Приводит timestamp к «утру» из настроек напоминаний
-     * (час:минута из TaskReminderPreferences) в тот же день.
+     * Приводит timestamp к фиксированному утру (08:00) в тот же день.
      */
-    private fun alignToMorning(context: Context, ts: Long): Long {
+    private fun alignToFixedMorning(ts: Long): Long {
         val src = Calendar.getInstance().apply { timeInMillis = ts }
         val target = Calendar.getInstance().apply {
             set(Calendar.YEAR, src.get(Calendar.YEAR))
             set(Calendar.MONTH, src.get(Calendar.MONTH))
             set(Calendar.DAY_OF_MONTH, src.get(Calendar.DAY_OF_MONTH))
-            set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.getHour(context).coerceIn(0, 23))
-            set(Calendar.MINUTE, TaskReminderPreferences.getMinute(context).coerceIn(0, 59))
+            set(Calendar.HOUR_OF_DAY, DEFAULT_REMINDER_HOUR)
+            set(Calendar.MINUTE, DEFAULT_REMINDER_MINUTE)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
@@ -384,15 +377,6 @@ object TaskReminderScheduler {
         Logger.log(TAG, "rescheduleAll: scheduled=$scheduled, skipped=$skipped")
     }
 
-    /**
-     * PendingIntent для задачи.
-     *
-     * smart = false → точный пинг (requestCode = taskId.hashCode())
-     * smart = true  → умный пинг (requestCode = taskId.hashCode() + SMART_REQUEST_OFFSET)
-     *
-     * В extras кладём флаг smart, чтобы TaskReminderReceiver знал,
-     * какой alarm сработал и что делать после показа.
-     */
     private fun buildPendingIntent(context: Context, taskId: String, smart: Boolean): PendingIntent {
         val intent = Intent(context, TaskReminderReceiver::class.java).apply {
             action = TaskReminderReceiver.ACTION_REMIND
