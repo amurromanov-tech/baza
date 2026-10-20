@@ -1,17 +1,25 @@
 package com.family.base.ui
 
 import android.os.Bundle
+import android.view.View
 import android.widget.EditText
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import coil.load
+import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.databinding.ActivityArchiveBinding
 import com.family.base.ui.adapter.ArchiveAdapter
+import com.family.base.ui.viewmodel.MainViewModel
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -23,6 +31,7 @@ class ArchiveActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityArchiveBinding
     private lateinit var db: AppDatabase
+    private lateinit var viewModel: MainViewModel
     private lateinit var adapter: ArchiveAdapter
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
@@ -54,6 +63,7 @@ class ArchiveActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         db = AppDatabase.getInstance(this)
+        viewModel = BaseApplication.mainViewModel
 
         adapter = ArchiveAdapter(
             onItemClick = { item -> showItemDetails(item) },
@@ -265,28 +275,128 @@ class ArchiveActivity : AppCompatActivity() {
 
     // ==================== ДЕТАЛИ / ВОССТАНОВЛЕНИЕ ====================
 
+    /**
+     * 🆕 v20.2.2: карточка предмета в архиве теперь с фото.
+     *
+     * Раньше был AlertDialog с простым текстом. Теперь — кастомный view
+     * (dialog_archive_detail.xml): фото сверху, под ним причина, дата,
+     * цена, количество, описание.
+     *
+     * Фото грузим в три шага:
+     *  1. локальный файл (ImageUtils.getLocalImageFile) — если есть, сразу показываем;
+     *  2. если нет — тихая догрузка с Яндекс.Диска через
+     *     viewModel.downloadItemImageBytes(item.id), сохраняем локально
+     *     (ImageUtils.saveImageLocally) и показываем;
+     *  3. если и на Диске нет — остаётся плейсхолдер.
+     *
+     * Во время догрузки показываем ProgressBar.
+     */
     private fun showItemDetails(item: ItemEntity) {
-        val reasonText = getReasonText(item.archivedReason)
-        val dateText = item.archivedDate?.let { dateFormat.format(Date(it)) } ?: "—"
+        val dialogView = layoutInflater.inflate(R.layout.dialog_archive_detail, null)
 
-        val message = buildString {
-            append("Причина: $reasonText\n")
-            append("Дата: $dateText\n")
-            if (!item.archivedNote.isNullOrEmpty()) {
-                append("Заметка: ${item.archivedNote}\n")
-            }
-            append("\nЦена: ${formatMoney((item.price ?: 0.0) * item.quantity)}")
-            append("\nКоличество: ${item.quantity}")
-            if (!item.description.isNullOrEmpty()) {
-                append("\n\nОписание: ${item.description}")
-            }
+        val ivPhoto = dialogView.findViewById<ImageView>(R.id.ivItemPhoto)
+        val ivPlaceholder = dialogView.findViewById<ImageView>(R.id.ivItemPhotoPlaceholder)
+        val photoLoadingBar = dialogView.findViewById<ProgressBar>(R.id.photoLoadingBar)
+
+        val tvReason = dialogView.findViewById<TextView>(R.id.tvReason)
+        val tvArchivedDate = dialogView.findViewById<TextView>(R.id.tvArchivedDate)
+        val tvNote = dialogView.findViewById<TextView>(R.id.tvNote)
+        val tvPrice = dialogView.findViewById<TextView>(R.id.tvPrice)
+        val tvQuantity = dialogView.findViewById<TextView>(R.id.tvQuantity)
+        val tvDescription = dialogView.findViewById<TextView>(R.id.tvDescription)
+
+        // Заполняем текстовые поля
+        val reasonText = getReasonText(item.archivedReason)
+        tvReason.text = "Причина: $reasonText"
+
+        val dateText = item.archivedDate?.let { dateFormat.format(Date(it)) } ?: "—"
+        tvArchivedDate.text = "Дата: $dateText"
+
+        if (!item.archivedNote.isNullOrEmpty()) {
+            tvNote.visibility = View.VISIBLE
+            tvNote.text = "Заметка: ${item.archivedNote}"
+        } else {
+            tvNote.visibility = View.GONE
         }
+
+        tvPrice.text = "💰 Цена: ${formatMoney((item.price ?: 0.0) * item.quantity)}"
+        tvQuantity.text = "📦 Количество: ${item.quantity}"
+
+        if (!item.description.isNullOrEmpty()) {
+            tvDescription.visibility = View.VISIBLE
+            tvDescription.text = "Описание: ${item.description}"
+        } else {
+            tvDescription.visibility = View.GONE
+        }
+
+        // Загрузка фото
+        loadArchivePhoto(item, ivPhoto, ivPlaceholder, photoLoadingBar)
 
         AlertDialog.Builder(this)
             .setTitle(item.name)
-            .setMessage(message)
+            .setView(dialogView)
             .setPositiveButton("OK", null)
             .show()
+    }
+
+    /**
+     * 🆕 v20.2.2: трёхступенчатая загрузка фото для карточки архива.
+     */
+    private fun loadArchivePhoto(
+        item: ItemEntity,
+        ivPhoto: ImageView,
+        ivPlaceholder: ImageView,
+        loadingBar: ProgressBar
+    ) {
+        // Шаг 1: локальный файл
+        val localFile = ImageUtils.getLocalImageFile(this, item.id)
+        if (localFile != null && localFile.exists()) {
+            ivPlaceholder.visibility = View.GONE
+            ivPhoto.visibility = View.VISIBLE
+            ivPhoto.load(localFile) {
+                crossfade(true)
+                error(R.drawable.ic_item_default)
+            }
+            loadingBar.visibility = View.GONE
+            return
+        }
+
+        // Шаг 2: тихая догрузка с Диска
+        ivPlaceholder.visibility = View.VISIBLE
+        ivPhoto.visibility = View.GONE
+        loadingBar.visibility = View.VISIBLE
+
+        lifecycleScope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    viewModel.downloadItemImageBytes(item.id)
+                }
+                if (bytes != null && bytes.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        ImageUtils.saveImageLocally(applicationContext, item.id, bytes)
+                    }
+                    val file = ImageUtils.getLocalImageFile(this@ArchiveActivity, item.id)
+                    if (file != null && file.exists()) {
+                        ivPlaceholder.visibility = View.GONE
+                        ivPhoto.visibility = View.VISIBLE
+                        ivPhoto.load(file) {
+                            crossfade(true)
+                            error(R.drawable.ic_item_default)
+                        }
+                    } else {
+                        ivPlaceholder.visibility = View.VISIBLE
+                        ivPhoto.visibility = View.GONE
+                    }
+                } else {
+                    // Фото нет ни локально, ни на Диске — оставляем плейсхолдер
+                    Logger.log(TAG, "No photo for archived item '${item.name}' (id=${item.id})")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "Error loading archive photo for '${item.name}': ${e.message}")
+            } finally {
+                loadingBar.visibility = View.GONE
+            }
+        }
     }
 
     private fun restoreItem(item: ItemEntity) {
