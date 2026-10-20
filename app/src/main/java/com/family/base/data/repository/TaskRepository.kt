@@ -485,6 +485,20 @@ class TaskRepository(
             taskDao.getOverdueTasks(nowMs)
         }
 
+    /**
+     * 🆕 v20.2.3: задачи для окна «На сегодня» при запуске MainActivity.
+     *
+     * Прокси к taskDao.getTodayTasks(...). Логика фильтра и сортировки —
+     * в DAO (см. комментарий к TaskDao.getTodayTasks).
+     *
+     * @param nowMs       текущий timestamp (для определения просрочки).
+     * @param endOfDayMs  конец сегодняшнего дня (23:59:59.999).
+     */
+    suspend fun getTodayTasks(nowMs: Long, endOfDayMs: Long): List<TaskEntity> =
+        withContext(Dispatchers.IO) {
+            taskDao.getTodayTasks(nowMs, endOfDayMs)
+        }
+
     // ============================================================
     // ДЛЯ СИНКА (используется CatalogRepository)
     // ============================================================
