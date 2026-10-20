@@ -257,6 +257,7 @@
                         android:textColor="?android:attr/textColorPrimary"
                         tools:text="📝 Чай Greenfield" />
 
+                    <!-- 🆕 v20.2.0: микрофон -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilName"
                         android:layout_width="match_parent"
@@ -264,6 +265,9 @@
                         android:layout_marginTop="8dp"
                         android:hint="Название"
                         app:boxBackgroundMode="outline"
+                        app:endIconMode="custom"
+                        app:endIconDrawable="@drawable/ic_mic"
+                        app:endIconContentDescription="Голосовой ввод"
                         android:visibility="gone">
 
                         <com.google.android.material.textfield.TextInputEditText
@@ -859,12 +863,16 @@
                         android:layout_height="wrap_content"
                         tools:text="Чёрный чай Greenfield в пакетиках." />
 
+                    <!-- 🆕 v20.2.0: микрофон -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilDescription"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:hint="Описание"
                         app:boxBackgroundMode="outline"
+                        app:endIconMode="custom"
+                        app:endIconDrawable="@drawable/ic_mic"
+                        app:endIconContentDescription="Голосовой ввод"
                         android:visibility="gone">
 
                         <com.google.android.material.textfield.TextInputEditText
