@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -24,6 +25,7 @@ import com.family.base.ui.controller.ItemViewController
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.family.base.util.VoiceInputHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -69,6 +71,30 @@ class ItemDetailActivity : AppCompatActivity() {
     private val KEY_DATES = "section_dates"
     private val KEY_DESCRIPTION = "section_description"
     private val KEY_NESTED = "section_nested"
+
+    /**
+     * 🆕 v20.2.0: поле, в которое вставим распознанный голосом текст.
+     * Устанавливается при клике на иконку микрофона, сбрасывается после
+     * получения результата (или отмены).
+     */
+    private var pendingVoiceField: EditText? = null
+
+    /**
+     * 🆕 v20.2.0: launcher для голосового ввода.
+     * Результат вставляем в pendingVoiceField (в позицию курсора).
+     */
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
+            }
+        }
+        pendingVoiceField = null
+    }
 
     // ============================================================
     // LAUNCHERS
@@ -330,6 +356,14 @@ class ItemDetailActivity : AppCompatActivity() {
             actionDialogs.showAddNestedDialog()
         }
 
+        // 🆕 v20.2.0: голосовой ввод для названия и описания (только в edit-режиме)
+        binding.tilName.setEndIconOnClickListener {
+            startVoiceFor(binding.etName)
+        }
+        binding.tilDescription.setEndIconOnClickListener {
+            startVoiceFor(binding.etDescription)
+        }
+
         binding.rgTypeEdit.setOnCheckedChangeListener { _, checkedId ->
             currentEditType = when (checkedId) {
                 R.id.rbTypeFood -> "food"
@@ -350,6 +384,14 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etPurchaseDate.setOnClickListener { editController.showPurchaseDatePickerDialog() }
 
         editController.setupSubtypeEditDropdown { key -> selectedEditSubtype = key }
+    }
+
+    /**
+     * 🆕 v20.2.0: запуск голосового ввода для конкретного поля.
+     */
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
     }
 
     // ============================================================
@@ -575,6 +617,26 @@ class ItemDetailActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        // 🆕 v20.2.0: разрешение на микрофон получено — повторно запускаем
+        // распознавание для запомненного поля.
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            return
+        }
+
         photoController.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 }
