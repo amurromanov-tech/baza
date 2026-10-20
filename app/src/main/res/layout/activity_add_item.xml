@@ -77,10 +77,15 @@
                     android:inputType="number" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- 🆕 v20.2.0: название (auto) — микрофон -->
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilAutoName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Название">
+                android:hint="Название"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconContentDescription="Голосовой ввод">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etAutoName"
                     android:layout_width="match_parent"
@@ -153,10 +158,15 @@
                     android:layout_height="wrap_content" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- 🆕 v20.2.0: описание (auto) — микрофон -->
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilAutoDescription"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Описание">
+                android:hint="Описание"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconContentDescription="Голосовой ввод">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etAutoDescription"
                     android:layout_width="match_parent"
@@ -249,10 +259,15 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- 🆕 v20.2.0: название (manual) — микрофон -->
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilManualName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Название *">
+                android:hint="Название *"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconContentDescription="Голосовой ввод">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etManualName"
                     android:layout_width="match_parent"
@@ -349,10 +364,15 @@
                 </LinearLayout>
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- 🆕 v20.2.0: описание (manual) — микрофон -->
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilManualDescription"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Описание">
+                android:hint="Описание"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconContentDescription="Голосовой ввод">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etManualDescription"
                     android:layout_width="match_parent"
