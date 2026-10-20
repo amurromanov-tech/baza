@@ -373,4 +373,53 @@ interface TaskDao {
      */
     @Query("SELECT * FROM tasks WHERE isDeleted = 1")
     suspend fun getAllTombstones(): List<TaskEntity>
+
+    // ============================================================
+    // 🆕 v20.2.3: «ДЕЛА НА СЕГОДНЯ» ДЛЯ ПАРЯЩЕГО ОКНА ПРИ СТАРТЕ
+    // ============================================================
+
+    /**
+     * 🆕 v20.2.3: задачи, которые нужно показать в окне «На сегодня»
+     * при запуске MainActivity.
+     *
+     * Условия попадания:
+     *  - не удалены (isDeleted = 0), не выполнены (isDone = 0);
+     *  - И (dueDate < endOfDayMs) ИЛИ (remindAt < endOfDayMs).
+     *    Т.е. дедлайн или напоминание попадает в сегодняшний день
+     *    ИЛИ уже просрочено (просрочка — часть «сегодня»).
+     *
+     * Сортировка:
+     *  1) сначала просроченные (dueDate < now ИЛИ remindAt < now) — красная зона;
+     *  2) потом остальные (дедлайн/напоминание ещё впереди, но до конца дня);
+     *  3) внутри каждой группы — по важности (priority DESC),
+     *     затем по ближайшему сроку (dueDate/remindAt ASC).
+     *
+     * @param nowMs       текущий timestamp (для определения просрочки).
+     * @param endOfDayMs  конец сегодняшнего дня (23:59:59.999) — верхняя
+     *                    граница «сегодня».
+     */
+    @Query("""
+        SELECT * FROM tasks
+        WHERE isDeleted = 0
+          AND isDone = 0
+          AND (
+                (dueDate IS NOT NULL AND dueDate < :endOfDayMs)
+             OR (remindAt IS NOT NULL AND remindAt < :endOfDayMs)
+          )
+        ORDER BY
+            CASE
+                WHEN (dueDate IS NOT NULL AND dueDate < :nowMs) THEN 0
+                WHEN (remindAt IS NOT NULL AND remindAt < :nowMs) THEN 0
+                ELSE 1
+            END ASC,
+            priority DESC,
+            CASE
+                WHEN dueDate IS NOT NULL AND remindAt IS NOT NULL
+                    THEN MIN(dueDate, remindAt)
+                WHEN dueDate IS NOT NULL THEN dueDate
+                WHEN remindAt IS NOT NULL THEN remindAt
+                ELSE 9223372036854775807
+            END ASC
+    """)
+    suspend fun getTodayTasks(nowMs: Long, endOfDayMs: Long): List<TaskEntity>
 }
