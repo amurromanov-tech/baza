@@ -4,11 +4,13 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.os.Bundle
 import android.view.View
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -26,6 +28,7 @@ import com.family.base.util.Logger
 import com.family.base.util.TaskReminderPreferences
 import com.family.base.util.TaskReminderScheduler
 import com.family.base.util.TaskSortPreferences
+import com.family.base.util.VoiceInputHelper
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -54,6 +57,8 @@ import java.util.Locale
  *    (см. TaskReminderScheduler.DEFAULT_REMINDER_HOUR).
  *  - TaskReminderPreferences.getHour/getMinute/setTime/getTimeLabel
  *    больше не вызываются из UI.
+ *
+ * 🆕 v20.2.0: голосовой ввод в диалоге задачи (название, примечание).
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -80,6 +85,30 @@ class TaskListActivity : AppCompatActivity() {
 
     private enum class Filter { ACTIVE, DONE, ALL }
     private var currentFilter: Filter = Filter.ACTIVE
+
+    /**
+     * 🆕 v20.2.0: поле диалога задачи, в которое вставим распознанный
+     * голосом текст. Устанавливается при клике на иконку микрофона,
+     * сбрасывается после получения результата (или отмены).
+     */
+    private var pendingVoiceField: EditText? = null
+
+    /**
+     * 🆕 v20.2.0: launcher для голосового ввода.
+     * Результат вставляем в pendingVoiceField (в позицию курсора).
+     */
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
+            }
+        }
+        pendingVoiceField = null
+    }
 
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
@@ -350,6 +379,8 @@ class TaskListActivity : AppCompatActivity() {
 
         val etTitle = view.findViewById<TextInputEditText>(R.id.etTitle)
         val etNote = view.findViewById<TextInputEditText>(R.id.etNote)
+        val tilTitle = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilTitle)
+        val tilNote = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilNote)
         val chipGroupRecurrence = view.findViewById<ChipGroup>(R.id.chipGroupRecurrence)
         val chipUrgent = view.findViewById<Chip>(R.id.chipUrgent)
         val chipHigh = view.findViewById<Chip>(R.id.chipHigh)
@@ -426,6 +457,10 @@ class TaskListActivity : AppCompatActivity() {
 
         updateDueDateLabel()
         updateRemindAtLabel()
+
+        // 🆕 v20.2.0: голосовой ввод для названия и примечания
+        tilTitle.setEndIconOnClickListener { startVoiceFor(etTitle) }
+        tilNote.setEndIconOnClickListener { startVoiceFor(etNote) }
 
         chipGroupRecurrence.setOnCheckedStateChangeListener { _, checkedIds ->
             val hasRecurrence = !checkedIds.contains(R.id.chipRecNone)
@@ -576,6 +611,42 @@ class TaskListActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    /**
+     * 🆕 v20.2.0: запуск голосового ввода для конкретного поля диалога.
+     */
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+    }
+
+    /**
+     * 🆕 v20.2.0: обработка разрешения RECORD_AUDIO.
+     * После grant — повторно запускаем распознавание для запомненного поля.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     /**
