@@ -666,4 +666,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
         return repository.downloadItemImageBytes(itemId)
     }
+
+    // ============================================================
+    // 🆕 v20.2.3: «ДЕЛА НА СЕГОДНЯ» ДЛЯ ПАРЯЩЕГО ОКНА ПРИ СТАРТЕ
+    // ============================================================
+
+    /**
+     * 🆕 v20.2.3: задачи для окна «На сегодня» при запуске MainActivity.
+     *
+     * Прокси к taskRepository.getTodayTasks(...). Фильтр и сортировка —
+     * в DAO (см. TaskDao.getTodayTasks).
+     *
+     * Вызывать из корутины с Dispatchers.IO (например, из lifecycleScope).
+     *
+     * @param nowMs       текущий timestamp (для определения просрочки).
+     * @param endOfDayMs  конец сегодняшнего дня (23:59:59.999).
+     */
+    suspend fun getTodayTasks(nowMs: Long, endOfDayMs: Long): List<TaskEntity> {
+        return taskRepository.getTodayTasks(nowMs, endOfDayMs)
+    }
 }
