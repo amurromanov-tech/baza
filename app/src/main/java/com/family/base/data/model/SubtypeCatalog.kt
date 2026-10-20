@@ -35,6 +35,9 @@ import java.util.Locale
  *
  * 🆕 v17.2.6: добавлен подтип thing:
  *           - dishes         🥣 Посуда
+ *
+ * 🆕 v20.2.4: добавлен подтип thing:
+ *           - new_year       🎄 Новогодние
  */
 object SubtypeCatalog {
 
@@ -126,6 +129,8 @@ object SubtypeCatalog {
         Subtype("health_devices", "🩺 Приборы для здоровья"),
         // 🆕 v17.2.6
         Subtype("dishes",         "🥣 Посуда"),
+        // 🆕 v20.2.4
+        Subtype("new_year",       "🎄 Новогодние"),
         Subtype("thing_other",    "📦 Прочее (предметы)")
     )
 
