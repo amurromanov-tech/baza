@@ -23,9 +23,12 @@ import com.family.base.ui.adapter.ShoppingListAdapter
 import com.family.base.ui.viewmodel.ShoppingListViewModel
 import com.family.base.util.Logger
 import com.family.base.util.ShoppingListSortPreferences
+import com.family.base.util.VoiceInputHelper
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,6 +46,8 @@ import java.util.Locale
  *  - кнопка в тулбаре → PopupMenu с 4 режимами + сброс;
  *  - режим хранится в ShoppingListSortPreferences;
  *  - DEFAULT — порядок как отдаёт ViewModel.
+ *
+ * 🆕 v20.2.1: голосовой ввод в диалоге быстрого добавления покупки.
  */
 class ShoppingListActivity : AppCompatActivity() {
 
@@ -65,6 +70,28 @@ class ShoppingListActivity : AppCompatActivity() {
 
     private var currentFilter: ShoppingListViewModel.Filter =
         ShoppingListViewModel.Filter.TO_BUY
+
+    /**
+     * 🆕 v20.2.1: поле диалога быстрого добавления, в которое вставим
+     * распознанный голосом текст.
+     */
+    private var pendingVoiceField: EditText? = null
+
+    /**
+     * 🆕 v20.2.1: launcher для голосового ввода.
+     */
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
+            }
+        }
+        pendingVoiceField = null
+    }
 
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
@@ -232,20 +259,45 @@ class ShoppingListActivity : AppCompatActivity() {
     // БЫСТРОЕ ДОБАВЛЕНИЕ
     // ============================================================
 
+    /**
+     * 🆕 v20.2.1: диалог быстрого добавления.
+     *
+     * Раньше был голый EditText. Теперь — TextInputLayout с OUTLINE
+     * и кастомной end-иконкой микрофона (как в остальных полях БАЗЫ).
+     */
     private fun showQuickAddDialog() {
+        val density = resources.displayMetrics.density
+        val pad = (16 * density).toInt()
+
         val container = android.widget.FrameLayout(this).apply {
-            val pad = (16 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad, pad, 0)
         }
-        val editText = EditText(this).apply {
+
+        // TextInputLayout с кастомной end-иконкой
+        val til = TextInputLayout(this).apply {
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
             hint = "Что купить?"
-            isSingleLine = true
+            endIconMode = TextInputLayout.END_ICON_CUSTOM
+            setEndIconDrawable(R.drawable.ic_mic)
+            setEndIconContentDescription("Голосовой ввод")
             layoutParams = android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        container.addView(editText)
+
+        val editText = TextInputEditText(this).apply {
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        til.addView(editText)
+
+        // 🆕 v20.2.1: клик по микрофону
+        til.setEndIconOnClickListener {
+            startVoiceFor(editText)
+        }
+
+        container.addView(til)
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("Новая покупка")
@@ -259,7 +311,7 @@ class ShoppingListActivity : AppCompatActivity() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = editText.text?.toString()?.trim().orEmpty()
                 if (name.isEmpty()) {
-                    editText.error = "Введите название"
+                    til.error = "Введите название"
                     return@setOnClickListener
                 }
                 dialog.dismiss()
@@ -268,6 +320,41 @@ class ShoppingListActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    /**
+     * 🆕 v20.2.1: запуск голосового ввода для поля быстрого добавления.
+     */
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+    }
+
+    /**
+     * 🆕 v20.2.1: обработка разрешения RECORD_AUDIO.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     private fun createQuickItem(name: String) {
