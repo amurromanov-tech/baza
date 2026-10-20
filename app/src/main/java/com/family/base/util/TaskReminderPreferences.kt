@@ -20,6 +20,13 @@ import android.content.Context
  *    их не использовали. Их можно удалить отдельным шагом, когда
  *    убедимся, что нигде не вызываются.
  *
+ * 🆕 v20.2.3: добавлены настройки «Показывать сводку на сегодня при запуске».
+ *  - isTodayDialogEnabled / setTodayDialogEnabled — глобальный переключатель
+ *    (по умолчанию true);
+ *  - getLastTodayDialogDate / setLastTodayDialogDate — дата последнего
+ *    показа окна (формат yyyy-MM-dd, локальная зона), чтобы показывать
+ *    не чаще одного раза в день.
+ *
  * Хранится в SharedPreferences (baza_task_reminders).
  */
 object TaskReminderPreferences {
@@ -28,6 +35,10 @@ object TaskReminderPreferences {
     private const val KEY_ENABLED = "reminders_enabled"
     private const val KEY_HOUR = "reminder_hour"
     private const val KEY_MINUTE = "reminder_minute"
+
+    // 🆕 v20.2.3: «Показывать сводку на сегодня при запуске»
+    private const val KEY_TODAY_DIALOG_ENABLED = "today_dialog_enabled"
+    private const val KEY_LAST_TODAY_DIALOG_DATE = "last_today_dialog_date"
 
     /**
      * @deprecated v20.1.0 — время суток больше не глобальное.
@@ -92,5 +103,42 @@ object TaskReminderPreferences {
         val h = getHour(context).toString().padStart(2, '0')
         val m = getMinute(context).toString().padStart(2, '0')
         return "$h:$m"
+    }
+
+    // ============================================================
+    // 🆕 v20.2.3: «ПОКАЗЫВАТЬ СВОДКУ НА СЕГОДНЯ ПРИ ЗАПУСКЕ»
+    // ============================================================
+
+    /**
+     * 🆕 v20.2.3: включён ли показ окна «На сегодня» при запуске.
+     * По умолчанию true — чтобы пользователь видел сводку.
+     */
+    fun isTodayDialogEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_TODAY_DIALOG_ENABLED, true)
+    }
+
+    fun setTodayDialogEnabled(context: Context, enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_TODAY_DIALOG_ENABLED, enabled).apply()
+        Logger.log("TaskReminderPreferences", "setTodayDialogEnabled: $enabled")
+    }
+
+    /**
+     * 🆕 v20.2.3: дата последнего показа окна «На сегодня»
+     * в формате yyyy-MM-dd (локальная зона). null — ещё не показывали.
+     *
+     * Нужна, чтобы показывать окно не чаще одного раза в день
+     * при первом запуске.
+     */
+    fun getLastTodayDialogDate(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_LAST_TODAY_DIALOG_DATE, null)
+    }
+
+    fun setLastTodayDialogDate(context: Context, date: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_LAST_TODAY_DIALOG_DATE, date).apply()
+        Logger.log("TaskReminderPreferences", "setLastTodayDialogDate: $date")
     }
 }
