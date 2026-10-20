@@ -16,12 +16,16 @@
         android:paddingBottom="8dp">
 
         <!-- Название -->
+        <!-- 🆕 v20.2.0: микрофон -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilTitle"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Что нужно сделать?">
+            android:hint="Что нужно сделать?"
+            app:endIconMode="custom"
+            app:endIconDrawable="@drawable/ic_mic"
+            app:endIconContentDescription="Голосовой ввод">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etTitle"
@@ -34,13 +38,17 @@
         </com.google.android.material.textfield.TextInputLayout>
 
         <!-- Примечание -->
+        <!-- 🆕 v20.2.0: микрофон -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilNote"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:hint="Примечание (необязательно)">
+            android:hint="Примечание (необязательно)"
+            app:endIconMode="custom"
+            app:endIconDrawable="@drawable/ic_mic"
+            app:endIconContentDescription="Голосовой ввод">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etNote"
