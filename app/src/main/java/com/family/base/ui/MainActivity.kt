@@ -34,6 +34,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.dao.FolderStatsRow
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.TaskEntity
 import com.family.base.databinding.ActivityMainBinding
 import com.family.base.ui.adapter.CatalogAdapter
 import com.family.base.ui.viewmodel.MainViewModel
@@ -42,11 +43,16 @@ import com.family.base.ui.viewmodel.SyncProgress
 import com.family.base.util.AppLifecycleObserver
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -335,6 +341,14 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
         })
+
+        // 🆕 v20.2.3: окно «На сегодня» при запуске (не чаще раза в день).
+        // Небольшая задержка, чтобы каталог успел отрисоваться и окно
+        // не всплывало поверх «пустого» экрана.
+        lifecycleScope.launch {
+            delay(400)
+            maybeShowTodayDialog()
+        }
     }
 
  // ============================================================
@@ -504,6 +518,92 @@ class MainActivity : AppCompatActivity() {
         stopSyncAnimation()
         hideProgressJob?.cancel()
         stopRepeat()
+    }
+
+    // ============================================================
+    // 🆕 v20.2.3: ОКНО «НА СЕГОДНЯ» ПРИ ЗАПУСКЕ
+    // ============================================================
+
+    /**
+     * 🆕 v20.2.3: показывает окно «На сегодня», если:
+     *  - глобальный переключатель включён (TaskReminderPreferences);
+     *  - сегодня окно ещё не показывали (дата != сегодня);
+     *  - в этой сессии MainActivity окно ещё не показывали.
+     *
+     * Дату последнего показа фиксируем СРАЗУ при показе — чтобы при
+     * повороте экрана или повторном onCreate окно не всплыло снова.
+     */
+    private fun maybeShowTodayDialog() {
+        try {
+            if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
+                Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
+                return
+            }
+
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val lastDate = TaskReminderPreferences.getLastTodayDialogDate(this)
+            if (lastDate == today) {
+                Logger.log(TAG, "maybeShowTodayDialog: already shown today ($today)")
+                return
+            }
+
+            if (todayDialogShownInSession) {
+                Logger.log(TAG, "maybeShowTodayDialog: already shown in this session")
+                return
+            }
+
+            // Фиксируем факт показа до фактического показа — защита от
+            // повторного вызова при повороте/пересоздании Activity.
+            TaskReminderPreferences.setLastTodayDialogDate(this, today)
+            todayDialogShownInSession = true
+
+            showTodayTasksDialog()
+        } catch (e: Exception) {
+            Logger.log(TAG, "maybeShowTodayDialog error: ${e.message}", e)
+        }
+    }
+
+    /**
+     * 🆕 v20.2.3: загружает задачи на сегодня и показывает диалог.
+     *
+     * Границы «сегодня»:
+     *  - nowMs       = System.currentTimeMillis();
+     *  - endOfDayMs  = сегодня 23:59:59.999 (локальная зона).
+     *
+     * Логика фильтра/сортировки — в TaskDao.getTodayTasks.
+     */
+    private fun showTodayTasksDialog() {
+        lifecycleScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }
+                val endOfDay = cal.timeInMillis
+
+                val tasks: List<TaskEntity> = viewModel.getTodayTasks(now, endOfDay)
+                Logger.log(TAG, "showTodayTasksDialog: ${tasks.size} tasks for today")
+
+                TodayTasksDialog.show(
+                    activity = this@MainActivity,
+                    tasks = tasks,
+                    onOpenTasks = {
+                        try {
+                            startActivity(
+                                Intent(this@MainActivity, TaskListActivity::class.java)
+                            )
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "Error opening TaskListActivity: ${e.message}", e)
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Logger.log(TAG, "showTodayTasksDialog error: ${e.message}", e)
+            }
+        }
     }
 
     // ============================================================
@@ -1440,5 +1540,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopSyncAnimation() {
         binding.ivSyncStatus.clearAnimation()
+    }
+
+    // ============================================================
+    // 🆕 v20.2.3: STATIC-ФЛАГ «ПОКАЗАЛИ В ЭТОЙ СЕССИИ»
+    // ============================================================
+
+    companion object {
+        /**
+         * 🆕 v20.2.3: чтобы окно «На сегодня» не всплывало повторно
+         * при повороте экрана/пересоздании Activity в рамках одной сессии.
+         * Дата последнего показа хранится в TaskReminderPreferences —
+         * это защита от повторного показа на следующий день.
+         */
+        @Volatile
+        private var todayDialogShownInSession: Boolean = false
     }
 }
