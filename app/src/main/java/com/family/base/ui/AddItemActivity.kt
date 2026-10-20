@@ -27,6 +27,7 @@ import com.family.base.databinding.ActivityAddItemBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.family.base.util.VoiceInputHelper
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +69,13 @@ class AddItemActivity : AppCompatActivity() {
     private var currentManualType: String = "thing"
     private var selectedAutoSubtype: String? = null
     private var selectedManualSubtype: String? = null
+
+    /**
+     * 🆕 v20.2.0: поле, в которое вставим распознанный голосом текст.
+     * Устанавливается при клике на иконку микрофона, сбрасывается
+     * после получения результата (или при отмене).
+     */
+    private var pendingVoiceField: EditText? = null
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -122,6 +130,24 @@ class AddItemActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * 🆕 v20.2.0: launcher для голосового ввода.
+     * Результат распознавания вставляем в pendingVoiceField
+     * (в позицию курсора, не заменяя существующий текст).
+     */
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
+            }
+        }
+        pendingVoiceField = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -234,6 +260,20 @@ class AddItemActivity : AppCompatActivity() {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
 
+        // 🆕 v20.2.0: голосовой ввод для названия/описания
+        binding.tilAutoName.setEndIconOnClickListener {
+            startVoiceFor(binding.etAutoName)
+        }
+        binding.tilAutoDescription.setEndIconOnClickListener {
+            startVoiceFor(binding.etAutoDescription)
+        }
+        binding.tilManualName.setEndIconOnClickListener {
+            startVoiceFor(binding.etManualName)
+        }
+        binding.tilManualDescription.setEndIconOnClickListener {
+            startVoiceFor(binding.etManualDescription)
+        }
+
         binding.rgAutoType.setOnCheckedChangeListener { _, checkedId ->
             currentAutoType = when (checkedId) {
                 R.id.rbAutoFood -> "food"
@@ -255,6 +295,16 @@ class AddItemActivity : AppCompatActivity() {
             selectedManualSubtype = null
             updateSubtypesForManual(currentManualType)
         }
+    }
+
+    /**
+     * 🆕 v20.2.0: запуск голосового ввода для конкретного поля.
+     * Запоминаем поле в pendingVoiceField, чтобы voiceLauncher
+     * вставил результат именно туда.
+     */
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
     }
 
     // ============================================================
@@ -497,11 +547,30 @@ class AddItemActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
         if (requestCode == CAMERA_PERMISSION_REQUEST) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 openCamera()
             } else {
                 Toast.makeText(this, "Необходимо разрешение на использование камеры", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 🆕 v20.2.0: разрешение на микрофон получено — повторно запускаем
+        // распознавание для запомненного поля.
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
