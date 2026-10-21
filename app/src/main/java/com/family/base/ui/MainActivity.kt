@@ -510,8 +510,11 @@ class MainActivity : AppCompatActivity() {
      *
      * Timestamp последнего показа пишется в TaskReminderPreferences
      * ТОЛЬКО при успешном show() — если упало, попробуем в следующий onResume.
+     *
+     * ⚠️ suspend: вызывается из lifecycleScope.launch в onResume,
+     * потому что внутри вызывается suspend-функция showTodayTasksDialog.
      */
-    private fun maybeShowTodayDialog() {
+    private suspend fun maybeShowTodayDialog() {
         try {
             if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
                 Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
