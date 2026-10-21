@@ -29,15 +29,8 @@ import java.util.Locale
  * Показывает задачи, которые попадают в сегодняшний день
  * (дедлайн сегодня, напоминание сегодня или просрочка).
  *
- * Поведение:
- *  - если задач нет — пустое состояние «🌿 На сегодня ничего срочного»;
- *  - если есть — список с цветной полоской (🔴 просрочено / 🟠 сегодня);
- *  - кнопка «Открыть Домашние дела →» и ✕ закрывают окно и открывают
- *    TaskListActivity (если передан onOpenTasks — вызывается он);
- *  - тап вне окна и кнопка Назад тоже закрывают.
- *
- * Окно показывается не чаще одного раза в день — контроль в MainActivity
- * (TaskReminderPreferences.getLastTodayDialogDate).
+ * 🆕 v20.3.4: show() возвращает Boolean — true, если диалог реально показан.
+ * MainActivity пишет timestamp последнего показа ТОЛЬКО при true.
  */
 object TodayTasksDialog {
 
@@ -49,83 +42,90 @@ object TodayTasksDialog {
      * @param activity    Activity, поверх которой показываем.
      * @param tasks       список задач (уже отфильтрованный DAO).
      * @param onOpenTasks что сделать по кнопке «Открыть Домашние дела →».
-     *                    Если null — просто закрыть окно.
+     * @return true — диалог показан; false — не удалось (упало в try/catch).
      */
     fun show(
         activity: Activity,
         tasks: List<TaskEntity>,
         onOpenTasks: (() -> Unit)? = null
-    ) {
-        val dialog = Dialog(activity)
-        val binding = DialogTodayTasksBinding.inflate(activity.layoutInflater)
-        dialog.setContentView(binding.root)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.setCancelable(true)
+    ): Boolean {
+        return try {
+            val dialog = Dialog(activity)
+            val binding = DialogTodayTasksBinding.inflate(activity.layoutInflater)
+            dialog.setContentView(binding.root)
+            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            dialog.setCanceledOnTouchOutside(true)
+            dialog.setCancelable(true)
 
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            setDimAmount(0.4f)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply {
-                windowAnimations = android.R.style.Animation_Dialog
+            dialog.window?.apply {
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                setLayout(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                setDimAmount(0.4f)
+                addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                attributes = attributes.apply {
+                    windowAnimations = android.R.style.Animation_Dialog
+                }
             }
-        }
 
-        // ===== Дата =====
-        binding.tvTodayDate.text = formatTodayLabel()
+            // ===== Дата =====
+            binding.tvTodayDate.text = formatTodayLabel()
 
-        // ===== Ограничение высоты списка (50% экрана) =====
-        val screenHeight = activity.resources.displayMetrics.heightPixels
-        val maxListHeight = (screenHeight * 0.5f).toInt()
-        binding.tasksScroll.layoutParams = binding.tasksScroll.layoutParams.apply {
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
-        }
-        binding.tasksScroll.post {
-            val measured = binding.tasksScroll.measuredHeight
-            if (measured > maxListHeight) {
-                binding.tasksScroll.layoutParams =
-                    binding.tasksScroll.layoutParams.apply { height = maxListHeight }
+            // ===== Ограничение высоты списка (50% экрана) =====
+            val screenHeight = activity.resources.displayMetrics.heightPixels
+            val maxListHeight = (screenHeight * 0.5f).toInt()
+            binding.tasksScroll.layoutParams = binding.tasksScroll.layoutParams.apply {
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
             }
-        }
+            binding.tasksScroll.post {
+                val measured = binding.tasksScroll.measuredHeight
+                if (measured > maxListHeight) {
+                    binding.tasksScroll.layoutParams =
+                        binding.tasksScroll.layoutParams.apply { height = maxListHeight }
+                }
+            }
 
-        // ===== Список / пустое состояние =====
-        val now = System.currentTimeMillis()
-        val visibleTasks = tasks.filter { !it.isDone && !it.isDeleted }
+            // ===== Список / пустое состояние =====
+            val now = System.currentTimeMillis()
+            val visibleTasks = tasks.filter { !it.isDone && !it.isDeleted }
 
-        if (visibleTasks.isEmpty()) {
-            binding.tasksScroll.visibility = View.GONE
-            binding.todayDivider.visibility = View.GONE
-            binding.emptyState.visibility = View.VISIBLE
-            binding.btnTodayOpenTasks.setText(R.string.today_dialog_open_tasks_empty)
-        } else {
-            binding.tasksScroll.visibility = View.VISIBLE
-            binding.todayDivider.visibility = View.VISIBLE
-            binding.emptyState.visibility = View.GONE
-            binding.btnTodayOpenTasks.setText(R.string.today_dialog_open_tasks)
-            fillTasks(activity, binding.tasksContainer, visibleTasks, now)
-        }
+            if (visibleTasks.isEmpty()) {
+                binding.tasksScroll.visibility = View.GONE
+                binding.todayDivider.visibility = View.GONE
+                binding.emptyState.visibility = View.VISIBLE
+                binding.btnTodayOpenTasks.setText(R.string.today_dialog_open_tasks_empty)
+            } else {
+                binding.tasksScroll.visibility = View.VISIBLE
+                binding.todayDivider.visibility = View.VISIBLE
+                binding.emptyState.visibility = View.GONE
+                binding.btnTodayOpenTasks.setText(R.string.today_dialog_open_tasks)
+                fillTasks(activity, binding.tasksContainer, visibleTasks, now)
+            }
 
-        // ===== Кнопки =====
-        binding.btnTodayClose.setOnClickListener {
-            Logger.log(TAG, "Closed by X")
-            dialog.dismiss()
-        }
-        binding.btnTodayOpenTasks.setOnClickListener {
-            Logger.log(TAG, "Open tasks clicked")
-            dialog.dismiss()
-            onOpenTasks?.invoke()
-        }
+            // ===== Кнопки =====
+            binding.btnTodayClose.setOnClickListener {
+                Logger.log(TAG, "Closed by X")
+                dialog.dismiss()
+            }
+            binding.btnTodayOpenTasks.setOnClickListener {
+                Logger.log(TAG, "Open tasks clicked")
+                dialog.dismiss()
+                onOpenTasks?.invoke()
+            }
 
-        dialog.setOnDismissListener {
-            Logger.log(TAG, "Dismissed")
-        }
+            dialog.setOnDismissListener {
+                Logger.log(TAG, "Dismissed")
+            }
 
-        dialog.show()
+            dialog.show()
+            Logger.log(TAG, "Shown OK (${visibleTasks.size} tasks)")
+            true
+        } catch (e: Exception) {
+            Logger.log(TAG, "show() failed: ${e.message}", e)
+            false
+        }
     }
 
     // ============================================================
