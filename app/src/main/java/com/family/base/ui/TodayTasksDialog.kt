@@ -31,6 +31,9 @@ import java.util.Locale
  *
  * 🆕 v20.3.4: show() возвращает Boolean — true, если диалог реально показан.
  * MainActivity пишет timestamp последнего показа ТОЛЬКО при true.
+ *
+ * 🆕 v20.3.6: фикс порядка вызовов — requestWindowFeature() ДО setContentView().
+ * Иначе AndroidRuntimeException: requestFeature() must be called before adding content.
  */
 object TodayTasksDialog {
 
@@ -51,9 +54,13 @@ object TodayTasksDialog {
     ): Boolean {
         return try {
             val dialog = Dialog(activity)
+
+            // ⚠️ v20.3.6: requestWindowFeature ОБЯЗАТЕЛЬНО до setContentView.
+            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
             val binding = DialogTodayTasksBinding.inflate(activity.layoutInflater)
             dialog.setContentView(binding.root)
-            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
             dialog.setCanceledOnTouchOutside(true)
             dialog.setCancelable(true)
 
