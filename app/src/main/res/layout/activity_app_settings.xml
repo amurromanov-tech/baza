@@ -149,6 +149,21 @@
             android:text="Получать уведомления, когда срок годности подходит к концу"
             android:textSize="12sp"
             android:textColor="?android:attr/textColorSecondary"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 🆕 v20.3.4: сводка на сегодня -->
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchTodayDialog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Показывать сводку на сегодня при запуске" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Окно «На сегодня» появится после 07:00, один раз в день"
+            android:textSize="12sp"
+            android:textColor="?android:attr/textColorSecondary"
             android:layout_marginBottom="24dp" />
 
         <!-- ============================================================ -->
