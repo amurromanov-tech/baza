@@ -28,4 +28,10 @@
     <string name="today_dialog_open_tasks_empty">Всё равно открыть дела →</string>
     <string name="today_dialog_close">Закрыть</string>
     <string name="today_dialog_overdue_badge">Просрочено</string>
+
+    <!-- 🆕 v20.3.4: меню «🏠 Домашние дела» по долгому тапу -->
+    <string name="home_tasks_menu_title">🏠 Домашние дела</string>
+    <string name="home_tasks_menu_show_today">📅 Показать сводку на сегодня</string>
+    <string name="home_tasks_menu_settings">⚙️ Настройки напоминаний</string>
+    <string name="home_tasks_menu_cancel">Отмена</string>
 </resources>
