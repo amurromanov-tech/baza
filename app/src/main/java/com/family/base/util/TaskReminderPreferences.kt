@@ -7,25 +7,17 @@ import android.content.Context
  *
  * 🆕 v20.1.0 (Вариант A): упрощено.
  *  - Осталось ТОЛЬКО глобальное включение/выключение напоминаний
- *    (isEnabled / setEnabled). Это единственный «глобальный» переключатель,
- *    который влияет на все задачи: если он выключен — ни одно напоминание
- *    не приходит.
+ *    (isEnabled / setEnabled).
  *  - Глобальное время суток (getHour / getMinute / setTime / getTimeLabel)
- *    БОЛЬШЕ НЕ ИСПОЛЬЗУЕТСЯ для планирования. Оно было источником путаницы:
- *    «меняю в одной задаче — меняется у всех». Теперь планировщик берёт
- *    фиксированное 08:00 (см. TaskReminderScheduler.DEFAULT_REMINDER_HOUR).
- *
- *  - Методы getHour/getMinute/setTime/getTimeLabel оставлены
- *    @Deprecated, чтобы старый код компилировался, но новые правки
- *    их не использовали. Их можно удалить отдельным шагом, когда
- *    убедимся, что нигде не вызываются.
+ *    БОЛЬШЕ НЕ ИСПОЛЬЗУЕТСЯ. Оставлены @Deprecated.
  *
  * 🆕 v20.2.3: добавлены настройки «Показывать сводку на сегодня при запуске».
- *  - isTodayDialogEnabled / setTodayDialogEnabled — глобальный переключатель
- *    (по умолчанию true);
- *  - getLastTodayDialogDate / setLastTodayDialogDate — дата последнего
- *    показа окна (формат yyyy-MM-dd, локальная зона), чтобы показывать
- *    не чаще одного раза в день.
+ *
+ * 🆕 v20.3.4: переделка показа окна «На сегодня».
+ *  - Храним не дату-строку, а timestamp последнего показа (millis).
+ *  - Окно показывается один раз в день, но не раньше TODAY_DIALOG_HOUR (07:00).
+ *  - Логика: now >= сегодня 07:00 И lastShown < сегодня 07:00 → показать.
+ *  - Старые getLastTodayDialogDate / setLastTodayDialogDate — @Deprecated.
  *
  * Хранится в SharedPreferences (baza_task_reminders).
  */
@@ -36,21 +28,25 @@ object TaskReminderPreferences {
     private const val KEY_HOUR = "reminder_hour"
     private const val KEY_MINUTE = "reminder_minute"
 
-    // 🆕 v20.2.3: «Показывать сводку на сегодня при запуске»
+    // 🆕 v20.2.3 / v20.3.4: «Показывать сводку на сегодня при запуске»
     private const val KEY_TODAY_DIALOG_ENABLED = "today_dialog_enabled"
-    private const val KEY_LAST_TODAY_DIALOG_DATE = "last_today_dialog_date"
+    private const val KEY_LAST_TODAY_DIALOG_TIMESTAMP = "last_today_dialog_timestamp"
+    private const val KEY_LAST_TODAY_DIALOG_DATE_LEGACY = "last_today_dialog_date"
 
     /**
-     * @deprecated v20.1.0 — время суток больше не глобальное.
-     * Значение оставлено только для обратной совместимости чтения
-     * старых SharedPreferences. Планировщик его НЕ читает.
+     * 🆕 v20.3.4: час, раньше которого окно «На сегодня» не показывается.
+     * Открыл в 06:59 — не покажется. Открыл в 07:00 — покажется.
      */
+    const val TODAY_DIALOG_HOUR = 7
+
+    /**
+     * 🆕 v20.3.4: минута (в паре с TODAY_DIALOG_HOUR).
+     */
+    const val TODAY_DIALOG_MINUTE = 0
+
     @Deprecated("Global reminder time removed in v20.1.0. Scheduler uses fixed 08:00.")
     const val DEFAULT_HOUR = 9
 
-    /**
-     * @deprecated v20.1.0 — см. DEFAULT_HOUR.
-     */
     @Deprecated("Global reminder time removed in v20.1.0. Scheduler uses fixed 08:00.")
     const val DEFAULT_MINUTE = 0
 
@@ -71,9 +67,6 @@ object TaskReminderPreferences {
 
     // ============================================================
     // 🚫 УСТАРЕВШИЕ МЕТОДЫ (глобальное время суток)
-    //
-    // Не использовать в новом коде. Оставлены, чтобы не ломать
-    // существующие вызовы; при следующей чистке — удалить.
     // ============================================================
 
     @Deprecated("Global reminder time removed in v20.1.0. Use fixed 08:00 in scheduler.")
@@ -106,12 +99,12 @@ object TaskReminderPreferences {
     }
 
     // ============================================================
-    // 🆕 v20.2.3: «ПОКАЗЫВАТЬ СВОДКУ НА СЕГОДНЯ ПРИ ЗАПУСКЕ»
+    // 🆕 v20.2.3 / v20.3.4: «ПОКАЗЫВАТЬ СВОДКУ НА СЕГОДНЯ»
     // ============================================================
 
     /**
      * 🆕 v20.2.3: включён ли показ окна «На сегодня» при запуске.
-     * По умолчанию true — чтобы пользователь видел сводку.
+     * По умолчанию true.
      */
     fun isTodayDialogEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -125,20 +118,42 @@ object TaskReminderPreferences {
     }
 
     /**
-     * 🆕 v20.2.3: дата последнего показа окна «На сегодня»
-     * в формате yyyy-MM-dd (локальная зона). null — ещё не показывали.
+     * 🆕 v20.3.4: timestamp (millis) последнего показа окна «На сегодня».
+     * 0L — ещё не показывали.
      *
-     * Нужна, чтобы показывать окно не чаще одного раза в день
-     * при первом запуске.
+     * Логика в MainActivity:
+     *   todayAt7 = сегодня 07:00
+     *   if (now >= todayAt7 && lastShown < todayAt7) → показать
      */
-    fun getLastTodayDialogDate(context: Context): String? {
+    fun getLastTodayDialogTimestamp(context: Context): Long {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_LAST_TODAY_DIALOG_DATE, null)
+        return prefs.getLong(KEY_LAST_TODAY_DIALOG_TIMESTAMP, 0L)
     }
 
+    fun setLastTodayDialogTimestamp(context: Context, timestamp: Long) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putLong(KEY_LAST_TODAY_DIALOG_TIMESTAMP, timestamp).apply()
+        Logger.log("TaskReminderPreferences", "setLastTodayDialogTimestamp: $timestamp")
+    }
+
+    /**
+     * @deprecated v20.3.4 — заменено на getLastTodayDialogTimestamp(Long).
+     * Оставлено для обратной совместимости чтения старых prefs.
+     * Новый код использовать НЕ должен.
+     */
+    @Deprecated("Use getLastTodayDialogTimestamp(Long) instead.")
+    fun getLastTodayDialogDate(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_LAST_TODAY_DIALOG_DATE_LEGACY, null)
+    }
+
+    /**
+     * @deprecated v20.3.4 — заменено на setLastTodayDialogTimestamp(Long).
+     */
+    @Deprecated("Use setLastTodayDialogTimestamp(Long) instead.")
     fun setLastTodayDialogDate(context: Context, date: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_LAST_TODAY_DIALOG_DATE, date).apply()
-        Logger.log("TaskReminderPreferences", "setLastTodayDialogDate: $date")
+        prefs.edit().putString(KEY_LAST_TODAY_DIALOG_DATE_LEGACY, date).apply()
+        Logger.log("TaskReminderPreferences", "setLastTodayDialogDate (deprecated): $date")
     }
 }
