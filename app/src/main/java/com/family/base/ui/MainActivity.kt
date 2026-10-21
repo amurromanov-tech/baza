@@ -71,9 +71,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingRootFolderType: String? = null
 
     /**
-     * 🆕 v20.3.4: защита от двойного показа в одном onResume
-     * (бывает, когда onResume вызывается без onPause — редко,
-     * но лучше перестраховаться). Сбрасывается в onPause.
+     * 🆕 v20.3.4: защита от двойного показа в одном onResume.
      */
     private var todayDialogShownInThisResume = false
 
@@ -336,17 +334,35 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         }
 
+        // 🆕 v20.3.7: кнопка «Назад» — сначала на уровень вверх,
+        // в корне — диалог выхода. Если активен поиск — сброс поиска.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Выйти из приложения?")
-                    .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
-                    .setPositiveButton("Выйти") { _, _ ->
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
+                val searchActive = !viewModel.getSearchQuery().isNullOrEmpty()
+                val inSubfolder = viewModel.getCurrentFolderId() != null
+
+                when {
+                    searchActive -> {
+                        Logger.log(TAG, "onBack: clearing search")
+                        viewModel.clearSearch()
                     }
-                    .setNegativeButton("Отмена", null)
-                    .show()
+                    inSubfolder -> {
+                        Logger.log(TAG, "onBack: navigateUp from ${viewModel.getCurrentFolderId()}")
+                        viewModel.navigateUp()
+                    }
+                    else -> {
+                        Logger.log(TAG, "onBack: at root, showing exit dialog")
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Выйти из приложения?")
+                            .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
+                            .setPositiveButton("Выйти") { _, _ ->
+                                isEnabled = false
+                                onBackPressedDispatcher.onBackPressed()
+                            }
+                            .setNegativeButton("Отмена", null)
+                            .show()
+                    }
+                }
             }
         })
     }
@@ -476,8 +492,6 @@ class MainActivity : AppCompatActivity() {
         loadSystemFolderCounters()
 
         // 🆕 v20.3.4: окно «На сегодня» — показываем здесь, а не в onCreate.
-        // onResume срабатывает и при первом запуске, и при возврате в приложение
-        // (в т.ч. после смахивания из недавних, если процесс жив).
         lifecycleScope.launch {
             delay(300)
             maybeShowTodayDialog()
@@ -509,12 +523,9 @@ class MainActivity : AppCompatActivity() {
      *  - в этом onResume ещё не показывали.
      *
      * Timestamp последнего показа пишется в TaskReminderPreferences
-     * ТОЛЬКО при успешном show() — если упало, попробуем в следующий onResume.
-     *
-     * ⚠️ suspend: вызывается из lifecycleScope.launch в onResume,
-     * потому что внутри вызывается suspend-функция showTodayTasksDialog.
+     * ТОЛЬКО при успешном show().
      */
-    private suspend fun maybeShowTodayDialog() {
+    private fun maybeShowTodayDialog() {
         try {
             if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
                 Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
@@ -594,10 +605,6 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 🆕 v20.3.4: контекстное меню системной папки «🏠 Домашние дела».
-     * Пункты:
-     *  - «📅 Показать сводку на сегодня» — принудительный показ окна
-     *    (без проверки timestamp — пользователь сам попросил);
-     *  - «⚙️ Настройки напоминаний» — открывает AppSettingsActivity.
      */
     private fun showHomeTasksSystemMenu(folder: FolderEntity) {
         val items = arrayOf(
