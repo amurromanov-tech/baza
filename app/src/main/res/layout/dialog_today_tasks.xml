@@ -9,7 +9,7 @@
     android:layout_marginEnd="24dp"
     android:layout_marginTop="24dp"
     android:layout_marginBottom="24dp"
-    app:cardBackgroundColor="?attr/colorSurface"
+    app:cardBackgroundColor="?android:attr/colorBackground"
     app:cardCornerRadius="20dp"
     app:cardElevation="12dp"
     app:strokeWidth="0dp">
@@ -36,7 +36,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/today_dialog_title"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="?android:attr/textColorPrimary"
                 android:textSize="20sp"
                 android:textStyle="bold" />
 
@@ -48,7 +48,7 @@
                 android:contentDescription="@string/today_dialog_close"
                 android:padding="8dp"
                 android:src="@android:drawable/ic_menu_close_clear_cancel"
-                app:tint="?attr/colorOnSurface" />
+                app:tint="?android:attr/textColorPrimary" />
         </LinearLayout>
 
         <!-- ===== ПОДЗАГОЛОВОК: ДАТА ===== -->
@@ -57,7 +57,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="?android:attr/textColorSecondary"
             android:textSize="13sp"
             tools:text="20 октября, вторник" />
 
@@ -69,7 +69,7 @@
             android:layout_marginTop="12dp"
             android:layout_marginBottom="12dp"
             android:alpha="0.2"
-            android:background="?attr/colorOnSurface" />
+            android:background="?android:attr/textColorPrimary" />
 
         <!-- ===== КОНТЕЙНЕР СПИСКА ЗАДАЧ ===== -->
         <!--
@@ -116,7 +116,7 @@
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="@string/today_dialog_empty_title"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="?android:attr/textColorPrimary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -127,7 +127,7 @@
                 android:layout_marginTop="4dp"
                 android:gravity="center"
                 android:text="@string/today_dialog_empty_subtitle"
-                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textColor="?android:attr/textColorSecondary"
                 android:textSize="14sp" />
         </LinearLayout>
 
@@ -140,7 +140,7 @@
             android:layout_marginTop="12dp"
             android:text="@string/today_dialog_open_tasks"
             android:textAllCaps="false"
-            android:textColor="?attr/colorPrimary"
+            android:textColor="?attr/colorAccent"
             android:textSize="15sp" />
 
     </LinearLayout>
