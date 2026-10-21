@@ -49,10 +49,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -72,6 +69,13 @@ class MainActivity : AppCompatActivity() {
     private var hideProgressJob: Job? = null
 
     private var pendingRootFolderType: String? = null
+
+    /**
+     * 🆕 v20.3.4: защита от двойного показа в одном onResume
+     * (бывает, когда onResume вызывается без onPause — редко,
+     * но лучше перестраховаться). Сбрасывается в onPause.
+     */
+    private var todayDialogShownInThisResume = false
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
@@ -154,7 +158,6 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 🆕 v16.0.15: возврат из «🛒 Список покупок».
-     * Обновляем счётчики системных папок и, если нужно, переходим в каталог.
      */
     private val shoppingListLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -250,12 +253,10 @@ class MainActivity : AppCompatActivity() {
                         startActivity(Intent(this, TaskListActivity::class.java))
                     }
                     FolderEntity.SYSTEM_KEY_PURCHASES -> {
-                        // 🆕 v16.0.14: «Покупки» открываем как обычную папку
                         Logger.log(TAG, "onFolderClick: navigating into purchases folder")
                         navigateToFolder(folder)
                     }
                     FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
-                        // 🆕 v16.0.15: «Список покупок» → отдельный экран
                         Logger.log(TAG, "onFolderClick: opening ShoppingListActivity")
                         shoppingListLauncher.launch(
                             Intent(this, ShoppingListActivity::class.java)
@@ -267,12 +268,19 @@ class MainActivity : AppCompatActivity() {
             onItemClick = { item -> openItemDetail(item) },
             onFolderLongClick = { folder ->
                 if (folder.isSystem) {
-                    Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
-                    Toast.makeText(
-                        this,
-                        "Системная папка — действия недоступны",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    // 🆕 v20.3.4: для «🏠 Домашние дела» — контекстное меню,
+                    // для остальных системных — как было.
+                    if (folder.systemKey == FolderEntity.SYSTEM_KEY_HOME_TASKS) {
+                        Logger.log(TAG, "onFolderLongClick: home_tasks menu")
+                        showHomeTasksSystemMenu(folder)
+                    } else {
+                        Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
+                        Toast.makeText(
+                            this,
+                            "Системная папка — действия недоступны",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 } else {
                     showFolderContextMenu(folder)
                 }
@@ -341,49 +349,20 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
         })
-
-        // 🆕 v20.2.3: окно «На сегодня» при запуске (не чаще раза в день).
-        // Небольшая задержка, чтобы каталог успел отрисоваться и окно
-        // не всплывало поверх «пустого» экрана.
-        lifecycleScope.launch {
-            delay(400)
-            maybeShowTodayDialog()
-        }
     }
 
  // ============================================================
- // 🆕 v16.0.14: СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
- // 🆕 v20.1.1: + статистика обычных папок и сумма «Покупок»
- // 🆕 v20.1.3: полный смешанный обход (папки + предметы + вложенные)
+ // СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
  // ============================================================
- /**
-  * Загружает три счётчика системных папок и статистику обычных папок:
-  *  - home_tasks     → активные задачи (taskDao.getActiveCount);
-  *  - purchases      → предметы в «Покупках» РЕКУРСИВНО, включая
-  *                     вложенные в предметы папки/предметы
-  *                     (🆕 v20.1.3: единый источник — getFolderStatsDeep);
-  *  - shopping_list  → предметы в корне «Списка покупок» (shallow).
-  *
-  * 🆕 v20.1.3: для обычных папок используем getFolderStatsDeep —
-  * полный смешанный обход (папки + прямые предметы + вложенные
-  * папки предметов + вложенные предметы). Один SQL-запрос на все
-  * папки, без N+1.
-  */
  private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
          try {
              val counters = withContext(Dispatchers.IO) {
                  val homeTasks = db.taskDao().getActiveCount()
-
-                 // 🆕 v20.1.3: и количество, и сумма «Покупок» —
-                 // из одного источника getFolderStatsDeep.
-                 // Иначе количество считалось бы без вложений,
-                 // а сумма — с вложениями (расхождение в UI).
                  val purchasesStats = db.itemDao()
                      .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
                      .firstOrNull()
                  val purchasesItems = purchasesStats?.itemCount ?: 0
-
                  val shoppingList = db.itemDao()
                      .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
 
@@ -394,8 +373,6 @@ class MainActivity : AppCompatActivity() {
                  )
              }
              adapter.setSystemFolderCounters(counters)
-
-             // 🆕 v20.1.1: статистика обычных папок + сумма «Покупок».
              loadFolderStats()
          } catch (e: Exception) {
              Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
@@ -403,13 +380,6 @@ class MainActivity : AppCompatActivity() {
      }
  }
 
- /**
-  * 🆕 v20.1.1: собирает агрегаты по обычным папкам текущего экрана
-  * и рекурсивный агрегат по «Покупкам», передаёт в адаптер.
-  *
-  * 🆕 v20.1.3: оба агрегата — через getFolderStatsDeep, чтобы
-  * учитывались вложенные папки и вложенные предметы (см. ItemDao).
-  */
  private fun loadFolderStats() {
      lifecycleScope.launch {
          try {
@@ -421,7 +391,6 @@ class MainActivity : AppCompatActivity() {
                  .map { it.id }
 
              val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
-                 // 🆕 v20.1.3: batch по обычным папкам — полный смешанный обход
                  val map: Map<String, FolderStatsRow> =
                      if (ordinaryFolderIds.isEmpty()) {
                          emptyMap()
@@ -431,7 +400,6 @@ class MainActivity : AppCompatActivity() {
                              .associateBy { it.folderId }
                      }
 
-                 // рекурсивно по «Покупкам» — тем же методом, единый источник
                  val pStats = db.itemDao()
                      .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
                      .firstOrNull()
@@ -506,11 +474,20 @@ class MainActivity : AppCompatActivity() {
         viewModel.loadContents()
         handlePendingRootFolder()
         loadSystemFolderCounters()
+
+        // 🆕 v20.3.4: окно «На сегодня» — показываем здесь, а не в onCreate.
+        // onResume срабатывает и при первом запуске, и при возврате в приложение
+        // (в т.ч. после смахивания из недавних, если процесс жив).
+        lifecycleScope.launch {
+            delay(300)
+            maybeShowTodayDialog()
+        }
     }
 
     override fun onPause() {
         super.onPause()
         stopSyncAnimation()
+        todayDialogShownInThisResume = false
     }
 
     override fun onDestroy() {
@@ -521,17 +498,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v20.2.3: ОКНО «НА СЕГОДНЯ» ПРИ ЗАПУСКЕ
+    // 🆕 v20.3.4: ОКНО «НА СЕГОДНЯ»
     // ============================================================
 
     /**
-     * 🆕 v20.2.3: показывает окно «На сегодня», если:
-     *  - глобальный переключатель включён (TaskReminderPreferences);
-     *  - сегодня окно ещё не показывали (дата != сегодня);
-     *  - в этой сессии MainActivity окно ещё не показывали.
+     * 🆕 v20.3.4: показывает окно «На сегодня», если:
+     *  - глобальный переключатель включён;
+     *  - сейчас >= сегодня 07:00;
+     *  - последний показ был ДО сегодняшних 07:00;
+     *  - в этом onResume ещё не показывали.
      *
-     * Дату последнего показа фиксируем СРАЗУ при показе — чтобы при
-     * повороте экрана или повторном onCreate окно не всплыло снова.
+     * Timestamp последнего показа пишется в TaskReminderPreferences
+     * ТОЛЬКО при успешном show() — если упало, попробуем в следующий onResume.
      */
     private fun maybeShowTodayDialog() {
         try {
@@ -540,70 +518,109 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            val lastDate = TaskReminderPreferences.getLastTodayDialogDate(this)
-            if (lastDate == today) {
-                Logger.log(TAG, "maybeShowTodayDialog: already shown today ($today)")
+            if (todayDialogShownInThisResume) {
+                Logger.log(TAG, "maybeShowTodayDialog: already shown in this onResume")
                 return
             }
 
-            if (todayDialogShownInSession) {
-                Logger.log(TAG, "maybeShowTodayDialog: already shown in this session")
+            val now = System.currentTimeMillis()
+
+            val todayAt7 = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.TODAY_DIALOG_HOUR)
+                set(Calendar.MINUTE, TaskReminderPreferences.TODAY_DIALOG_MINUTE)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+            if (now < todayAt7) {
+                Logger.log(TAG, "maybeShowTodayDialog: too early (now=$now, todayAt7=$todayAt7)")
                 return
             }
 
-            // Фиксируем факт показа до фактического показа — защита от
-            // повторного вызова при повороте/пересоздании Activity.
-            TaskReminderPreferences.setLastTodayDialogDate(this, today)
-            todayDialogShownInSession = true
+            val lastShown = TaskReminderPreferences.getLastTodayDialogTimestamp(this)
+            if (lastShown >= todayAt7) {
+                Logger.log(TAG, "maybeShowTodayDialog: already shown after 07:00 today (lastShown=$lastShown)")
+                return
+            }
 
-            showTodayTasksDialog()
+            todayDialogShownInThisResume = true
+
+            val shown = showTodayTasksDialog(onOpenTasks = {
+                startActivity(Intent(this, TaskListActivity::class.java))
+            })
+            if (shown) {
+                TaskReminderPreferences.setLastTodayDialogTimestamp(this, now)
+                Logger.log(TAG, "maybeShowTodayDialog: shown and timestamp set ($now)")
+            } else {
+                Logger.log(TAG, "maybeShowTodayDialog: show() returned false, timestamp NOT set")
+            }
         } catch (e: Exception) {
             Logger.log(TAG, "maybeShowTodayDialog error: ${e.message}", e)
         }
     }
 
     /**
-     * 🆕 v20.2.3: загружает задачи на сегодня и показывает диалог.
+     * 🆕 v20.3.4: загружает задачи на сегодня и показывает диалог.
      *
-     * Границы «сегодня»:
-     *  - nowMs       = System.currentTimeMillis();
-     *  - endOfDayMs  = сегодня 23:59:59.999 (локальная зона).
-     *
-     * Логика фильтра/сортировки — в TaskDao.getTodayTasks.
+     * @return true — диалог показан; false — упал или не удалось.
      */
-    private fun showTodayTasksDialog() {
-        lifecycleScope.launch {
-            try {
-                val now = System.currentTimeMillis()
-                val cal = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 23)
-                    set(Calendar.MINUTE, 59)
-                    set(Calendar.SECOND, 59)
-                    set(Calendar.MILLISECOND, 999)
-                }
-                val endOfDay = cal.timeInMillis
+    private suspend fun showTodayTasksDialog(onOpenTasks: (() -> Unit)? = null): Boolean {
+        return try {
+            val now = System.currentTimeMillis()
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }
+            val endOfDay = cal.timeInMillis
 
-                val tasks: List<TaskEntity> = viewModel.getTodayTasks(now, endOfDay)
-                Logger.log(TAG, "showTodayTasksDialog: ${tasks.size} tasks for today")
+            val tasks: List<TaskEntity> = viewModel.getTodayTasks(now, endOfDay)
+            Logger.log(TAG, "showTodayTasksDialog: ${tasks.size} tasks for today")
 
-                TodayTasksDialog.show(
-                    activity = this@MainActivity,
-                    tasks = tasks,
-                    onOpenTasks = {
-                        try {
-                            startActivity(
-                                Intent(this@MainActivity, TaskListActivity::class.java)
-                            )
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Error opening TaskListActivity: ${e.message}", e)
+            TodayTasksDialog.show(
+                activity = this@MainActivity,
+                tasks = tasks,
+                onOpenTasks = onOpenTasks
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "showTodayTasksDialog error: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * 🆕 v20.3.4: контекстное меню системной папки «🏠 Домашние дела».
+     * Пункты:
+     *  - «📅 Показать сводку на сегодня» — принудительный показ окна
+     *    (без проверки timestamp — пользователь сам попросил);
+     *  - «⚙️ Настройки напоминаний» — открывает AppSettingsActivity.
+     */
+    private fun showHomeTasksSystemMenu(folder: FolderEntity) {
+        val items = arrayOf(
+            "📅 Показать сводку на сегодня",
+            "⚙️ Настройки напоминаний"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("🏠 Домашние дела")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        Logger.log(TAG, "HomeTasks menu: show today dialog (manual)")
+                        lifecycleScope.launch {
+                            showTodayTasksDialog(onOpenTasks = {
+                                startActivity(Intent(this@MainActivity, TaskListActivity::class.java))
+                            })
                         }
                     }
-                )
-            } catch (e: Exception) {
-                Logger.log(TAG, "showTodayTasksDialog error: ${e.message}", e)
+                    1 -> {
+                        Logger.log(TAG, "HomeTasks menu: open AppSettingsActivity")
+                        startActivity(Intent(this@MainActivity, AppSettingsActivity::class.java))
+                    }
+                }
             }
-        }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     // ============================================================
@@ -1540,20 +1557,5 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopSyncAnimation() {
         binding.ivSyncStatus.clearAnimation()
-    }
-
-    // ============================================================
-    // 🆕 v20.2.3: STATIC-ФЛАГ «ПОКАЗАЛИ В ЭТОЙ СЕССИИ»
-    // ============================================================
-
-    companion object {
-        /**
-         * 🆕 v20.2.3: чтобы окно «На сегодня» не всплывало повторно
-         * при повороте экрана/пересоздании Activity в рамках одной сессии.
-         * Дата последнего показа хранится в TaskReminderPreferences —
-         * это защита от повторного показа на следующий день.
-         */
-        @Volatile
-        private var todayDialogShownInSession: Boolean = false
     }
 }
