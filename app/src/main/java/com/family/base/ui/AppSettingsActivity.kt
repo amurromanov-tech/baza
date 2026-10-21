@@ -9,6 +9,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.family.base.BaseApplication
 import com.family.base.databinding.ActivityAppSettingsBinding
 import com.family.base.util.Logger
+import com.family.base.util.TaskReminderPreferences
 
 class AppSettingsActivity : AppCompatActivity() {
 
@@ -42,6 +43,7 @@ class AppSettingsActivity : AppCompatActivity() {
         setupSortSpinner()
         setupThemeSelector()
         setupNotificationsSwitch()
+        setupTodayDialogSwitch()
         loadSettings()
 
         Logger.log(TAG, "=== AppSettingsActivity onCreate FINISHED ===")
@@ -122,7 +124,7 @@ class AppSettingsActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // УВЕДОМЛЕНИЯ
+    // УВЕДОМЛЕНИЯ (заглушка «будет в следующем обновлении»)
     // ============================================================
     private fun setupNotificationsSwitch() {
         binding.switchNotifications.setOnCheckedChangeListener { _, isChecked ->
@@ -134,6 +136,22 @@ class AppSettingsActivity : AppCompatActivity() {
                 Toast.LENGTH_SHORT
             ).show()
         }
+    }
+
+    // ============================================================
+    // 🆕 v20.3.4: СВОДКА НА СЕГОДНЯ
+    // ============================================================
+    private fun setupTodayDialogSwitch() {
+        binding.switchTodayDialog.setOnCheckedChangeListener { _, isChecked ->
+            Logger.log(TAG, "Today dialog enabled: $isChecked")
+            TaskReminderPreferences.setTodayDialogEnabled(this, isChecked)
+        }
+    }
+
+    private fun loadTodayDialogSetting() {
+        binding.switchTodayDialog.isChecked =
+            TaskReminderPreferences.isTodayDialogEnabled(this)
+        Logger.log(TAG, "Today dialog setting loaded")
     }
 
     // ============================================================
@@ -152,8 +170,11 @@ class AppSettingsActivity : AppCompatActivity() {
                 else -> binding.radioSystem.isChecked = true
             }
 
-            // Уведомления
+            // Уведомления (заглушка)
             binding.switchNotifications.isChecked = prefs.getBoolean("notifications_enabled", true)
+
+            // 🆕 v20.3.4: сводка на сегодня
+            loadTodayDialogSetting()
 
             // Язык
             val savedLanguage = prefs.getString("language", "Русский")
