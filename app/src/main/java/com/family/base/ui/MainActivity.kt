@@ -525,7 +525,7 @@ class MainActivity : AppCompatActivity() {
      * Timestamp последнего показа пишется в TaskReminderPreferences
      * ТОЛЬКО при успешном show().
      */
-    private fun maybeShowTodayDialog() {
+    private suspend fun maybeShowTodayDialog() {
         try {
             if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
                 Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
