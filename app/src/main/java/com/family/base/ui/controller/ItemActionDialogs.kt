@@ -29,20 +29,9 @@ import kotlinx.coroutines.withContext
 /**
  * Все диалоги действий над предметом в карточке.
  *
- * Отвечает за:
- *  - списание (showWriteOffDialog, showWriteOffReasonDialog);
- *  - займ (showLendDialog, showReturnDialog);
- *  - перемещение (showMoveDialog, openMoveFolderPicker);
- *  - архивацию (showArchiveDialog);
- *  - удаление (showDeleteDialog);
- *  - ревизию (showRevisionDialog);
- *  - быстрое изменение количества (showQuickQuantityDialog);
- *  - штрих-код (showLookupDialog, lookupProduct);
- *  - «нельзя архивировать» (showArchiveBlockedDialog);
- *  - вложенные (showAddNestedDialog, showCreateNestedFolderDialog, openAddNestedItemActivity);
- *  - степпер (buildStepperLayout*, StepperResult, setupRepeatButton, stopRepeat).
- *
- * НЕ управляет view/edit — этим занимается ItemViewController.
+ * 🆕 v20.3.8: showWriteOffReasonDialog после списания:
+ *  - полное списание (archived=true) → onFinish() — закрывает ItemDetailActivity;
+ *  - частичное (archived=false) → onCurrentItemChanged(item.copy(quantity -= count)).
  */
 class ItemActionDialogs(
     private val activity: AppCompatActivity,
@@ -120,6 +109,11 @@ class ItemActionDialogs(
             .show()
     }
 
+    /**
+     * 🆕 v20.3.8: после списания:
+     *  - archived = true → onFinish() (закрыть карточку, предмет ушёл в архив);
+     *  - archived = false → onCurrentItemChanged(...) (обновить счётчик).
+     */
     private fun showWriteOffReasonDialog(id: String, count: Int) {
         val item = currentItemProvider()
         val noun = if (item != null) getWriteOffNoun(item) else "предмет"
@@ -156,14 +150,29 @@ class ItemActionDialogs(
             .setTitle(title)
             .setItems(reasons) { _, which ->
                 val itemForBlock = item
+                val itemForUpdate = item
                 viewModel.writeOffItem(
-                    id,
-                    count,
-                    reasonKeys[which],
-                    null,
+                    itemId = id,
+                    count = count,
+                    reason = reasonKeys[which],
+                    note = null,
                     onBlocked = { msg ->
                         if (itemForBlock != null) {
                             showArchiveBlockedDialog(itemForBlock, msg)
+                        }
+                    },
+                    onDone = { archived ->
+                        if (archived) {
+                            // Полное списание → предмет в архиве, карточку закрываем.
+                            Logger.log(TAG, "writeOff onDone: archived=true, finishing item card")
+                            onFinish()
+                        } else {
+                            // Частичное списание → обновляем счётчик в карточке.
+                            if (itemForUpdate != null) {
+                                val newQty = (itemForUpdate.quantity - count).coerceAtLeast(0)
+                                Logger.log(TAG, "writeOff onDone: archived=false, newQty=$newQty")
+                                onCurrentItemChanged(itemForUpdate.copy(quantity = newQty))
+                            }
                         }
                     }
                 )
