@@ -44,7 +44,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val syncInfoDao = db.syncInfoDao()
     private val settingsDao = db.settingsDao()
 
-    // 🆕 A1: делегаты
     private val historyViewModel = HistoryViewModel(db) { currentUser }
 
     private val catalogViewModel: CatalogViewModel by lazy {
@@ -495,19 +494,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // СПИСАНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
+    /**
+     * 🆕 v20.3.8: добавлен onDone(archived: Boolean).
+     *  - archived = true  → полностью списали, предмет ушёл в архив → UI закрывает карточку.
+     *  - archived = false → частичное списание, оригинал остался → UI обновляет счётчик.
+     *
+     * При onBlocked (есть вложенные, полное списание невозможно) — onDone НЕ вызывается.
+     */
     fun writeOffItem(
         itemId: String,
         count: Int,
         reason: String?,
         note: String?,
-        onBlocked: ((String) -> Unit)? = null
+        onBlocked: ((String) -> Unit)? = null,
+        onDone: ((archived: Boolean) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            catalogViewModel.writeOffItem(itemId, count, reason, note) { msg ->
-                viewModelScope.launch {
-                    withContext(Dispatchers.Main) { onBlocked?.invoke(msg) }
+            catalogViewModel.writeOffItem(
+                itemId = itemId,
+                count = count,
+                reason = reason,
+                note = note,
+                onBlocked = { msg ->
+                    viewModelScope.launch {
+                        withContext(Dispatchers.Main) { onBlocked?.invoke(msg) }
+                    }
+                },
+                onDone = { archived ->
+                    viewModelScope.launch {
+                        withContext(Dispatchers.Main) { onDone?.invoke(archived) }
+                    }
                 }
-            }
+            )
         }
     }
 
@@ -601,10 +619,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // УДАЛЕНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
-    /**
-     * 🆕 v19 (№10): tombstone внутри CatalogViewModel.
-     * Сигнатура без изменений — UI-вызовы не правим.
-     */
     fun deleteItem(itemId: String) {
         viewModelScope.launch { catalogViewModel.deleteItem(itemId) }
     }
@@ -659,29 +673,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.uploadFolderImage(folderId, imageBytes)
     }
 
-    /**
-     * 🆕 A2: прокси для ItemPhotoController — тихая догрузка фото предмета
-     * в виде сырых байтов (без декодирования в Bitmap).
-     */
     suspend fun downloadItemImageBytes(itemId: String): ByteArray? {
         return repository.downloadItemImageBytes(itemId)
     }
 
     // ============================================================
-    // 🆕 v20.2.3: «ДЕЛА НА СЕГОДНЯ» ДЛЯ ПАРЯЩЕГО ОКНА ПРИ СТАРТЕ
+    // «ДЕЛА НА СЕГОДНЯ» ДЛЯ ПАРЯЩЕГО ОКНА ПРИ СТАРТЕ
     // ============================================================
 
-    /**
-     * 🆕 v20.2.3: задачи для окна «На сегодня» при запуске MainActivity.
-     *
-     * Прокси к taskRepository.getTodayTasks(...). Фильтр и сортировка —
-     * в DAO (см. TaskDao.getTodayTasks).
-     *
-     * Вызывать из корутины с Dispatchers.IO (например, из lifecycleScope).
-     *
-     * @param nowMs       текущий timestamp (для определения просрочки).
-     * @param endOfDayMs  конец сегодняшнего дня (23:59:59.999).
-     */
     suspend fun getTodayTasks(nowMs: Long, endOfDayMs: Long): List<TaskEntity> {
         return taskRepository.getTodayTasks(nowMs, endOfDayMs)
     }
