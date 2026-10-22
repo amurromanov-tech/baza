@@ -19,36 +19,9 @@ import java.util.UUID
 /**
  * Делегат MainViewModel: всё, что связано с папками и предметами.
  *
- * Отвечает за:
- *  - создание / изменение / удаление предметов и папок;
- *  - перемещение (в т.ч. splitAndMoveItem, разделение количества);
- *  - архивацию / разархивацию;
- *  - списание (полное и частичное);
- *  - займ (выдать / вернуть);
- *  - ревизию;
- *  - копирование;
- *  - вложенность (дети предмета, отвязка, счётчики);
- *  - запись в outbox + историю (через HistoryViewModel).
- *
- * НЕ знает про LiveData / UI, кроме Toast-уведомлений о циклах и системных папках.
- * Живёт в MainViewModel как обычное поле.
- *
- * 🆕 v17.0.10:
- *  - writeOffItem: автоудаление опустевшей папки покупки;
- *  - deleteFolder: содержимое подпапки «🛒 Покупок» уезжает
- *    в корень «🛒 Списка покупок», а не в корень базы;
- *  - unarchiveItem: страховка от «битого» parentId.
- *
- * 🆕 v19 (№10): tombstones.
- *  - deleteItem / deleteFolder → markItemDeleted / markFolderDeleted,
- *    без hard-delete. Удаление уходит через changelog, чтобы
- *    разойтись по всем устройствам.
- *  - При частичном списании, если original.quantity == 0 — tombstone,
- *    а не hard-delete.
- *  - При слиянии части с оригиналом — tombstone.
- *  - Фото живой tombstone НЕ удаляем сразу: это сделает cleanup
- *    через TOMBSTONE_RETENTION_MS (1 год) вместе с физическим
- *    удалением записи и файла с Диска.
+ * 🆕 v20.3.8: writeOffItem(...) принимает onDone(archived: Boolean).
+ *  - archived = true  → полностью списали, предмет ушёл в архив → UI закрывает карточку.
+ *  - archived = false → частичное списание, оригинал остался с меньшим quantity → UI обновляет счётчик.
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -182,9 +155,6 @@ class CatalogViewModel(
         }
     }
 
-    /**
-     * 🆕 v19 (№10): tombstone вместо hard-delete.
-     */
     suspend fun detachAllChildrenAndDelete(itemId: String): Boolean {
         return try {
             val item = db.itemDao().getItemById(itemId)
@@ -368,9 +338,6 @@ class CatalogViewModel(
         }
     }
 
-    /**
-     * 🆕 v19 (№10): tombstone вместо hard-delete.
-     */
     suspend fun detachAllFolderChildrenAndDelete(folderId: String): Boolean {
         return try {
             detachAllFolderChildren(folderId)
@@ -536,11 +503,6 @@ class CatalogViewModel(
         }
     }
 
-    /**
-     * 🆕 v17.0.10: восстановление из архива.
-     * 🆕 v19: слияние части с оригиналом — tombstone (а не hard-delete),
-     * чтобы «часть» не воскресла через changelog с другого устройства.
-     */
     suspend fun unarchiveItem(itemId: String) {
         try {
             val item = db.itemDao().getItemById(itemId)
@@ -551,7 +513,6 @@ class CatalogViewModel(
 
             val originalId = item.originalId
 
-            // 🆕 v17.0.10: если parentId битый — подменяем на «Список покупок»
             val safeParentId: String? = resolveSafeParentId(item.parentId)
 
             if (originalId == null) {
@@ -588,13 +549,11 @@ class CatalogViewModel(
                     db.itemDao().updateItem(updatedOriginal)
                     OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
-                    // 🆕 v19: tombstone вместо hard-delete.
                     val now = System.currentTimeMillis()
                     db.itemDao().markItemDeleted(itemId, now, currentUser)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
-                    // Фото не удаляем — cleanup через год удалит запись и фото.
 
                     writeHistory(
                         itemId = originalId,
@@ -638,11 +597,6 @@ class CatalogViewModel(
         }
     }
 
-    /**
-     * 🆕 v17.0.10: если parentId == null → null (корень базы — валидно).
-     * Если parentId задан, но папки нет → «🛒 Список покупок».
-     * Иначе — исходный parentId.
-     */
     private suspend fun resolveSafeParentId(parentId: String?): String? {
         if (parentId == null) return null
         val exists = try {
@@ -666,12 +620,21 @@ class CatalogViewModel(
     // СПИСАНИЕ
     // ============================================================
 
+    /**
+     * 🆕 v20.3.8: добавлен onDone(archived: Boolean).
+     *  - archived = true  → полностью списали, предмет ушёл в архив.
+     *  - archived = false → частичное списание, оригинал остался.
+     *
+     * Если onBlocked вызван (есть вложенные, полное списание невозможно) —
+     * onDone НЕ вызывается.
+     */
     suspend fun writeOffItem(
         itemId: String,
         count: Int,
         reason: String?,
         note: String?,
-        onBlocked: ((String) -> Unit)? = null
+        onBlocked: ((String) -> Unit)? = null,
+        onDone: ((archived: Boolean) -> Unit)? = null
     ) {
         Logger.log(TAG, "writeOffItem: itemId=$itemId, count=$count, reason=$reason")
         try {
@@ -704,12 +667,9 @@ class CatalogViewModel(
             val now = System.currentTimeMillis()
             val reasonKey = reason ?: "used_up"
 
-            // 🆕 v17.0.10: запоминаем папку, из которой списываем —
-            // если это папка покупки и она опустеет, удалим её.
             val oldParentId = item.parentId
 
             if (count == item.quantity) {
-                // Полное списание → архив (НЕ tombstone — архив это архив).
                 db.itemDao().archiveItem(itemId, reasonKey, now, note)
                 db.itemDao().getItemById(itemId)?.let { fresh ->
                     OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -725,8 +685,6 @@ class CatalogViewModel(
 
                 Logger.log(TAG, "writeOffItem: fully written off → archived ($reasonKey)")
 
-                // 🆕 v17.0.10: если списали из папки покупки — проверить её на пустоту.
-                // Удаляем ТОЛЬКО если в ней не осталось ни активных, ни архивных.
                 if (!oldParentId.isNullOrBlank()) {
                     val deleted = PurchaseFolderHelper.deletePurchaseFolderIfEmpty(
                         db = db,
@@ -738,6 +696,7 @@ class CatalogViewModel(
                     }
                 }
 
+                onDone?.invoke(true)
             } else {
                 val newId = UUID.randomUUID().toString()
 
@@ -774,12 +733,10 @@ class CatalogViewModel(
 
                 val newQty = item.quantity - count
                 if (newQty == 0) {
-                    // 🆕 v19 (№10): tombstone вместо hard-delete.
                     db.itemDao().markItemDeleted(itemId, now, currentUser)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
                     }
-                    // Фото не удаляем — cleanup через год удалит.
 
                     writeHistory(
                         itemId = newId,
@@ -820,6 +777,8 @@ class CatalogViewModel(
 
                     Logger.log(TAG, "writeOffItem: partial → new archive entry $newId ($count шт.), original=$newQty шт.")
                 }
+
+                onDone?.invoke(false)
             }
 
             onContentsChanged()
@@ -1122,17 +1081,6 @@ class CatalogViewModel(
         }
     }
 
-    /**
-     * 🆕 v17.0.10: удаление папки.
-     *
-     * Если папка — подпапка системной «🛒 Покупки» (например,
-     * «Покупка DD.MM.YYYY #N»), то её содержимое (активные + архивные)
-     * уезжает в корень «🛒 Списка покупок», а не в корень базы.
-     *
-     * 🆕 v19 (№10): сама папка теперь помечается tombstone, а не удаляется
-     * физически. Это нужно, чтобы удаление разошлось по всем устройствам
-     * и не «воскресло» при merge. Cleanup удалит запись через 1 год.
-     */
     suspend fun deleteFolder(folderId: String) {
         try {
             val folder = db.folderDao().getFolderById(folderId)
@@ -1154,7 +1102,6 @@ class CatalogViewModel(
             val now = System.currentTimeMillis()
 
             if (isPurchaseSubfolder) {
-                // 🆕 v17.0.10: содержимое подпапки «🛒 Покупок» → в корень «🛒 Списка покупок»
                 val moved = db.itemDao().moveAllItemsToFolder(
                     folderId = folderId,
                     newParentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
@@ -1165,10 +1112,8 @@ class CatalogViewModel(
                     "deleteFolder: purchase subfolder $folderId → moved $moved items to ShoppingList root"
                 )
 
-                // подпапок у папки покупки быть не должно, но на всякий случай поднимем в корень
                 db.folderDao().moveSubfoldersToRoot(folderId)
 
-                // логируем перенос каждого предмета в outbox (для changelog)
                 val movedItems = db.itemDao().getItemsByParentRaw(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
                 movedItems.forEach { item ->
                     if (item.updatedDate == now) {
@@ -1176,7 +1121,6 @@ class CatalogViewModel(
                     }
                 }
 
-                // 🆕 v19: tombstone вместо hard-delete.
                 db.folderDao().markFolderDeleted(folderId, now, currentUser)
                 db.folderDao().getFolderById(folderId)?.let { fresh ->
                     OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -1190,13 +1134,11 @@ class CatalogViewModel(
                     newValue = null
                 )
             } else {
-                // Прежнее поведение — всё в корень базы (null)
                 db.itemDao().moveItemsToRoot(folderId)
                 db.folderDao().moveSubfoldersToRoot(folderId)
 
                 Logger.log(TAG, "deleteFolder: moved items/subfolders to root, folderId=$folderId")
 
-                // 🆕 v19: tombstone вместо hard-delete.
                 db.folderDao().markFolderDeleted(folderId, now, currentUser)
                 db.folderDao().getFolderById(folderId)?.let { fresh ->
                     OutboxLogger.folderChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -1561,14 +1503,6 @@ class CatalogViewModel(
     // УДАЛЕНИЕ (TOMBSTONE, №10 v19)
     // ============================================================
 
-    /**
-     * 🆕 v19 (№10): tombstone вместо hard-delete.
-     *
-     * Фото НЕ удаляем сразу — оно уйдёт вместе с cleanup через 1 год.
-     * Иначе при синке фото может быть удалено на одном устройстве,
-     * а другое устройство ещё не получило tombstone — и увидит
-     * «битую» карточку.
-     */
     suspend fun deleteItem(itemId: String) {
         try {
             val item = db.itemDao().getItemById(itemId)
