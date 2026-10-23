@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.family.base.AppUser
 import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
@@ -74,14 +75,11 @@ class ItemDetailActivity : AppCompatActivity() {
 
     /**
      * 🆕 v20.2.0: поле, в которое вставим распознанный голосом текст.
-     * Устанавливается при клике на иконку микрофона, сбрасывается после
-     * получения результата (или отмены).
      */
     private var pendingVoiceField: EditText? = null
 
     /**
      * 🆕 v20.2.0: launcher для голосового ввода.
-     * Результат вставляем в pendingVoiceField (в позицию курсора).
      */
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -321,7 +319,12 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.btnActionArchive.setOnClickListener {
             actionDialogs.showArchiveDialog()
         }
+        // 🆕 v20.3.9: кнопка «Удалить» — только Алексей. Для остальных — Toast.
         binding.btnActionDelete.setOnClickListener {
+            if (!AppUser.canDelete(tokenStorageCurrentUser())) {
+                Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             actionDialogs.showDeleteDialog { actionDialogs.showArchiveDialog() }
         }
         binding.btnReturnItem.setOnClickListener {
@@ -356,7 +359,7 @@ class ItemDetailActivity : AppCompatActivity() {
             actionDialogs.showAddNestedDialog()
         }
 
-        // 🆕 v20.2.0: голосовой ввод для названия и описания (только в edit-режиме)
+        // 🆕 v20.2.0: голосовой ввод
         binding.tilName.setEndIconOnClickListener {
             startVoiceFor(binding.etName)
         }
@@ -371,8 +374,6 @@ class ItemDetailActivity : AppCompatActivity() {
                 R.id.rbTypeThing -> "thing"
                 else -> "other"
             }
-            // 🆕 НЕ сбрасываем selectedEditSubtype — валидация в saveChanges()
-            // отсечёт старый подтип, если он не подходит к новому типу.
             editController.updateSubtypeDropdown(currentEditType)
         }
 
@@ -384,6 +385,26 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etPurchaseDate.setOnClickListener { editController.showPurchaseDatePickerDialog() }
 
         editController.setupSubtypeEditDropdown { key -> selectedEditSubtype = key }
+    }
+
+    /**
+     * 🆕 v20.3.9: возвращает имя текущего пользователя из TokenStorage.
+     * Используется для проверки прав на удаление.
+     */
+    private fun tokenStorageCurrentUser(): String? {
+        return com.family.base.data.TokenStorage(this).getCurrentUser()
+    }
+
+    /**
+     * 🆕 v20.3.9: применяет визуальное состояние кнопки «Удалить»:
+     *  - Алексей → кнопка активна, обычный вид;
+     *  - Рима/Дима → кнопка полупрозрачная и disabled (серая),
+     *                клик перехватывается в setupListeners с Toast.
+     */
+    private fun applyDeleteButtonState() {
+        val canDelete = AppUser.canDelete(tokenStorageCurrentUser())
+        binding.btnActionDelete.isEnabled = true  // всегда enabled, чтобы показать Toast
+        binding.btnActionDelete.alpha = if (canDelete) 1f else 0.4f
     }
 
     /**
@@ -503,6 +524,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     viewController.updateExpiryProgress(item)
                     viewController.updateSyncIndicator(item)
 
+                    // 🆕 v20.3.9: визуальное состояние кнопки «Удалить»
+                    applyDeleteButtonState()
+
                     photoController.showLocalPhotoOrPlaceholder(id)
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
                     if (localFile == null || !localFile.exists()) {
@@ -574,6 +598,9 @@ class ItemDetailActivity : AppCompatActivity() {
                     viewController.updateExpiryProgress(item)
                     viewController.updateSyncIndicator(item)
 
+                    // 🆕 v20.3.9: визуальное состояние кнопки «Удалить»
+                    applyDeleteButtonState()
+
                     photoController.showLocalPhotoOrPlaceholder(id)
                     val localFile = ImageUtils.getLocalImageFile(this@ItemDetailActivity, id)
                     if (localFile == null || !localFile.exists()) {
@@ -618,8 +645,6 @@ class ItemDetailActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
-        // 🆕 v20.2.0: разрешение на микрофон получено — повторно запускаем
-        // распознавание для запомненного поля.
         if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
             if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 val field = pendingVoiceField
