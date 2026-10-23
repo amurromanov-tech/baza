@@ -2,6 +2,7 @@ package com.family.base.ui.viewmodel
 
 import android.content.Context
 import android.widget.Toast
+import com.family.base.AppUser
 import com.family.base.util.ImageUtils
 import com.family.base.util.PurchaseFolderHelper
 import com.family.base.data.local.AppDatabase
@@ -20,8 +21,13 @@ import java.util.UUID
  * Делегат MainViewModel: всё, что связано с папками и предметами.
  *
  * 🆕 v20.3.8: writeOffItem(...) принимает onDone(archived: Boolean).
- *  - archived = true  → полностью списали, предмет ушёл в архив → UI закрывает карточку.
- *  - archived = false → частичное списание, оригинал остался с меньшим quantity → UI обновляет счётчик.
+ *
+ * 🆕 v20.3.9: запрет удаления для Римы и Димы.
+ *  - canDelete() читает AppUser.canDelete(currentUserProvider()).
+ *  - Заблокированы: deleteItem, deleteItemSafely, deleteFolder,
+ *    deleteFolderSafely, detachAllChildrenAndDelete, detachAllFolderChildrenAndDelete.
+ *  - НЕ заблокированы: writeOffItem, unarchiveItem — там markItemDeleted
+ *    используется как внутренняя механика (списание/слияние), не удаление.
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -39,6 +45,25 @@ class CatalogViewModel(
         get() = currentUserProvider()
 
     private fun appContext(): Context = appContextProvider()
+
+    /**
+     * 🆕 v20.3.9: может ли текущий пользователь удалять?
+     * Удаление разрешено только Алексею (см. AppUser.canDelete).
+     */
+    private fun canDelete(): Boolean = AppUser.canDelete(currentUser)
+
+    /**
+     * 🆕 v20.3.9: Toast «Удалять может только Алексей».
+     */
+    private suspend fun showDeleteDenied() {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                appContext(),
+                "Удалять может только Алексей",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     // ============================================================
     // ИСТОРИЯ (прокси в HistoryViewModel)
@@ -155,7 +180,15 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun detachAllChildrenAndDelete(itemId: String): Boolean {
+        if (!canDelete()) {
+            Logger.log(TAG, "detachAllChildrenAndDelete: DENIED for $currentUser")
+            showDeleteDenied()
+            return false
+        }
         return try {
             val item = db.itemDao().getItemById(itemId)
             if (item == null) {
@@ -338,7 +371,15 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun detachAllFolderChildrenAndDelete(folderId: String): Boolean {
+        if (!canDelete()) {
+            Logger.log(TAG, "detachAllFolderChildrenAndDelete: DENIED for $currentUser")
+            showDeleteDenied()
+            return false
+        }
         return try {
             detachAllFolderChildren(folderId)
 
@@ -549,6 +590,9 @@ class CatalogViewModel(
                     db.itemDao().updateItem(updatedOriginal)
                     OutboxLogger.itemChanged(db, updatedOriginal, OutboxEntity.ACTION_UPDATE, currentUser)
 
+                    // ⚠️ Это НЕ пользовательское удаление — это внутренняя
+                    // механика слияния частей при возврате из архива.
+                    // Проверку canDelete здесь НЕ ставим.
                     val now = System.currentTimeMillis()
                     db.itemDao().markItemDeleted(itemId, now, currentUser)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
@@ -620,14 +664,6 @@ class CatalogViewModel(
     // СПИСАНИЕ
     // ============================================================
 
-    /**
-     * 🆕 v20.3.8: добавлен onDone(archived: Boolean).
-     *  - archived = true  → полностью списали, предмет ушёл в архив.
-     *  - archived = false → частичное списание, оригинал остался.
-     *
-     * Если onBlocked вызван (есть вложенные, полное списание невозможно) —
-     * onDone НЕ вызывается.
-     */
     suspend fun writeOffItem(
         itemId: String,
         count: Int,
@@ -733,6 +769,7 @@ class CatalogViewModel(
 
                 val newQty = item.quantity - count
                 if (newQty == 0) {
+                    // ⚠️ Внутренняя механика списания — canDelete НЕ проверяем.
                     db.itemDao().markItemDeleted(itemId, now, currentUser)
                     db.itemDao().getItemById(itemId)?.let { fresh ->
                         OutboxLogger.itemChanged(db, fresh, OutboxEntity.ACTION_UPDATE, currentUser)
@@ -1081,7 +1118,15 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun deleteFolder(folderId: String) {
+        if (!canDelete()) {
+            Logger.log(TAG, "deleteFolder: DENIED for $currentUser")
+            showDeleteDenied()
+            return
+        }
         try {
             val folder = db.folderDao().getFolderById(folderId)
 
@@ -1503,7 +1548,15 @@ class CatalogViewModel(
     // УДАЛЕНИЕ (TOMBSTONE, №10 v19)
     // ============================================================
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun deleteItem(itemId: String) {
+        if (!canDelete()) {
+            Logger.log(TAG, "deleteItem: DENIED for $currentUser")
+            showDeleteDenied()
+            return
+        }
         try {
             val item = db.itemDao().getItemById(itemId)
             if (item != null) {
@@ -1528,11 +1581,20 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun deleteItemSafely(
         itemId: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (!canDelete()) {
+            Logger.log(TAG, "deleteItemSafely: DENIED for $currentUser")
+            showDeleteDenied()
+            onError("Удалять может только Алексей")
+            return
+        }
         try {
             val children = repository.countChildren(itemId)
             val total = children.first + children.second
@@ -1573,11 +1635,20 @@ class CatalogViewModel(
         }
     }
 
+    /**
+     * 🆕 v20.3.9: запрещено для не-Алексея.
+     */
     suspend fun deleteFolderSafely(
         folderId: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (!canDelete()) {
+            Logger.log(TAG, "deleteFolderSafely: DENIED for $currentUser")
+            showDeleteDenied()
+            onError("Удалять может только Алексей")
+            return
+        }
         try {
             val folder = db.folderDao().getFolderById(folderId)
             if (folder?.isSystem == true) {
