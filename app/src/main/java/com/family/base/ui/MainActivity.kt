@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.AppUser
 import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.TokenStorage
@@ -266,8 +267,6 @@ class MainActivity : AppCompatActivity() {
             onItemClick = { item -> openItemDetail(item) },
             onFolderLongClick = { folder ->
                 if (folder.isSystem) {
-                    // 🆕 v20.3.4: для «🏠 Домашние дела» — контекстное меню,
-                    // для остальных системных — как было.
                     if (folder.systemKey == FolderEntity.SYSTEM_KEY_HOME_TASKS) {
                         Logger.log(TAG, "onFolderLongClick: home_tasks menu")
                         showHomeTasksSystemMenu(folder)
@@ -334,8 +333,6 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         }
 
-        // 🆕 v20.3.7: кнопка «Назад» — сначала на уровень вверх,
-        // в корне — диалог выхода. Если активен поиск — сброс поиска.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val searchActive = !viewModel.getSearchQuery().isNullOrEmpty()
@@ -491,7 +488,6 @@ class MainActivity : AppCompatActivity() {
         handlePendingRootFolder()
         loadSystemFolderCounters()
 
-        // 🆕 v20.3.4: окно «На сегодня» — показываем здесь, а не в onCreate.
         lifecycleScope.launch {
             delay(300)
             maybeShowTodayDialog()
@@ -512,19 +508,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v20.3.4: ОКНО «НА СЕГОДНЯ»
+    // ОКНО «НА СЕГОДНЯ»
     // ============================================================
 
-    /**
-     * 🆕 v20.3.4: показывает окно «На сегодня», если:
-     *  - глобальный переключатель включён;
-     *  - сейчас >= сегодня 07:00;
-     *  - последний показ был ДО сегодняшних 07:00;
-     *  - в этом onResume ещё не показывали.
-     *
-     * Timestamp последнего показа пишется в TaskReminderPreferences
-     * ТОЛЬКО при успешном show().
-     */
     private suspend fun maybeShowTodayDialog() {
         try {
             if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
@@ -573,11 +559,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.3.4: загружает задачи на сегодня и показывает диалог.
-     *
-     * @return true — диалог показан; false — упал или не удалось.
-     */
     private suspend fun showTodayTasksDialog(onOpenTasks: (() -> Unit)? = null): Boolean {
         return try {
             val now = System.currentTimeMillis()
@@ -603,9 +584,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.3.4: контекстное меню системной папки «🏠 Домашние дела».
-     */
     private fun showHomeTasksSystemMenu(folder: FolderEntity) {
         val items = arrayOf(
             "📅 Показать сводку на сегодня",
@@ -883,38 +861,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 🆕 v20.3.9: пункт «Удалить» в контекстном меню папки показывается
+     * только Алексею (AppUser.canDelete). У Римы/Димы — его нет.
+     */
     private fun showFolderContextMenu(folder: FolderEntity) {
         if (folder.isSystem) {
             Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val items = arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
+        val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
+
+        val items = if (canDelete) {
+            arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
+        } else {
+            arrayOf("Переименовать", "Сменить иконку", "Статистика", "Переместить")
+        }
+
         AlertDialog.Builder(this)
             .setTitle("Действия с папкой")
             .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showRenameFolderDialog(folder)
-                    1 -> changeFolderImage(folder)
-                    2 -> confirmDeleteFolder(folder)
-                    3 -> showFolderStats(folder)
-                    4 -> showMoveFolderDialog(folder)
+                if (canDelete) {
+                    when (which) {
+                        0 -> showRenameFolderDialog(folder)
+                        1 -> changeFolderImage(folder)
+                        2 -> confirmDeleteFolder(folder)
+                        3 -> showFolderStats(folder)
+                        4 -> showMoveFolderDialog(folder)
+                    }
+                } else {
+                    when (which) {
+                        0 -> showRenameFolderDialog(folder)
+                        1 -> changeFolderImage(folder)
+                        2 -> showFolderStats(folder)
+                        3 -> showMoveFolderDialog(folder)
+                    }
                 }
             }
             .show()
     }
 
+    /**
+     * 🆕 v20.3.9: пункт «Удалить» в контекстном меню предмета показывается
+     * только Алексею (AppUser.canDelete). У Римы/Димы — его нет.
+     */
     private fun showItemContextMenu(item: ItemEntity) {
-        val items = arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
+        val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
+
+        val items = if (canDelete) {
+            arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
+        } else {
+            arrayOf("Редактировать", "Списать / В архив", "История", "Переместить")
+        }
+
         AlertDialog.Builder(this)
             .setTitle("Действия с предметом")
             .setItems(items) { _, which ->
-                when (which) {
-                    0 -> editItem(item)
-                    1 -> showWriteOffOrArchiveDialog(item)
-                    2 -> confirmDeleteItem(item)
-                    3 -> showItemHistory(item)
-                    4 -> showMoveItemDialog(item)
+                if (canDelete) {
+                    when (which) {
+                        0 -> editItem(item)
+                        1 -> showWriteOffOrArchiveDialog(item)
+                        2 -> confirmDeleteItem(item)
+                        3 -> showItemHistory(item)
+                        4 -> showMoveItemDialog(item)
+                    }
+                } else {
+                    when (which) {
+                        0 -> editItem(item)
+                        1 -> showWriteOffOrArchiveDialog(item)
+                        2 -> showItemHistory(item)
+                        3 -> showMoveItemDialog(item)
+                    }
                 }
             }
             .show()
@@ -1309,6 +1327,11 @@ class MainActivity : AppCompatActivity() {
     // УДАЛЕНИЕ ПАПКИ
     // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
+        // 🆕 v20.3.9: страховка — если пункт «Удалить» как-то вызван у Римы/Димы.
+        if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
+            Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя удалить", Toast.LENGTH_SHORT).show()
             return
@@ -1470,6 +1493,11 @@ class MainActivity : AppCompatActivity() {
     // УДАЛЕНИЕ ПРЕДМЕТА
     // ============================================================
     private fun confirmDeleteItem(item: ItemEntity) {
+        // 🆕 v20.3.9: страховка — если пункт «Удалить» как-то вызван у Римы/Димы.
+        if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
+            Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+            return
+        }
         viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
             val totalChildren = foldersCount + itemsCount
 
