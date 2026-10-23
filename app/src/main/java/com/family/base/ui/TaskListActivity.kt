@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.family.base.AppUser
 import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
@@ -44,21 +45,11 @@ import java.util.Locale
 /**
  * Экран «Домашние дела».
  *
- * 🆕 v20.0.0 (шаг 3): группировка по времени
- * (Просрочено / Сегодня / Завтра / На этой неделе / Потом / Без напоминаний)
- * через ConcatAdapter: TaskSectionHeaderAdapter + TaskAdapter.
- *
- * 🆕 v20.1.0 (Вариант A): убрано глобальное время суток из диалога.
- *  - В диалоге больше нет «🕐 Изменить» для глобального времени.
- *  - Остался только глобальный бегунок switchReminder (вкл/выкл напоминаний).
- *  - Точное напоминание per-task задаётся через «Когда напомнить»
- *    (textRemindAt / btnPickRemindAt / btnClearRemindAt).
- *  - Умный пинг для задач без remindAt срабатывает в фиксированное 08:00
- *    (см. TaskReminderScheduler.DEFAULT_REMINDER_HOUR).
- *  - TaskReminderPreferences.getHour/getMinute/setTime/getTimeLabel
- *    больше не вызываются из UI.
- *
- * 🆕 v20.2.0: голосовой ввод в диалоге задачи (название, примечание).
+ * 🆕 v20.3.9: удаление задач разрешено только Алексею.
+ *  - confirmDelete(task) — ранний return с Toast для Римы/Димы.
+ *  - Иконка «Удалить» в item_task.xml остаётся видимой, но клик
+ *    перехватывается Toast'ом (визуально скрывать — отдельным шагом,
+ *    если понадобится).
  */
 class TaskListActivity : AppCompatActivity() {
 
@@ -86,17 +77,8 @@ class TaskListActivity : AppCompatActivity() {
     private enum class Filter { ACTIVE, DONE, ALL }
     private var currentFilter: Filter = Filter.ACTIVE
 
-    /**
-     * 🆕 v20.2.0: поле диалога задачи, в которое вставим распознанный
-     * голосом текст. Устанавливается при клике на иконку микрофона,
-     * сбрасывается после получения результата (или отмены).
-     */
     private var pendingVoiceField: EditText? = null
 
-    /**
-     * 🆕 v20.2.0: launcher для голосового ввода.
-     * Результат вставляем в pendingVoiceField (в позицию курсора).
-     */
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -352,7 +334,16 @@ class TaskListActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 🆕 v20.3.9: удаление задачи разрешено только Алексею.
+     * Для Римы/Димы — ранний return с Toast, диалог не показываем.
+     */
     private fun confirmDelete(task: TaskEntity) {
+        if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
+            Logger.log(TAG, "confirmDelete: DENIED for $currentUser")
+            Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+            return
+        }
         AlertDialog.Builder(this)
             .setTitle("Удалить задачу?")
             .setMessage("«${task.title}»")
@@ -395,10 +386,8 @@ class TaskListActivity : AppCompatActivity() {
         val btnClearDate = view.findViewById<View>(R.id.btnClearDate)
         val textRecurrenceHint = view.findViewById<TextView>(R.id.textRecurrenceHint)
 
-        // Глобальный бегунок «напоминания включены» (без времени)
         val switchReminder = view.findViewById<SwitchCompat>(R.id.switchReminder)
 
-        // Per-task точное напоминание
         val textRemindAt = view.findViewById<TextView>(R.id.textRemindAt)
         val btnPickRemindAt = view.findViewById<View>(R.id.btnPickRemindAt)
         val btnClearRemindAt = view.findViewById<View>(R.id.btnClearRemindAt)
@@ -448,17 +437,14 @@ class TaskListActivity : AppCompatActivity() {
         switchAutoRemind.isChecked = pendingAutoRemind
         textAutoRemindHint.visibility = if (pendingAutoRemind) View.VISIBLE else View.GONE
 
-        // Глобальный флаг
         switchReminder.isChecked = TaskReminderPreferences.isEnabled(this)
         switchReminder.setOnCheckedChangeListener { _, _ ->
-            // Ничего не делаем здесь: флаг применится в applyGlobalReminderSetting
-            // при сохранении задачи. Это чтобы не перепланировать всё на каждый чек.
+            // флаг применится в applyGlobalReminderSetting при сохранении
         }
 
         updateDueDateLabel()
         updateRemindAtLabel()
 
-        // 🆕 v20.2.0: голосовой ввод для названия и примечания
         tilTitle.setEndIconOnClickListener { startVoiceFor(etTitle) }
         tilNote.setEndIconOnClickListener { startVoiceFor(etNote) }
 
@@ -613,18 +599,11 @@ class TaskListActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /**
-     * 🆕 v20.2.0: запуск голосового ввода для конкретного поля диалога.
-     */
     private fun startVoiceFor(field: EditText) {
         pendingVoiceField = field
         VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
     }
 
-    /**
-     * 🆕 v20.2.0: обработка разрешения RECORD_AUDIO.
-     * После grant — повторно запускаем распознавание для запомненного поля.
-     */
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -649,14 +628,6 @@ class TaskListActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.1.0 (Вариант A): дефолтное точное напоминание для новой задачи —
-     * «сегодня 08:00», а если сейчас уже позже 08:00 — «завтра 08:00».
-     *
-     * Раньше был захардкожен 19:00. Теперь соответствует фиксированному
-     * времени умного пинга (08:00), чтобы пользователь видел «одно время»
-     * и не путался.
-     */
     private fun defaultRemindAt(): Long {
         val cal = Calendar.getInstance()
         cal.set(Calendar.HOUR_OF_DAY, 8)
@@ -669,13 +640,6 @@ class TaskListActivity : AppCompatActivity() {
         return cal.timeInMillis
     }
 
-    /**
-     * 🆕 v20.1.0 (Вариант A): глобальный флаг «напоминания включены».
-     *
-     * Время суток больше не глобальное — его тут нет.
-     * - включили: rescheduleAll (если раньше было выключено);
-     * - выключили: cancelAll.
-     */
     private fun applyGlobalReminderSetting(enabled: Boolean) {
         try {
             val wasEnabled = TaskReminderPreferences.isEnabled(this)
