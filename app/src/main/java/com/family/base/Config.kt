@@ -69,16 +69,20 @@ object Config {
  * PIN задаёт сам пользователь при первом входе,
  * хранится в виде SHA-256-хеша в users.json на Яндекс.Диске.
  *
- * 🆕 v17.3.1: гость удалён полностью. Новый член семьи добавляется
- * в enum вручную (по решению владельца).
+ * 🆕 v17.3.1: гость удалён полностью.
+ *
+ * 🆕 v20.3.9: поле canDelete — право удалять предметы/папки/задачи.
+ *  - true  → Алексей (полный доступ);
+ *  - false → Рима, Дима (могут всё, кроме удаления).
  */
 enum class AppUser(
     val displayName: String,
-    val emoji: String
+    val emoji: String,
+    val canDelete: Boolean
 ) {
-    ALEXEY("Алексей", "👨"),
-    RIMA("Рима", "👩"),
-    DIMA("Дима", "🧑");
+    ALEXEY("Алексей", "👨", canDelete = true),
+    RIMA("Рима", "👩", canDelete = false),
+    DIMA("Дима", "🧑", canDelete = false);
 
     companion object {
         /** Все именованные пользователи (которым можно задать PIN). */
@@ -88,6 +92,16 @@ enum class AppUser(
         fun byName(name: String?): AppUser? {
             if (name == null) return null
             return values().firstOrNull { it.displayName == name }
+        }
+
+        /**
+         * 🆕 v20.3.9: может ли пользователь с таким именем удалять?
+         *  - null / неизвестное имя → false (безопасный дефолт).
+         *  - Алексей → true.
+         *  - Рима, Дима → false.
+         */
+        fun canDelete(name: String?): Boolean {
+            return byName(name)?.canDelete ?: false
         }
     }
 }
