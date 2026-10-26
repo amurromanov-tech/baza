@@ -69,6 +69,20 @@ import kotlinx.coroutines.withContext
  *     конфликт. Если хочется поменять remindAt на устройстве A, а B
  *     ещё не получил — updatedAt у A станет новее, и B применит его.
  *     Если B поменяет позже — его updatedAt будет ещё новее.
+ *
+ * 🆕 v20.4.4 (после инцидента 26.10.2026 «пропали папки и покупки»):
+ *   - Добавлена защита diskFoldersAreOlder — сравнение max(updatedAt)
+ *     для папок (раньше была только для items).
+ *   - Добавлен порог «Диск сильно меньше локальной базы» для папок
+ *     и items: если diskFolders.size < localFoldersCount * 0.7
+ *     (и разница > 20) или diskItems.size < localItemsCount * 0.7
+ *     (и разница > 50) — БЛОКИРУЕМ весь merge. Это спасает от
+ *     заливки старой базы (14-я версия) другим пользователем.
+ *   - Усилен diskItemsAreOlder: срабатывает и по max(updatedAt),
+ *     и по количеству.
+ *   - При срабатывании любой защиты last_modified НЕ обновляется,
+ *     чтобы при следующем синке попробовать снова (и чтобы не
+ *     «залипнуть» на неполных данных).
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -678,6 +692,18 @@ class SyncViewModel(
     // MERGE
     // ============================================================
 
+    /**
+     * 🆕 v20.4.4: пороги «Диск подозрительно мал».
+     *  - FOLDERS: disk < local * 0.7 И разница > 20 → блок.
+     *  - ITEMS:   disk < local * 0.7 И разница > 50 → блок.
+     */
+    private companion object {
+        const val FOLDERS_INCOMPLETE_RATIO = 0.7
+        const val FOLDERS_INCOMPLETE_MIN_DIFF = 20
+        const val ITEMS_INCOMPLETE_RATIO = 0.7
+        const val ITEMS_INCOMPLETE_MIN_DIFF = 50
+    }
+
     private suspend fun mergeData(
         diskFolders: List<FolderEntity>,
         diskItems: List<ItemEntity>,
@@ -711,11 +737,47 @@ class SyncViewModel(
             }
 
             // ================================================================
-            // 🆕 v17.2.7: ЗАЩИТА ОТ СТАРОГО items.json
+            // 🆕 v20.4.4: ЗАЩИТА ОТ НЕПОЛНОГО/СТАРОГО ДИСКА ДЛЯ ПАПОК
+            // ================================================================
+            val diskFoldersMaxUpdated = diskFolders.maxOfOrNull { it.updatedAt } ?: 0L
+            val localFoldersMaxUpdated = db.folderDao().getAllFolders().maxOfOrNull { it.updatedAt } ?: 0L
+            val diskFoldersAreOlder = diskFolders.isNotEmpty() &&
+                diskFoldersMaxUpdated < localFoldersMaxUpdated
+
+            // Порог по количеству для папок.
+            val foldersLookIncomplete = localFoldersCount > FOLDERS_INCOMPLETE_MIN_DIFF &&
+                diskFolders.size < localFoldersCount * FOLDERS_INCOMPLETE_RATIO
+
+            if (diskFoldersAreOlder) {
+                Logger.log(
+                    TAG,
+                    "mergeData: disk folders are OLDER than local " +
+                        "(disk max=$diskFoldersMaxUpdated, local max=$localFoldersMaxUpdated) — " +
+                        "will merge but NOT delete local-only folders"
+                )
+            }
+
+            if (foldersLookIncomplete) {
+                Logger.log(
+                    TAG,
+                    "mergeData: !!! FOLDERS LOOK INCOMPLETE ON DISK " +
+                        "(disk=${diskFolders.size}, local=$localFoldersCount, " +
+                        "ratio=${diskFolders.size.toDouble() / localFoldersCount}) — " +
+                        "SKIP ALL merge to protect local data"
+                )
+                return@withContext
+            }
+
+            // ================================================================
+            // 🆕 v17.2.7 / v20.4.4: ЗАЩИТА ОТ СТАРОГО/НЕПОЛНОГО items.json
             // ================================================================
             val diskItemsMaxUpdated = diskItems.maxOfOrNull { it.updatedDate } ?: 0L
             val localItemsMaxUpdated = db.itemDao().getAllItemsRaw().maxOfOrNull { it.updatedDate } ?: 0L
-            val diskItemsAreOlder = diskItems.isNotEmpty() && diskItemsMaxUpdated < localItemsMaxUpdated
+            val diskItemsAreOlder = diskItems.isNotEmpty() &&
+                diskItemsMaxUpdated < localItemsMaxUpdated
+
+            val itemsLookIncomplete = localItemsCount > ITEMS_INCOMPLETE_MIN_DIFF &&
+                diskItems.size < localItemsCount * ITEMS_INCOMPLETE_RATIO
 
             if (diskItemsAreOlder) {
                 Logger.log(
@@ -724,6 +786,17 @@ class SyncViewModel(
                         "(disk max=$diskItemsMaxUpdated, local max=$localItemsMaxUpdated) — " +
                         "will merge but NOT delete local-only items"
                 )
+            }
+
+            if (itemsLookIncomplete) {
+                Logger.log(
+                    TAG,
+                    "mergeData: !!! ITEMS LOOK INCOMPLETE ON DISK " +
+                        "(disk=${diskItems.size}, local=$localItemsCount, " +
+                        "ratio=${diskItems.size.toDouble() / localItemsCount}) — " +
+                        "SKIP ALL merge to protect local data"
+                )
+                return@withContext
             }
 
             // ---------- ПАПКИ ----------
@@ -779,7 +852,8 @@ class SyncViewModel(
                 }
 
                 // 🆕 v19: удаление local-only при diskIsNewer — теперь tombstone.
-                if (diskIsNewer) {
+                // 🆕 v20.4.4: НЕ удаляем, если diskFoldersAreOlder.
+                if (diskIsNewer && !diskFoldersAreOlder) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders()
                         .filter { it.id !in diskFolderIds }
@@ -801,6 +875,8 @@ class SyncViewModel(
                             )
                         }
                     }
+                } else if (diskFoldersAreOlder) {
+                    Logger.log(TAG, "mergeData: skipping local-only folders deletion (disk folders are older)")
                 }
             }
 
@@ -851,6 +927,7 @@ class SyncViewModel(
                 }
 
                 // 🆕 v19: local-only — tombstone вместо hard-delete.
+                // 🆕 v20.4.4: НЕ удаляем, если diskItemsAreOlder.
                 if (diskIsNewer && !diskItemsAreOlder) {
                     val diskItemIds = diskItems.map { it.id }.toSet()
                     val localOnlyItems = db.itemDao().getAllItemsRaw()
