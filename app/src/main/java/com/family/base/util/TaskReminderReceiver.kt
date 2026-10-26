@@ -40,6 +40,10 @@ import kotlinx.coroutines.withContext
  * outbox) — через goAsync() + BaseApplication.applicationScope.launch,
  * чтобы не ловить "Cannot access database on the main thread" (урок из шага 1).
  *
+ * 🆕 v20.4.2: явный лог при отсутствии POST_NOTIFICATIONS — раньше было
+ * просто "skip", из-за чего причина «почему нет уведомлений» была не видна.
+ * Пользователь должен включить уведомления в системных настройках приложения.
+ *
  * Регистрируется в AndroidManifest.xml.
  */
 class TaskReminderReceiver : BroadcastReceiver() {
@@ -87,7 +91,14 @@ class TaskReminderReceiver : BroadcastReceiver() {
 
             // 1. Проверяем разрешение на уведомления (Android 13+)
             if (!hasNotificationPermission(context)) {
-                Logger.log(TAG, "onReceive: no POST_NOTIFICATIONS permission, skip")
+                // 🆕 v20.4.2: явно объясняем, что делать.
+                Logger.log(
+                    TAG,
+                    "onReceive: POST_NOTIFICATIONS NOT granted — skip. " +
+                        "User must enable notifications in system app settings " +
+                        "(Settings → Apps → BAZA → Notifications). " +
+                        "taskId=$taskId, isSmart=$isSmart"
+                )
                 return
             }
 
