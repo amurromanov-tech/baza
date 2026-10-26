@@ -1,7 +1,10 @@
 package com.family.base.ui
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -78,6 +81,34 @@ class MainActivity : AppCompatActivity() {
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
+
+    // ============================================================
+    // 🆕 v20.4.2: запрос POST_NOTIFICATIONS (Android 13+)
+    // ============================================================
+
+    /**
+     * Лаунчер запроса разрешения POST_NOTIFICATIONS.
+     * Объявлен до onCreate — так требует registerForActivityResult.
+     */
+    private val postNotificationsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        Logger.log(TAG, "POST_NOTIFICATIONS result: granted=$granted")
+        if (granted) {
+            Toast.makeText(
+                this,
+                "Напоминания включены",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            Toast.makeText(
+                this,
+                "Без разрешения на уведомления напоминания не придут.\n" +
+                    "Включите их в Настройки → Приложения → БАЗА → Уведомления",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     private val selectUserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -333,6 +364,9 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         }
 
+        // 🆕 v20.4.2: запрос POST_NOTIFICATIONS (один раз при первом запуске)
+        maybeRequestPostNotifications()
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val searchActive = !viewModel.getSearchQuery().isNullOrEmpty()
@@ -362,6 +396,56 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    // ============================================================
+    // 🆕 v20.4.2: ЗАПРОС POST_NOTIFICATIONS
+    // ============================================================
+
+    /**
+     * Запрашивает POST_NOTIFICATIONS один раз при первом запуске.
+     *
+     * Логика:
+     *  - Android < 13 → разрешение не нужно, выходим.
+     *  - Разрешение уже выдано → выходим.
+     *  - Уже спрашивали ранее (флаг в SharedPreferences) → выходим,
+     *    чтобы не спамить диалогом при каждом старте.
+     *  - Иначе → ставим флаг «спрашивали» и запускаем лаунчер.
+     *
+     * Если пользователь отказал — второй раз не спрашиваем.
+     * Включить можно через AppSettingsActivity (кнопка «Напоминания»)
+     * или системные настройки приложения.
+     */
+    private fun maybeRequestPostNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Logger.log(TAG, "maybeRequestPostNotifications: Android < 13, no permission needed")
+            return
+        }
+
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (granted) {
+            Logger.log(TAG, "maybeRequestPostNotifications: already granted")
+            return
+        }
+
+        val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
+        val alreadyAsked = prefs.getBoolean(KEY_POST_NOTIFICATIONS_ASKED, false)
+        if (alreadyAsked) {
+            Logger.log(TAG, "maybeRequestPostNotifications: already asked before, skip")
+            return
+        }
+
+        prefs.edit().putBoolean(KEY_POST_NOTIFICATIONS_ASKED, true).apply()
+        Logger.log(TAG, "maybeRequestPostNotifications: launching permission request")
+        try {
+            postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } catch (e: Exception) {
+            Logger.log(TAG, "maybeRequestPostNotifications: launch error: ${e.message}")
+        }
     }
 
  // ============================================================
@@ -603,7 +687,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     1 -> {
                         Logger.log(TAG, "HomeTasks menu: open AppSettingsActivity")
-                        startActivity(Intent(this@MainActivity, AppSettingsActivity::class.java))
+                        startActivity(Intent(this, AppSettingsActivity::class.java))
                     }
                 }
             }
@@ -1595,5 +1679,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopSyncAnimation() {
         binding.ivSyncStatus.clearAnimation()
+    }
+
+    companion object {
+        /**
+         * 🆕 v20.4.2: ключ SharedPreferences — спрашивали ли POST_NOTIFICATIONS.
+         * Хранится в BaseApplication.PREFS_NAME ("baza_settings").
+         */
+        private const val KEY_POST_NOTIFICATIONS_ASKED = "post_notifications_asked"
     }
 }
