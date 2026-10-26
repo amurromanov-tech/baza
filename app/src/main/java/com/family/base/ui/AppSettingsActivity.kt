@@ -1,11 +1,20 @@
 package com.family.base.ui
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.family.base.BaseApplication
 import com.family.base.databinding.ActivityAppSettingsBinding
 import com.family.base.util.Logger
@@ -16,6 +25,11 @@ class AppSettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAppSettingsBinding
     private val TAG = "AppSettingsActivity"
 
+    /**
+     * 🆕 v20.4.2: защита от рекурсии при программной установке isChecked.
+     */
+    private var suppressNotificationsListener = false
+
     private val languages = arrayOf("Русский", "English")
     private val sortOptions = arrayOf(
         "По имени",
@@ -23,6 +37,25 @@ class AppSettingsActivity : AppCompatActivity() {
         "По цене",
         "По дате добавления"
     )
+
+    // ============================================================
+    // 🆕 v20.4.2: ЛАУНЧЕР ЗАПРОСА POST_NOTIFICATIONS
+    // ============================================================
+    private val postNotificationsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        Logger.log(TAG, "POST_NOTIFICATIONS result: granted=$granted")
+        updateNotificationsSwitch()
+        if (granted) {
+            Toast.makeText(this, "Уведомления включены", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(
+                this,
+                "Разрешение не выдано. Напоминания не будут приходить.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +80,13 @@ class AppSettingsActivity : AppCompatActivity() {
         loadSettings()
 
         Logger.log(TAG, "=== AppSettingsActivity onCreate FINISHED ===")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 🆕 v20.4.2: если пользователь вернулся из системных настроек —
+        // обновляем состояние переключателя.
+        updateNotificationsSwitch()
     }
 
     // ============================================================
@@ -124,17 +164,145 @@ class AppSettingsActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // УВЕДОМЛЕНИЯ (заглушка «будет в следующем обновлении»)
+    // 🆕 v20.4.2: УВЕДОМЛЕНИЯ — реальное разрешение POST_NOTIFICATIONS
     // ============================================================
+
+    /**
+     * Переключатель «Уведомления» теперь отражает реальное состояние
+     * разрешения POST_NOTIFICATIONS (Android 13+) или системного
+     * флага «уведомления разрешены» (Android < 13).
+     *
+     *  - Включение: если разрешения нет → запрашиваем; если пользователь
+     *    ранее отказал «навсегда» — открываем системные настройки.
+     *  - Выключение: программно отозвать разрешение нельзя → открываем
+     *    системные настройки уведомлений приложения.
+     */
     private fun setupNotificationsSwitch() {
         binding.switchNotifications.setOnCheckedChangeListener { _, isChecked ->
-            Logger.log(TAG, "Notifications: $isChecked")
-            saveSetting("notifications_enabled", isChecked)
-            Toast.makeText(
-                this@AppSettingsActivity,
-                "Уведомления будут доступны в следующем обновлении",
-                Toast.LENGTH_SHORT
-            ).show()
+            if (suppressNotificationsListener) return@setOnCheckedChangeListener
+
+            Logger.log(TAG, "Notifications switch toggled: $isChecked")
+
+            if (isChecked) {
+                requestNotificationsPermission()
+            } else {
+                openAppNotificationSettings()
+            }
+        }
+    }
+
+    /**
+     * Обновляет состояние переключателя по факту, без вызова listener'а.
+     */
+    private fun updateNotificationsSwitch() {
+        val enabled = areNotificationsGranted()
+        suppressNotificationsListener = true
+        binding.switchNotifications.isChecked = enabled
+        suppressNotificationsListener = false
+        Logger.log(TAG, "updateNotificationsSwitch: enabled=$enabled")
+    }
+
+    private fun areNotificationsGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            // До Android 13 разрешение не требуется, но пользователь мог
+            // выключить уведомления в системных настройках приложения.
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            return nm.areNotificationsEnabled()
+        }
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return false
+        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        return nm.areNotificationsEnabled()
+    }
+
+    private fun requestNotificationsPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            // Разрешение не нужно, но уведомления могут быть выключены в системе.
+            if (!areNotificationsGranted()) {
+                openAppNotificationSettings()
+            } else {
+                Toast.makeText(this, "Уведомления уже включены", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (granted) {
+            // Разрешение есть, но пользователь мог выключить уведомления в системе.
+            if (!areNotificationsGranted()) {
+                openAppNotificationSettings()
+            } else {
+                Toast.makeText(this, "Уведомления уже включены", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        // Пробуем запросить. Если система больше не показывает диалог
+        // (пользователь отказал «навсегда» / дважды), shouldShowRequestPermissionRationale
+        // вернёт false — тогда отправляем в настройки.
+        val activity = this
+        val shouldShow = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+            activity,
+            Manifest.permission.POST_NOTIFICATIONS
+        )
+
+        val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
+        val alreadyAsked = prefs.getBoolean("post_notifications_asked", false)
+
+        if (!shouldShow && alreadyAsked) {
+            Logger.log(TAG, "requestNotificationsPermission: no rationale, open settings")
+            showOpenSettingsDialog()
+            return
+        }
+
+        prefs.edit().putBoolean("post_notifications_asked", true).apply()
+        Logger.log(TAG, "requestNotificationsPermission: launching launcher")
+        try {
+            postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } catch (e: Exception) {
+            Logger.log(TAG, "requestNotificationsPermission: launch error: ${e.message}")
+            updateNotificationsSwitch()
+        }
+    }
+
+    private fun showOpenSettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Уведомления отключены")
+            .setMessage(
+                "Разрешение на уведомления не выдано.\n\n" +
+                    "Откройте настройки приложения и включите уведомления, " +
+                    "иначе напоминания о делах не будут приходить."
+            )
+            .setPositiveButton("Открыть настройки") { _, _ -> openAppNotificationSettings() }
+            .setNegativeButton("Отмена") { _, _ -> updateNotificationsSwitch() }
+            .setOnCancelListener { updateNotificationsSwitch() }
+            .show()
+    }
+
+    private fun openAppNotificationSettings() {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                }
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                }
+            }
+            startActivity(intent)
+            Logger.log(TAG, "openAppNotificationSettings: opened")
+        } catch (e: Exception) {
+            Logger.log(TAG, "openAppNotificationSettings error: ${e.message}")
+            Toast.makeText(this, "Не удалось открыть настройки", Toast.LENGTH_SHORT).show()
+            updateNotificationsSwitch()
         }
     }
 
@@ -170,8 +338,8 @@ class AppSettingsActivity : AppCompatActivity() {
                 else -> binding.radioSystem.isChecked = true
             }
 
-            // Уведомления (заглушка)
-            binding.switchNotifications.isChecked = prefs.getBoolean("notifications_enabled", true)
+            // 🆕 v20.4.2: уведомления — реальное состояние разрешения
+            updateNotificationsSwitch()
 
             // 🆕 v20.3.4: сводка на сегодня
             loadTodayDialogSetting()
