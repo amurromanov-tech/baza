@@ -191,46 +191,70 @@ class BackupManagerV2(private val context: Context) {
     }
 
     // ============================================================
-    // 🆕 ПРИМЕНЕНИЕ БЭКАПА + ПОСТАНОВКА В ОЧЕРЕДЬ СИНХРОНИЗАЦИИ
+    // 🆕 v20.4.3: ПРИМЕНЕНИЕ БЭКАПА + «РАЗТОМБИРОВАНИЕ» СИНК-УДАЛЕНИЙ
     // ============================================================
     /**
      * Общая логика для importFromLocal и importFromCloud.
      *
      * 1. Полностью очищает локальную БД (folders / items / history).
      * 2. Вставляет данные из бэкапа.
-     * 3. 🆕 v16.2: пишет ВСЕ папки, предметы и историю в outbox (changelog).
+     * 3. 🆕 v20.4.3: «разтомбирует» сущности, которые были удалены
+     *    синхронизацией (deletedBy == "sync"). Снимает isDeleted,
+     *    deletedAt, deletedBy, deleteConfirmed. Ручные удаления
+     *    (deletedBy == "Алексей" / "Рима" и т.п.) НЕ трогает —
+     *    это настоящие удаления пользователя.
+     * 4. Пишет ВСЕ папки, предметы и историю в outbox (changelog),
+     *    чтобы при следующем синке они улетели на Диск и «разтомбились»
+     *    там тоже.
      *
-     * Это нужно, чтобы:
-     *   - при следующем синке они гарантированно залились на Диск через changelog;
-     *   - если сети нет — импорт «запомнился» и зальётся при следующем sync.
-     *
-     * 🆕 v17.4.0: вызов db.syncQueueDao().clearAll() удалён —
-     * таблица sync_queue удалена миграцией 17→18.
+     * Это лечит инцидент 26.10.2026: после синка Димы (14-я версия)
+     * mergeData затомбировал ~60 папок и десятки предметов с
+     * deletedBy="sync". Импорт бэкапа возвращает их в живое состояние.
      */
     private suspend fun applyBackupData(db: AppDatabase, backupData: BackupData) {
         // 1. Очищаем локальные данные
         clearAllData(db)
 
-        // 2. Вставляем папки
-        backupData.folders.forEach { db.folderDao().insertFolder(it) }
+        // 2. Вставляем папки (с разтомбированием)
+        var foldersUntombstoned = 0
+        val foldersToInsert = backupData.folders.map { folder ->
+            val fixed = untombstoneFolder(folder)
+            if (fixed !== folder) foldersUntombstoned++
+            fixed
+        }
+        foldersToInsert.forEach { db.folderDao().insertFolder(it) }
 
-        // 3. Вставляем предметы (включая архивные)
-        backupData.items.forEach { db.itemDao().insertItem(it) }
+        // 3. Вставляем предметы (с разтомбированием)
+        var itemsUntombstoned = 0
+        val itemsToInsert = backupData.items.map { item ->
+            val fixed = untombstoneItem(item)
+            if (fixed !== item) itemsUntombstoned++
+            fixed
+        }
+        itemsToInsert.forEach { db.itemDao().insertItem(it) }
 
-        // 4. Вставляем историю
+        // 4. Вставляем историю (append-only, не трогаем)
         backupData.history.forEach { db.historyDao().insertEntry(it) }
 
         // 5. Настройки
         backupData.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
+        Logger.log(
+            TAG,
+            "applyBackupData: untombstoned folders=$foldersUntombstoned, items=$itemsUntombstoned " +
+                "(tombstones by sync only; manual deletes kept)"
+        )
+
         // ============================================================
-        // 🆕 v16.2: пишем в outbox (changelog), НЕ в старую sync_queue.
-        // Старая sync_queue удалена в v17.4.0 (миграция 17→18).
+        // 🆕 v16.2 / v20.4.3: пишем в outbox (changelog).
+        // Восстановленные сущности → ACTION_UPDATE (или CREATE, если новые).
+        // Так при следующем синке они гарантированно улетят на Диск
+        // и «разтомбидят» запись там тоже.
         // ============================================================
         val changedBy = "backup_import"
 
         var folderQueueCount = 0
-        backupData.folders.forEach { folder ->
+        foldersToInsert.forEach { folder ->
             OutboxLogger.folderChanged(
                 db = db,
                 folder = folder,
@@ -241,7 +265,7 @@ class BackupManagerV2(private val context: Context) {
         }
 
         var itemQueueCount = 0
-        backupData.items.forEach { item ->
+        itemsToInsert.forEach { item ->
             OutboxLogger.itemChanged(
                 db = db,
                 item = item,
@@ -254,21 +278,79 @@ class BackupManagerV2(private val context: Context) {
         var historyQueueCount = 0
         backupData.history.forEach { entry ->
             // ⚠️ НЕ OutboxLogger.historyAdded — она бы вставила историю в БД повторно.
-            // В БД история уже вставлена на шаге 5. Здесь только outbox.
+            // В БД история уже вставлена на шаге 4. Здесь только outbox.
             OutboxHelper.logHistory(db, entry, changedBy)
             historyQueueCount++
         }
 
         Logger.log(
             TAG,
-            "applyBackupData: queued $folderQueueCount folders + $itemQueueCount items + $historyQueueCount history for changelog"
+            "applyBackupData: queued $folderQueueCount folders + $itemQueueCount items + " +
+                "$historyQueueCount history for changelog"
+        )
+    }
+
+    // ============================================================
+    // 🆕 v20.4.3: РАЗТОМБИРОВАНИЕ
+    // ============================================================
+
+    /**
+     * Снимает tombstone-флаги у папки, если она была затомбирована
+     * синхронизацией (deletedBy == "sync"), а не пользователем вручную.
+     *
+     * Системные папки никогда не разтомбируем — они не должны быть удалены.
+     * Если папка не была удалена — возвращаем как есть.
+     */
+    private fun untombstoneFolder(folder: FolderEntity): FolderEntity {
+        if (!folder.isDeleted) return folder
+        if (folder.isSystem) {
+            // Системную папку не должно быть удалено; если tombstone —
+            // всё равно восстанавливаем, но без логов.
+            return folder.copy(
+                isDeleted = false,
+                deletedAt = null,
+                deletedBy = null,
+                deleteConfirmed = false,
+                syncStatus = FolderEntity.SYNC_STATUS_PENDING
+            )
+        }
+        if (folder.deletedBy != "sync") {
+            // Ручное удаление пользователя — оставляем как есть.
+            return folder
+        }
+        return folder.copy(
+            isDeleted = false,
+            deletedAt = null,
+            deletedBy = null,
+            deleteConfirmed = false,
+            syncStatus = FolderEntity.SYNC_STATUS_PENDING
+        )
+    }
+
+    /**
+     * Снимает tombstone-флаги у предмета, если он был затомбирован
+     * синхронизацией (deletedBy == "sync"), а не пользователем вручную.
+     * Если предмет не был удалён — возвращаем как есть.
+     */
+    private fun untombstoneItem(item: ItemEntity): ItemEntity {
+        if (!item.isDeleted) return item
+        if (item.deletedBy != "sync") {
+            // Ручное удаление пользователя — оставляем как есть.
+            return item
+        }
+        return item.copy(
+            isDeleted = false,
+            deletedAt = null,
+            deletedBy = null,
+            deleteConfirmed = false,
+            syncStatus = ItemEntity.SYNC_STATUS_PENDING
         )
     }
 
     // ===== ОЧИСТКА ДАННЫХ =====
     private suspend fun clearAllData(db: AppDatabase) {
         db.folderDao().getAllFolders().forEach { db.folderDao().deleteFolder(it) }
-        // ⚠️ Раньше было getAllItems() — теперь getAllItemsRaw(), чтобы чистить и архивные
+        // ⚠️ getAllItemsRaw() — чтобы чистить и архивные
         db.itemDao().getAllItemsRaw().forEach { db.itemDao().deleteItem(it) }
         db.historyDao().getAllEntries().forEach { db.historyDao().deleteEntry(it) }
     }
