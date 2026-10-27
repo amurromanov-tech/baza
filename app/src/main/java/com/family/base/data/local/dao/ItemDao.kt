@@ -764,6 +764,32 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE isDeleted = 1")
     suspend fun getAllTombstones(): List<ItemEntity>
+
+    // ============================================================
+    // 🆕 v20.4.6: ПРЕДМЕТЫ С ВЛОЖЕНИЯМИ (для сортировки верхнего блока)
+    // ============================================================
+
+    /**
+     * Возвращает id всех «живых» предметов, у которых есть хотя бы
+     * один прямой ребёнок (папка или предмет с parentItemId = items.id).
+     *
+     * Один batch-запрос, без N+1. Используется в MainViewModel.loadContents(),
+     * чтобы поднять такие предметы в верхний блок вместе с папками
+     * и отсортировать их по имени A→Я.
+     *
+     * Глубина вложений ребёнка не важна — достаточно, что он есть.
+     * Tombstones детей не считаются.
+     */
+    @Query("""
+        SELECT id FROM items
+        WHERE isDeleted = 0
+          AND (
+              EXISTS (SELECT 1 FROM folders f WHERE f.parentItemId = items.id AND f.isDeleted = 0)
+              OR
+              EXISTS (SELECT 1 FROM items i WHERE i.parentItemId = items.id AND i.isDeleted = 0 AND i.isArchived = 0)
+          )
+    """)
+    suspend fun getItemIdsWithChildren(): Set<String>
 }
 
 // ============================================================
