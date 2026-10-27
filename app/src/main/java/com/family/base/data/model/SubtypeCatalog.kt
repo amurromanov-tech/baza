@@ -41,6 +41,9 @@ import java.util.Locale
  *
  * 🆕 v20.4.0: добавлен подтип thing:
  *           - fertilizers    🌱 Удобрения
+ *
+ * 🆕 v20.4.5: добавлен подтип thing:
+ *           - weapon         ⚔️ Оружие
  */
 object SubtypeCatalog {
 
@@ -136,6 +139,8 @@ object SubtypeCatalog {
         Subtype("new_year",       "🎄 Новогодние"),
         // 🆕 v20.4.0
         Subtype("fertilizers",    "🌱 Удобрения"),
+        // 🆕 v20.4.5
+        Subtype("weapon",         "⚔️ Оружие"),
         Subtype("thing_other",    "📦 Прочее (предметы)")
     )
 
