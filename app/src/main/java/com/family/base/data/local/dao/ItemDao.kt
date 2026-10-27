@@ -766,19 +766,22 @@ interface ItemDao {
     suspend fun getAllTombstones(): List<ItemEntity>
 
     // ============================================================
-    // 🆕 v20.4.6: ПРЕДМЕТЫ С ВЛОЖЕНИЯМИ (для сортировки верхнего блока)
+    // 🆕 v20.4.8: ПРЕДМЕТЫ С ВЛОЖЕНИЯМИ (для сортировки верхнего блока)
     // ============================================================
 
     /**
      * Возвращает id всех «живых» предметов, у которых есть хотя бы
      * один прямой ребёнок (папка или предмет с parentItemId = items.id).
      *
-     * Один batch-запрос, без N+1. Используется в MainViewModel.loadContents(),
-     * чтобы поднять такие предметы в верхний блок вместе с папками
-     * и отсортировать их по имени A→Я.
+     * Один batch-запрос, без N+1.
      *
-     * Глубина вложений ребёнка не важна — достаточно, что он есть.
-     * Tombstones детей не считаются.
+     * ⚠️ v20.4.8: возвращаем List<String>, а НЕ Set<String>.
+     * Room не умеет конвертировать Cursor в Set — ошибка компиляции:
+     *   "Not sure how to convert a Cursor to this method's return type
+     *    (java.util.Set<java.lang.String>)"
+     * Поэтому в MainViewModel после получения делаем .toSet() в памяти.
+     * Для списка предметов с вложениями это O(n), где n — только
+     * предметы-контейнеры (их немного).
      */
     @Query("""
         SELECT id FROM items
@@ -789,7 +792,7 @@ interface ItemDao {
               EXISTS (SELECT 1 FROM items i WHERE i.parentItemId = items.id AND i.isDeleted = 0 AND i.isArchived = 0)
           )
     """)
-    suspend fun getItemIdsWithChildren(): Set<String>
+    suspend fun getItemIdsWithChildren(): List<String>
 }
 
 // ============================================================
