@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
@@ -98,6 +99,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var allItems: List<ItemEntity> = emptyList()
     private var searchQuery: String? = null
+
+    // ============================================================
+    // 🆕 v20.4.6: КЛЮЧИ НАСТРОЙКИ СОРТИРОВКИ
+    // ============================================================
+    // Значения совпадают с sortOptions в AppSettingsActivity:
+    //   "По имени", "По сроку годности", "По цене", "По дате добавления"
+    private companion object {
+        const val PREFS_SORT_ORDER = "sort_order"
+        const val SORT_BY_NAME = "По имени"
+        const val SORT_BY_EXPIRY = "По сроку годности"
+        const val SORT_BY_PRICE = "По цене"
+        const val SORT_BY_ADDED = "По дате добавления"
+    }
 
     init {
         Logger.log(TAG, "MainViewModel initialized")
@@ -289,6 +303,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ============================================================
+    // 🆕 v20.4.6: ЗАГРУЗКА СОДЕРЖИМОГО С СОРТИРОВКОЙ
+    // ============================================================
+    /**
+     * Логика:
+     *
+     *  1. Если активен поиск — старое поведение:
+     *     всё вперемешку, по имени (поиск по всей базе).
+     *
+     *  2. Иначе — два блока:
+     *     • ВЕРХНИЙ: все папки + все предметы, у которых есть
+     *       вложения (parentItemId = items.id). Сортировка ЖЁСТКО
+     *       по имени A→Я. sort_order здесь НЕ применяется —
+     *       у папок нет цены/срока годности, сравнивать не с чем.
+     *     • НИЖНИЙ: предметы без вложений. Сортировка по sort_order
+     *       из AppSettingsActivity:
+     *         - "По имени"          → A→Я
+     *         - "По сроку годности"  → просроченные → ближайшие → остальные → без срока
+     *         - "По цене"            → дешёвые → дорогие (null в конце)
+     *         - "По дате добавления" → новые сверху
+     *
+     *  3. entries = верхний + нижний.
+     *
+     * Batch-запрос getItemIdsWithChildren() — один раз, без N+1.
+     */
     fun loadContents() {
         viewModelScope.launch {
             try {
@@ -298,25 +337,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val allItemsFromDb = db.itemDao().getAllItems()
                     allItems = allItemsFromDb
 
-                    val items = if (searchQuery.isNullOrEmpty()) {
-                        repository.getItems(currentFolderId).sortedBy { item ->
-                            when {
-                                item.isExpired -> 0
-                                item.daysUntilExpiry in 0..3 -> 1
-                                else -> 2
-                            }
-                        }
-                    } else {
-                        allItemsFromDb.filter { it.name.contains(searchQuery!!, ignoreCase = true) }
-                            .sortedBy { it.name }
+                    // -------- ПОИСК: старое поведение --------
+                    if (!searchQuery.isNullOrEmpty()) {
+                        val q = searchQuery!!
+                        val foundItems = allItemsFromDb
+                            .filter { it.name.contains(q, ignoreCase = true) }
+                            .sortedBy { it.name.lowercase() }
+                        entries.addAll(foundItems)
+                        return@withContext
                     }
-                    entries.addAll(folders)
-                    entries.addAll(items)
+
+                    // -------- ОБЫЧНЫЙ РЕЖИМ: два блока --------
+                    val itemsAtLevel = repository.getItems(currentFolderId)
+
+                    // Batch-запрос: id предметов, у которых есть вложения
+                    val itemsWithChildrenIds: Set<String> =
+                        db.itemDao().getItemIdsWithChildren()
+
+                    val (itemsWithChildren, itemsWithoutChildren) =
+                        itemsAtLevel.partition { it.id in itemsWithChildrenIds }
+
+                    // ВЕРХНИЙ БЛОК: папки + предметы с вложениями, по имени A→Я
+                    val topBlock = mutableListOf<Any>()
+                    topBlock.addAll(folders.sortedBy { it.name.lowercase() })
+                    topBlock.addAll(itemsWithChildren.sortedBy { it.name.lowercase() })
+
+                    // НИЖНИЙ БЛОК: предметы без вложений, по sort_order
+                    val sortOrder = readSortOrder()
+                    val bottomBlock = sortItems(itemsWithoutChildren, sortOrder)
+
+                    entries.addAll(topBlock)
+                    entries.addAll(bottomBlock)
+
+                    Logger.log(
+                        TAG,
+                        "loadContents: folder=$currentFolderId, " +
+                            "top(folders=${folders.size}+withChildren=${itemsWithChildren.size}), " +
+                            "bottom(withoutChildren=${bottomBlock.size}, sort=$sortOrder)"
+                    )
                 }
                 currentEntries.postValue(entries)
             } catch (e: Exception) {
                 Logger.log(TAG, "Error in loadContents: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * 🆕 v20.4.6: читает sort_order из SharedPreferences.
+     * Ключ и значения — как в AppSettingsActivity.
+     */
+    private fun readSortOrder(): String {
+        return try {
+            val prefs = getApplication<Application>()
+                .getSharedPreferences(BaseApplication.PREFS_NAME, Application.MODE_PRIVATE)
+            prefs.getString(PREFS_SORT_ORDER, SORT_BY_NAME) ?: SORT_BY_NAME
+        } catch (e: Exception) {
+            Logger.log(TAG, "readSortOrder error: ${e.message}")
+            SORT_BY_NAME
+        }
+    }
+
+    /**
+     * 🆕 v20.4.6: сортирует предметы без вложений по выбранному критерию.
+     *
+     *  - По имени:          A→Я (lowercase).
+     *  - По сроку годности: просроченные → ближайшие → остальные → без срока.
+     *  - По цене:           дешёвые → дорогие; null в конце.
+     *  - По дате добавления: новые сверху.
+     */
+    private fun sortItems(items: List<ItemEntity>, sortOrder: String): List<ItemEntity> {
+        return when (sortOrder) {
+            SORT_BY_EXPIRY -> items.sortedWith(
+                compareBy(
+                    { item ->
+                        when {
+                            item.isExpired -> 0
+                            item.daysUntilExpiry in 0..3 -> 1
+                            item.daysUntilExpiry != Int.MAX_VALUE -> 2
+                            else -> 3
+                        }
+                    },
+                    { it.daysUntilExpiry },
+                    { it.name.lowercase() }
+                )
+            )
+
+            SORT_BY_PRICE -> items.sortedWith(
+                compareBy<ItemEntity>(
+                    { it.price == null || it.price == 0.0 },
+                    { it.price ?: Double.MAX_VALUE }
+                ).thenBy { it.name.lowercase() }
+            )
+
+            SORT_BY_ADDED -> items.sortedWith(
+                compareByDescending<ItemEntity> { it.addedDate }
+                    .thenBy { it.name.lowercase() }
+            )
+
+            SORT_BY_NAME, else -> items.sortedBy { it.name.lowercase() }
         }
     }
 
