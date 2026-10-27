@@ -405,6 +405,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *  - По сроку годности: просроченные → ближайшие → остальные → без срока.
      *  - По цене:           дешёвые → дорогие; null в конце.
      *  - По дате добавления: новые сверху.
+     *
+     * ⚠️ v20.4.7: убрана ветка `SORT_BY_NAME, else ->` — в Kotlin нельзя
+     * перечислять значение вместе с `else` через запятую (ошибка компиляции:
+     * "Expecting an expression, is-condition or in-condition"). Оставлен
+     * только `else`, который покрывает и «По имени», и любое неизвестное
+     * значение — это безопасный дефолт.
      */
     private fun sortItems(items: List<ItemEntity>, sortOrder: String): List<ItemEntity> {
         return when (sortOrder) {
@@ -435,7 +441,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .thenBy { it.name.lowercase() }
             )
 
-            SORT_BY_NAME, else -> items.sortedBy { it.name.lowercase() }
+            else -> items.sortedBy { it.name.lowercase() }
         }
     }
 
