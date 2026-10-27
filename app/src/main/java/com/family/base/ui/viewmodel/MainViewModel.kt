@@ -327,6 +327,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *  3. entries = верхний + нижний.
      *
      * Batch-запрос getItemIdsWithChildren() — один раз, без N+1.
+     *
+     * ⚠️ v20.4.8: DAO возвращает List<String>, а не Set<String>
+     * (Room не умеет Cursor→Set). Здесь делаем .toSet() в памяти.
+     * Для списка предметов-контейнеров это O(n), n — небольшое.
      */
     fun loadContents() {
         viewModelScope.launch {
@@ -350,9 +354,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // -------- ОБЫЧНЫЙ РЕЖИМ: два блока --------
                     val itemsAtLevel = repository.getItems(currentFolderId)
 
-                    // Batch-запрос: id предметов, у которых есть вложения
+                    // Batch-запрос: id предметов, у которых есть вложения.
+                    // DAO возвращает List<String> — конвертируем в Set.
                     val itemsWithChildrenIds: Set<String> =
-                        db.itemDao().getItemIdsWithChildren()
+                        db.itemDao().getItemIdsWithChildren().toSet()
 
                     val (itemsWithChildren, itemsWithoutChildren) =
                         itemsAtLevel.partition { it.id in itemsWithChildrenIds }
