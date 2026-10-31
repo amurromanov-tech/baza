@@ -132,8 +132,9 @@ class BaseApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
         // 🆕 v20.5.3: сетевой клиент Coil с принудительной подменой UA для хоста Яндекс.Диска.
         // 🆕 v20.5.7: добавлена диагностика ответа (код, Content-Type, длина),
-        //             и Accept сужен до image/* (без avif/webp, которые Coil 2.4.0
-        //             может не декодировать).
+        //             и Accept сужен до image/*.
+        // 🆕 v20.5.8: добавлен Referer и Sec-Fetch-* для downloader.disk.yandex.ru,
+        //             чтобы обойти 403 при загрузке preview-ссылок.
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(40, TimeUnit.SECONDS)
@@ -145,10 +146,15 @@ class BaseApplication : Application(), ImageLoaderFactory {
                 val newRequest = if (isYandex) {
                     request.newBuilder()
                         .header("User-Agent", BROWSER_USER_AGENT)
-                        // ⚠️ Только image/jpeg и image/png — без avif/webp,
-                        // чтобы Coil 2.4.0 точно смог декодировать.
                         .header("Accept", "image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5")
                         .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                        // 🆕 v20.5.8: имитируем браузерный контекст.
+                        // Яндекс.Диск отдаёт 403 на preview-ссылки без Referer/Origin.
+                        .header("Referer", "https://disk.yandex.ru/")
+                        .header("Origin", "https://disk.yandex.ru")
+                        .header("Sec-Fetch-Dest", "image")
+                        .header("Sec-Fetch-Mode", "no-cors")
+                        .header("Sec-Fetch-Site", "cross-site")
                         .build()
                 } else {
                     request
