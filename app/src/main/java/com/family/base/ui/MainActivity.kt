@@ -41,6 +41,7 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.databinding.ActivityMainBinding
 import com.family.base.ui.adapter.CatalogAdapter
+import com.family.base.ui.GalleryActivity
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.ui.viewmodel.SyncPhase
 import com.family.base.ui.viewmodel.SyncProgress
@@ -275,7 +276,7 @@ class MainActivity : AppCompatActivity() {
         supportActionBar?.setCustomView(pathTextView)
         supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
 
-        adapter = CatalogAdapter(
+                adapter = CatalogAdapter(
             onFolderClick = { folder ->
                 when (folder.systemKey) {
                     FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
@@ -291,6 +292,17 @@ class MainActivity : AppCompatActivity() {
                         shoppingListLauncher.launch(
                             Intent(this, ShoppingListActivity::class.java)
                         )
+                    }
+                    // ============================================================
+                    // 🆕 v20.4.9: СИСТЕМНАЯ ПАПКА «🖼️ ГАЛЕРЕЯ»
+                    // Открываем GalleryActivity на пути /Романовы (по умолчанию
+                    // в GalleryActivity, если EXTRA_PATH не передан).
+                    // Внутрь этой папки через navigateToFolder НЕ ходим —
+                    // её содержимое не в Room, а на Яндекс.Диске.
+                    // ============================================================
+                    FolderEntity.SYSTEM_KEY_GALLERY -> {
+                        Logger.log(TAG, "onFolderClick: opening GalleryActivity")
+                        startActivity(Intent(this, GalleryActivity::class.java))
                     }
                     else -> navigateToFolder(folder)
                 }
