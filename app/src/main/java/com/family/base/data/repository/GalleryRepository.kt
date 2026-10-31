@@ -12,24 +12,17 @@ import com.family.base.util.DiskPaths
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.URLEncoder
 
 /**
  * 🆕 v20.4.9: репозиторий галереи.
  *
- * Отвечает за две вещи:
+ * Отвечает за:
  *  1. Листинг папки «/Романовы» (и вложенных) через Яндекс.Диск API.
- *     Пагинация по 100 — чтобы не вешать Диск и телефон при тысячах фото.
  *  2. Создание системной папки «🖼️ Галерея» в локальной БД (Room).
- *     Это единственная запись, которая нужна галерее в БД: она
- *     отображается в корне БАЗЫ и перехватывает клик в MainActivity.
+ *  3. 🆕 v20.6.1: скачивание превью через WebDAV (с OAuth-токеном).
  *
- * ⚠️ Фото НЕ скачиваются. В сетке и в полноэкранном просмотре
- * используются временные ссылки preview с Диска (Coil грузит их
- * напрямую). Оригинал (fileUrl) не трогаем в Шаге 1.
- *
- * ⚠️ Токен — тот же, что у синка (TokenStorage.getAccessToken).
- * Если токен протух — вернём ошибку; UI предложит синхронизироваться
- * (existing ensureValidToken в SyncViewModel переиспользуем в Шаге 3).
+ * ⚠️ Оригиналы не качаются. Только превью через WebDAV.
  */
 class GalleryRepository(
     private val db: AppDatabase
@@ -37,9 +30,9 @@ class GalleryRepository(
 
     private val TAG = "GalleryRepository"
 
-    /** Размер страницы при листинге. 100 — компромисс между скоростью и нагрузкой. */
     companion object {
         const val PAGE_SIZE = 100
+        private const val WEBDAV_BASE = "https://webdav.yandex.ru"
     }
 
     // ============================================================
@@ -48,15 +41,7 @@ class GalleryRepository(
 
     /**
      * Создаёт системную папку «🖼️ Галерея» в локальной БД,
-     * если её ещё нет. Идемпотентно: повторный вызов ничего не делает.
-     *
-     * Вызывается из MainViewModel.checkFirstLaunch() — рядом
-     * с taskRepository.ensureSystemFolder(...).
-     *
-     * Пишется в outbox (ACTION_CREATE), чтобы папка разошлась
-     * через changelog на другие устройства. Синк сам по себе
-     * не критичен: даже если changelog ещё не ушёл, папка уже
-     * видна локально и открывает GalleryActivity по systemKey.
+     * если её ещё нет. Идемпотентно.
      */
     suspend fun ensureGalleryFolder(createdBy: String) = withContext(Dispatchers.IO) {
         val existing = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_GALLERY)
@@ -91,16 +76,6 @@ class GalleryRepository(
 
     /**
      * Одна страница листинга папки на Яндекс.Диске.
-     *
-     * @param path   абсолютный путь на Диске, например "/Романовы"
-     *               или "/Романовы/Праздники".
-     * @param offset сдвиг для пагинации (0, 100, 200, ...).
-     *
-     * @return Result.success(items) — список элементов страницы.
-     *         Result.failure(e)     — сетевая ошибка / нет токена.
-     *
-     * Пустой список означает «элементов больше нет» — вызывающий
-     * код (ViewModel) по этому признаку ставит hasMore = false.
      */
     suspend fun listPage(
         path: String,
@@ -113,13 +88,13 @@ class GalleryRepository(
                 )
 
             val api = YandexDiskApi.getInstance()
-           val response = api.getDiskResources(
-    authorization = auth,
-    path = path,
-    limit = PAGE_SIZE,
-    offset = offset,
-    previewSize = "M"
-)
+            val response = api.getDiskResources(
+                authorization = auth,
+                path = path,
+                limit = PAGE_SIZE,
+                offset = offset,
+                previewSize = "M"
+            )
 
             if (!response.isSuccessful) {
                 Logger.log(
@@ -137,10 +112,6 @@ class GalleryRepository(
                 )
 
             val rawItems = body.embedded?.items ?: emptyList()
-
-            // Определяем «родительский путь» для сборки полного пути.
-            // body.path — путь самой папки (например "/Романовы/Праздники").
-            // Если вдруг пусто — используем переданный path.
             val folderPath = body.path?.takeIf { it.isNotEmpty() } ?: path
 
             val mapped: List<GalleryItem> = rawItems.mapNotNull { raw ->
@@ -152,9 +123,6 @@ class GalleryRepository(
                 }
             }
 
-            // Сортируем: папки сверху, потом файлы, всё по имени A→Я.
-            // Пагинацию это не ломает: каждая страница сортируется отдельно,
-            // накопленный список в ViewModel тоже сортируется (см. ViewModel).
             val sorted = mapped.sortedWith(
                 compareBy<GalleryItem> { if (it.isFolder) 0 else 1 }
                     .thenBy { it.name.lowercase() }
@@ -180,13 +148,81 @@ class GalleryRepository(
     }
 
     // ============================================================
-    // ВСПОМОГАТЕЛЬНЫЕ
+    // 🆕 v20.6.1: СКАЧИВАНИЕ ПРЕВЬЮ ЧЕРЕЗ WEBDAV
     // ============================================================
 
     /**
-     * Заголовок авторизации из TokenStorage.
-     * Тот же паттерн, что в CatalogRepository — переиспользуем.
+     * Скачивает превью файла через WebDAV API (с OAuth-токеном).
+     *
+     * @param path абсолютный путь на Диске, например
+     *             "/Романовы/Праздники/2017.05.09 - др Витя Соснин/фото.jpg".
+     *             Берётся из GalleryItem.path.
+     * @return байты изображения (JPEG) или null при ошибке.
+     *
+     * Кодирование пути:
+     *  - Каждый сегмент пути кодируется через URLEncoder (UTF-8),
+     *    пробелы → %20, кириллица → %D0%... и т.д.
+     *  - Слэши между сегментами сохраняются как есть.
+     *  - Пример: "/Романовы/фото 1.jpg" →
+     *    "https://webdav.yandex.ru/%D0%A0%D0%BE%D0%BC%D0%B0%D0%BD%D0%BE%D0%B2%D1%8B/%D1%84%D0%BE%D1%82%D0%BE%201.jpg?preview&size=M"
      */
+    suspend fun downloadPreview(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val auth = getAuthHeader()
+                ?: run {
+                    Logger.log(TAG, "downloadPreview: no token")
+                    return@withContext null
+                }
+
+            val encodedPath = encodeWebDavPath(path)
+            val url = "$WEBDAV_BASE$encodedPath?preview&size=M"
+
+            Logger.log(TAG, "downloadPreview: GET $url")
+
+            val api = YandexDiskApi.getInstance()
+            val response = api.downloadPreviewWebDav(url, auth)
+
+            if (!response.isSuccessful) {
+                Logger.log(
+                    TAG,
+                    "downloadPreview: HTTP ${response.code()} for $path"
+                )
+                return@withContext null
+            }
+
+            val body = response.body()
+                ?: return@withContext null
+
+            val bytes = body.bytes()
+            Logger.log(
+                TAG,
+                "downloadPreview: OK ${bytes.size} bytes for '${path.substringAfterLast('/')}'"
+            )
+            bytes
+        } catch (e: Exception) {
+            Logger.log(TAG, "downloadPreview error for $path: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Кодирует путь для WebDAV: каждый сегмент через URLEncoder,
+     * слэши сохраняются.
+     */
+    private fun encodeWebDavPath(path: String): String {
+        // Путь всегда начинается с "/".
+        val normalized = if (path.startsWith("/")) path else "/$path"
+        val segments = normalized.split("/").filter { it.isNotEmpty() }
+        val encodedSegments = segments.map { seg ->
+            URLEncoder.encode(seg, "UTF-8").replace("+", "%20")
+        }
+        return "/" + encodedSegments.joinToString("/")
+    }
+
+    // ============================================================
+    // ВСПОМОГАТЕЛЬНЫЕ
+    // ============================================================
+
     private fun getAuthHeader(): String? {
         return try {
             val context = BaseApplication.getAppContext()
@@ -202,13 +238,6 @@ class GalleryRepository(
 
 /**
  * 🆕 v20.4.9: результат одной страницы листинга.
- *
- * @param items      элементы страницы (уже отсортированы: папки сверху).
- * @param folderPath абсолютный путь самой папки (для навигации «Назад»
- *                   и для заголовка экрана).
- * @param rawCount   сколько сырых элементов вернул Диск (до фильтрации).
- *                   Нужен, чтобы понять «это последняя страница или нет»:
- *                   если rawCount < PAGE_SIZE — значит, дальше пусто.
  */
 data class GalleryListPage(
     val items: List<GalleryItem>,
