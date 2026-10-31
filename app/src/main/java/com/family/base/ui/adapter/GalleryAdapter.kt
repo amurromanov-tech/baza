@@ -6,9 +6,11 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import coil.ImageRequest
 import coil.load
 import com.family.base.R
 import com.family.base.data.model.GalleryItem
+import com.family.base.util.Logger
 
 /**
  * 🆕 v20.4.9: адаптер сетки галереи.
@@ -26,12 +28,20 @@ import com.family.base.data.model.GalleryItem
  *  - видео: onVideoClick(item)  → Toast «Видео будет в следующей версии».
  *
  * ⚠️ Оригинал (fileUrl) НЕ загружается. Только preview.
+ *
+ * 🆕 v20.5.4: добавлен ImageRequest.Listener для диагностики Coil.
+ * В лог пишется onSuccess (size) и onError (точная причина: HTTP-код,
+ * exception). Нужно, чтобы понять, почему превью Диска не грузятся.
  */
 class GalleryAdapter(
     private val onFolderClick: (GalleryItem) -> Unit,
     private val onPhotoClick: (GalleryItem) -> Unit,
     private val onVideoClick: (GalleryItem) -> Unit
 ) : RecyclerView.Adapter<GalleryAdapter.ViewHolder>() {
+
+    companion object {
+        private const val TAG = "GalleryAdapter"
+    }
 
     private var items: List<GalleryItem> = emptyList()
 
@@ -116,17 +126,42 @@ class GalleryAdapter(
         if (preview.isNullOrEmpty()) {
             // Диск не дал preview (редко для фото, но бывает) —
             // показываем плейсхолдер. Оригинал не качаем.
+            Logger.log(TAG, "bindPhoto: preview is null/empty for '${item.name}'")
             holder.ivThumb.load(R.drawable.ic_item_default) {
                 crossfade(false)
                 placeholder(R.drawable.ic_item_default)
                 error(R.drawable.ic_item_default)
             }
         } else {
-            holder.ivThumb.load(preview) {
-                crossfade(true)
-                placeholder(R.drawable.ic_item_default)
-                error(R.drawable.ic_item_default)
-            }
+            // 🆕 v20.5.4: диагностика Coil — видим точную причину ошибки.
+            Logger.log(TAG, "bindPhoto: loading preview for '${item.name}' → $preview")
+            val request = ImageRequest.Builder(holder.itemView.context)
+                .data(preview)
+                .crossfade(true)
+                .placeholder(R.drawable.ic_item_default)
+                .error(R.drawable.ic_item_default)
+                .listener(
+                    onStart = { req ->
+                        Logger.log(TAG, "Coil onStart: ${req.data}")
+                    },
+                    onSuccess = { req, result ->
+                        Logger.log(
+                            TAG,
+                            "Coil onSuccess: ${req.data} " +
+                                "(w=${result.image.width}, h=${result.image.height}, " +
+                                "mime=${result.image.mimeType})"
+                        )
+                    },
+                    onError = { req, result ->
+                        Logger.log(
+                            TAG,
+                            "Coil onError: ${req.data} → ${result.throwable.message}",
+                            result.throwable
+                        )
+                    }
+                )
+                .build()
+            holder.ivThumb.load(request)
         }
 
         holder.itemView.setOnClickListener { onPhotoClick(item) }
