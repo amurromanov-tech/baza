@@ -14,25 +14,47 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import coil.load
 import com.family.base.R
 import com.family.base.util.Logger
 import com.github.chrisbanes.photoview.PhotoView
 import java.io.File
 
+/**
+ * Полноэкранный просмотр изображения.
+ *
+ * 🆕 v20.4.9 (галерея): поддерживает ДВА режима:
+ *
+ *  1. Локальный файл (как раньше, для фото предметов):
+ *     putExtra(EXTRA_IMAGE_PATH, "/data/.../images/xxx.jpg")
+ *
+ *  2. URL с Яндекс.Диска (для галереи «🖼️ Галерея» → /Романовы):
+ *     putExtra(EXTRA_IMAGE_URL, "https://downloader.disk.yandex.ru/preview/...")
+ *
+ *     В этом режиме картинка грузится Coil'ом по URL — оригинал НЕ
+ *     скачивается, файл на телефон не попадает (Coil кэширует в
+ *     своём cacheDir приложения, невидимом для системной галереи).
+ *
+ * Приоритет: если задан EXTRA_IMAGE_URL — используем его.
+ * Иначе — старый режим с EXTRA_IMAGE_PATH.
+ *
+ * Свайп вниз для закрытия, скрытие системных баров, pinch-to-zoom —
+ * без изменений (PhotoView наследует ImageView, Coil.load работает).
+ */
 class FullscreenImageActivity : AppCompatActivity() {
 
     companion object {
+        /** Локальный файл (как раньше). */
         const val EXTRA_IMAGE_PATH = "image_path"
+
+        /** 🆕 v20.4.9: URL с Диска (превью). Приоритетнее EXTRA_IMAGE_PATH. */
+        const val EXTRA_IMAGE_URL = "image_url"
+
         const val EXTRA_TITLE = "title"
         private const val TAG = "FullscreenImage"
 
-        // Свайп вниз: доля высоты экрана, после которой закрываем
         private const val DISMISS_THRESHOLD_RATIO = 0.25f
-
-        // Порог, при котором масштаб считаем «не увеличен»
         private const val ZOOM_THRESHOLD = 1.05f
-
-        // Минимальный сдвиг, после которого считаем это свайпом (а не тапом)
         private const val SWIPE_START_DP = 24f
     }
 
@@ -63,6 +85,7 @@ class FullscreenImageActivity : AppCompatActivity() {
         btnClose = findViewById(R.id.btnClose)
 
         val imagePath = intent.getStringExtra(EXTRA_IMAGE_PATH)
+        val imageUrl = intent.getStringExtra(EXTRA_IMAGE_URL)
         val title = intent.getStringExtra(EXTRA_TITLE)
 
         tvTitle.text = title ?: ""
@@ -72,43 +95,74 @@ class FullscreenImageActivity : AppCompatActivity() {
         dismissThreshold = resources.displayMetrics.heightPixels * DISMISS_THRESHOLD_RATIO
         swipeStartThreshold = SWIPE_START_DP * density
 
-        if (imagePath.isNullOrEmpty()) {
-            Logger.log(TAG, "No image path provided")
-            finish()
-            return
-        }
-
-        val file = File(imagePath)
-        if (!file.exists()) {
-            Logger.log(TAG, "Image file not found: $imagePath")
-            finish()
-            return
-        }
-
-        Logger.log(TAG, "Loading image: $imagePath")
-
-        try {
-            photoView.setImageURI(Uri.fromFile(file))
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error loading image: ${e.message}")
+        // ============================================================
+        // 🆕 v20.4.9: два режима — URL (галерея) или локальный файл.
+        // Приоритет у URL: если он задан, локальный путь игнорируется.
+        // ============================================================
+        if (!imageUrl.isNullOrEmpty()) {
+            Logger.log(TAG, "Loading image by URL (gallery): $imageUrl")
+            loadFromUrl(imageUrl)
+        } else if (!imagePath.isNullOrEmpty()) {
+            Logger.log(TAG, "Loading image from local file: $imagePath")
+            val loaded = loadFromFile(imagePath)
+            if (!loaded) {
+                finish()
+                return
+            }
+        } else {
+            Logger.log(TAG, "No image path or URL provided")
             finish()
             return
         }
 
         hideSystemBars()
-
         Logger.log(TAG, "=== FullscreenImageActivity onCreate FINISHED ===")
     }
 
+    /**
+     * 🆕 v20.4.9: загрузка по URL через Coil.
+     * Оригинал не качается — Coil грузит превью с Диска напрямую.
+     * Ошибки обрабатываются плейсхолдером (пользователь может закрыть).
+     */
+    private fun loadFromUrl(url: String) {
+        try {
+            photoView.load(url) {
+                crossfade(true)
+                placeholder(R.drawable.ic_item_default)
+                error(R.drawable.ic_item_default)
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error loading image by URL: ${e.message}", e)
+            // Не закрываем экран: пользователь увидит error-плейсхолдер
+            // и сможет выйти свайпом/крестиком.
+        }
+    }
+
+    /**
+     * Старый режим: локальный файл. Возвращает false, если файла нет.
+     */
+    private fun loadFromFile(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists()) {
+            Logger.log(TAG, "Image file not found: $path")
+            return false
+        }
+
+        return try {
+            photoView.setImageURI(Uri.fromFile(file))
+            true
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error loading image: ${e.message}")
+            false
+        }
+    }
+
     // ============================================================
-    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ — через dispatchTouchEvent
-    // (работает поверх PhotoView, который перехватывает события)
+    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ
     // ============================================================
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        // Если фото увеличено — не мешаем PhotoView (pinch/pan)
         if (photoView.scale > ZOOM_THRESHOLD) {
             if (isDragging) {
-                // Сброс, если вдруг начали drag и потом приблизили
                 animateBackToOrigin()
                 isDragging = false
             }
@@ -125,19 +179,15 @@ class FullscreenImageActivity : AppCompatActivity() {
 
             MotionEvent.ACTION_MOVE -> {
                 val deltaY = ev.rawY - dragStartY
-
                 if (!isDragging && deltaY > swipeStartThreshold) {
-                    // Превращаем в свайп — перехватываем событие
                     isDragging = true
                 }
-
                 if (isDragging) {
                     val effectiveDelta = deltaY.coerceAtLeast(0f)
                     currentTranslationY = effectiveDelta
                     applySwipeTransform(effectiveDelta)
-                    return true  // съедаем событие, PhotoView не видит
+                    return true
                 }
-
                 return super.dispatchTouchEvent(ev)
             }
 
@@ -158,21 +208,14 @@ class FullscreenImageActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    /**
-     * Применяет трансформации во время свайпа.
-     */
     private fun applySwipeTransform(deltaY: Float) {
         photoContainer.translationY = deltaY
-
         val progress = (deltaY / dismissThreshold).coerceIn(0f, 1f)
         rootContainer.alpha = 1f - progress * 0.7f
         tvHint.alpha = 1f - progress
         tvTitle.alpha = 1f - progress
     }
 
-    /**
-     * Плавный возврат фото на исходное место.
-     */
     private fun animateBackToOrigin() {
         ValueAnimator.ofFloat(currentTranslationY, 0f).apply {
             duration = 250L
@@ -180,7 +223,6 @@ class FullscreenImageActivity : AppCompatActivity() {
             addUpdateListener { anim ->
                 val value = anim.animatedValue as Float
                 photoContainer.translationY = value
-
                 val progress = (value / dismissThreshold).coerceIn(0f, 1f)
                 rootContainer.alpha = 1f - progress * 0.7f
                 tvHint.alpha = 1f - progress
@@ -191,9 +233,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         currentTranslationY = 0f
     }
 
-    /**
-     * Плавное «утаскивание» фото за пределы экрана и закрытие.
-     */
     private fun animateDismissAndFinish() {
         val screenHeight = resources.displayMetrics.heightPixels.toFloat()
         ValueAnimator.ofFloat(currentTranslationY, screenHeight).apply {
@@ -202,7 +241,6 @@ class FullscreenImageActivity : AppCompatActivity() {
             addUpdateListener { anim ->
                 val value = anim.animatedValue as Float
                 photoContainer.translationY = value
-
                 val progress = (value / dismissThreshold).coerceIn(0f, 1f)
                 rootContainer.alpha = 1f - progress * 0.7f
                 tvHint.alpha = 1f - progress
@@ -218,9 +256,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // СКРЫТИЕ СИСТЕМНЫХ ПАНЕЛЕЙ (immersive mode)
-    // ============================================================
     private fun hideSystemBars() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
