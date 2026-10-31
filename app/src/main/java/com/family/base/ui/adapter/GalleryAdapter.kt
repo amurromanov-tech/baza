@@ -6,8 +6,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import coil.ImageRequest
 import coil.load
+import coil.request.ImageRequest
 import com.family.base.R
 import com.family.base.data.model.GalleryItem
 import com.family.base.util.Logger
@@ -32,6 +32,8 @@ import com.family.base.util.Logger
  * 🆕 v20.5.4: добавлен ImageRequest.Listener для диагностики Coil.
  * В лог пишется onSuccess (size) и onError (точная причина: HTTP-код,
  * exception). Нужно, чтобы понять, почему превью Диска не грузятся.
+ * 🆕 v20.5.5: исправлен импорт ImageRequest — coil.request.ImageRequest
+ * (в Coil 2.x класс живёт в пакете coil.request, а не coil).
  */
 class GalleryAdapter(
     private val onFolderClick: (GalleryItem) -> Unit,
