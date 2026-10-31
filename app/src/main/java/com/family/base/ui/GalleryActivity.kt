@@ -9,59 +9,34 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.family.base.R
+import com.family.base.data.local.AppDatabase
 import com.family.base.data.model.GalleryItem
+import com.family.base.data.repository.GalleryRepository
 import com.family.base.databinding.ActivityGalleryBinding
 import com.family.base.ui.adapter.GalleryAdapter
 import com.family.base.ui.viewmodel.GalleryViewModel
-import com.family.base.util.DiskPaths
 import com.family.base.util.Logger
 
 /**
- * 🆕 v20.4.9: экран галереи.
+ * 🆕 v20.4.9: экран галереи Яндекс.Диска.
  *
- * Открывается:
- *  - из MainActivity при клике на системную папку «🖼️ Галерея» → путь /Романовы;
- *  - из этой же GalleryActivity при клике на подпапку → новый экземпляр
- *    с путём этой подпапки.
- *
- * «Назад» (системная кнопка и up в toolbar) — finish(). Так как на каждую
- * подпапку создаётся отдельная Activity, системный стек корректно
- * возвращает на уровень выше.
- *
- * Пагинация:
- *  - GridLayoutManager 3 колонки;
- *  - при прокрутке до позиции (itemCount - 6) — loadNextPage();
- *  - isLoading защищает от повторных вызовов (в ViewModel);
- *  - hasMore = false — больше не грузим.
- *
- * Pull-to-refresh: SwipeRefreshLayout → viewModel.refresh().
- *
- * Клики (через GalleryAdapter):
- *  - папка → onFolderClick → новый экземпляр GalleryActivity с item.path;
- *  - фото  → onPhotoClick  → FullscreenImageActivity с EXTRA_IMAGE_URL = previewUrl;
- *  - видео → onVideoClick  → Toast «Видео будет в следующей версии».
+ * 🆕 v20.6.1: адаптеру передаётся GalleryRepository — он нужен
+ * для скачивания превью через WebDAV (direct preview-ссылки
+ * REST API отдают 403 без куки браузера).
  */
 class GalleryActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "GalleryActivity"
-        private const val GRID_COLUMNS = 3
-        private const val PREFETCH_THRESHOLD = 6
-
-        /**
-         * 🆕 v20.4.9: ключ Intent — абсолютный путь папки на Диске,
-         * которую нужно открыть. Если не передан — используется
-         * DiskPaths.GALLERY ("/Романовы").
-         */
-        const val EXTRA_PATH = "gallery_path"
+        const val EXTRA_PATH = "gallery_start_path"
     }
 
     private lateinit var binding: ActivityGalleryBinding
     private lateinit var viewModel: GalleryViewModel
     private lateinit var adapter: GalleryAdapter
+    private lateinit var repository: GalleryRepository
 
-    /** Путь, с которого открыт экран. Если null — берём корень галереи. */
-    private var startPath: String = ""
+    private var startPath: String = "/Романовы"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,17 +45,28 @@ class GalleryActivity : AppCompatActivity() {
         binding = ActivityGalleryBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        startPath = intent.getStringExtra(EXTRA_PATH) ?: DiskPaths.GALLERY
-        Logger.log(TAG, "onCreate: startPath=$startPath")
+        // 🆕 v20.6.1: репозиторий создаём один раз и передаём в адаптер.
+        val db = AppDatabase.getInstance(this)
+        repository = GalleryRepository(db)
 
-        viewModel = ViewModelProvider(this)[GalleryViewModel::class.java]
+        // ViewModel
+        val factory = GalleryViewModel.Factory(repository)
+        viewModel = ViewModelProvider(this, factory)[GalleryViewModel::class.java]
+
+        // Путь из Intent (если открываем вложенную папку)
+        val fromIntent = intent.getStringExtra(EXTRA_PATH)
+        if (!fromIntent.isNullOrEmpty()) {
+            startPath = fromIntent
+            Logger.log(TAG, "onCreate: startPath=$startPath")
+        } else {
+            Logger.log(TAG, "onCreate: startPath=$startPath")
+        }
 
         setupToolbar()
-        setupRecyclerView()
+        setupRecycler()
         setupSwipeRefresh()
-        setupEmptyStateButtons()
-        observeState()
 
+        observeViewModel()
         viewModel.openFolder(startPath)
     }
 
@@ -95,40 +81,50 @@ class GalleryActivity : AppCompatActivity() {
             finish()
         }
 
-        binding.btnRefresh.setOnClickListener {
-            Logger.log(TAG, "refresh button clicked")
-            viewModel.refresh()
+        binding.toolbar.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.action_refresh -> {
+                    Logger.log(TAG, "refresh button clicked")
+                    viewModel.refresh()
+                    true
+                }
+                else -> false
+            }
         }
     }
 
-    private fun setupRecyclerView() {
+    private fun setupRecycler() {
         adapter = GalleryAdapter(
-            onFolderClick = { item -> openFolder(item) },
-            onPhotoClick = { item -> openPhotoFullscreen(item) },
+            onFolderClick = { item ->
+                Logger.log(TAG, "openFolder: ${item.path}")
+                val intent = Intent(this, GalleryActivity::class.java)
+                intent.putExtra(EXTRA_PATH, item.path)
+                startActivity(intent)
+            },
+            onPhotoClick = { item ->
+                Logger.log(TAG, "openPhotoFullscreen: ${item.name}")
+                openFullscreen(item)
+            },
             onVideoClick = { item ->
-                Toast.makeText(
-                    this,
-                    getString(R.string.gallery_video_soon),
-                    Toast.LENGTH_SHORT
-                ).show()
+                Logger.log(TAG, "video click: ${item.name}")
+                Toast.makeText(this, R.string.gallery_video_soon, Toast.LENGTH_SHORT).show()
             }
         )
 
-        val lm = GridLayoutManager(this, GRID_COLUMNS)
-        binding.rvGallery.layoutManager = lm
-        binding.rvGallery.adapter = adapter
+        // 🆕 v20.6.1: адаптер получает репозиторий для WebDAV-превью.
+        adapter.galleryRepository = repository
 
-        binding.rvGallery.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+        binding.recycler.layoutManager = GridLayoutManager(this, 3)
+        binding.recycler.adapter = adapter
+        binding.recycler.setHasFixedSize(true)
+
+        binding.recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
-                if (dy <= 0) return
-
-                val totalItems = lm.itemCount
+                val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
                 val lastVisible = lm.findLastVisibleItemPosition()
-                if (lastVisible >= totalItems - PREFETCH_THRESHOLD) {
-                    if (viewModel.hasMore.value == true && viewModel.isLoading.value != true) {
-                        viewModel.loadNextPage()
-                    }
+                if (lastVisible >= adapter.itemCount - 5) {
+                    viewModel.loadNextPage()
                 }
             }
         })
@@ -139,100 +135,56 @@ class GalleryActivity : AppCompatActivity() {
             Logger.log(TAG, "swipe refresh")
             viewModel.refresh()
         }
-        binding.swipeRefresh.setColorSchemeResources(R.color.colorPrimary)
     }
 
-    private fun setupEmptyStateButtons() {
-        binding.btnRetry.setOnClickListener { viewModel.retry() }
-        binding.btnErrorRetry.setOnClickListener { viewModel.retry() }
-    }
-
-    private fun observeState() {
+    private fun observeViewModel() {
         viewModel.items.observe(this) { items ->
-            adapter.submitList(items)
-            updateEmptyOrGrid(items)
+            Logger.log(TAG, "observeViewModel: items=${items?.size ?: 0}")
+            adapter.submitList(items ?: emptyList())
         }
 
         viewModel.isLoading.observe(this) { loading ->
-            val showSpinner = loading && viewModel.items.value.isNullOrEmpty()
-            binding.progressBar.visibility = if (showSpinner) View.VISIBLE else View.GONE
+            binding.swipeRefresh.isRefreshing = loading
+        }
 
-            if (!loading) {
-                binding.swipeRefresh.isRefreshing = false
+        viewModel.error.observe(this) { error ->
+            if (!error.isNullOrEmpty()) {
+                binding.errorText.text = error
+                binding.errorText.visibility = View.VISIBLE
+                binding.emptyText.visibility = View.GONE
+            } else {
+                binding.errorText.visibility = View.GONE
             }
         }
 
-        viewModel.error.observe(this) { err ->
-            if (err.isNullOrEmpty()) {
-                binding.errorState.visibility = View.GONE
-                binding.swipeRefresh.isRefreshing = false
-                return@observe
-            }
-
-            val items = viewModel.items.value
-            if (items.isNullOrEmpty()) {
-                binding.tvErrorText.text = getString(R.string.gallery_load_error, err)
-                binding.errorState.visibility = View.VISIBLE
-                binding.emptyState.visibility = View.GONE
-                binding.rvGallery.visibility = View.GONE
+        viewModel.isEmpty.observe(this) { empty ->
+            if (empty) {
+                binding.emptyText.visibility = View.VISIBLE
+                binding.errorText.visibility = View.GONE
             } else {
-                Toast.makeText(this, getString(R.string.gallery_load_error, err), Toast.LENGTH_SHORT).show()
+                binding.emptyText.visibility = View.GONE
             }
-            binding.swipeRefresh.isRefreshing = false
         }
 
         viewModel.folderPath.observe(this) { path ->
-            if (path.isNullOrEmpty()) {
-                supportActionBar?.title = getString(R.string.gallery_title)
-            } else {
-                val last = path.trimEnd('/').substringAfterLast('/')
-                supportActionBar?.title = last.ifEmpty { getString(R.string.gallery_title) }
+            if (!path.isNullOrEmpty()) {
+                // Заголовок: показываем имя текущей папки, а не корень.
+                val shortName = path.substringAfterLast('/')
+                if (shortName.isNotEmpty() && shortName != "Романовы") {
+                    supportActionBar?.title = shortName
+                } else {
+                    supportActionBar?.title = getString(R.string.gallery_title)
+                }
             }
         }
     }
 
-    private fun updateEmptyOrGrid(items: List<GalleryItem>) {
-        if (items.isNotEmpty()) {
-            binding.rvGallery.visibility = View.VISIBLE
-            binding.emptyState.visibility = View.GONE
-            binding.errorState.visibility = View.GONE
-            return
-        }
-
-        val loading = viewModel.isLoading.value == true
-        val hasError = !viewModel.error.value.isNullOrEmpty()
-
-        if (!loading && !hasError) {
-            binding.rvGallery.visibility = View.GONE
-            binding.emptyState.visibility = View.VISIBLE
-            binding.errorState.visibility = View.GONE
-        }
-    }
-
-    private fun openFolder(item: GalleryItem) {
-        Logger.log(TAG, "openFolder: ${item.path}")
-        val intent = Intent(this, GalleryActivity::class.java).apply {
-            putExtra(EXTRA_PATH, item.path)
-        }
-        startActivity(intent)
-    }
-
-    private fun openPhotoFullscreen(item: GalleryItem) {
-        val url = item.previewUrl
-        if (url.isNullOrEmpty()) {
-            Toast.makeText(
-                this,
-                getString(R.string.gallery_load_error, "нет ссылки на превью"),
-                Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
-
-        Logger.log(TAG, "openPhotoFullscreen: ${item.name}")
-        val intent = Intent(this, FullscreenImageActivity::class.java).apply {
-            putExtra(FullscreenImageActivity.EXTRA_IMAGE_URL, url)
-            putExtra(FullscreenImageActivity.EXTRA_TITLE, item.name)
-        }
+    private fun openFullscreen(item: GalleryItem) {
+        val intent = Intent(this, FullscreenImageActivity::class.java)
+        // 🆕 v20.6.1: передаём ПУТЬ на Диске — FullscreenImageActivity
+        // сама скачает превью через WebDAV.
+        intent.putExtra(FullscreenImageActivity.EXTRA_GALLERY_PATH, item.path)
+        intent.putExtra(FullscreenImageActivity.EXTRA_TITLE, item.name)
         startActivity(intent)
     }
 }
