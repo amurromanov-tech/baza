@@ -5,21 +5,15 @@ import com.family.base.data.remote.model.DiskResourceItem
 /**
  * 🆕 v20.4.9: модель одного элемента галереи.
  *
- * Строится из DiskResourceItem (ответ Яндекс.Диска) и используется
- * в GalleryRepository → GalleryViewModel → GalleryAdapter.
+ * 🆕 v20.5.9: предпросмотр грузится с ОРИГИНАЛА (file), а не с preview.
+ * Причина: Яндекс.Диск отдаёт 403 на preview-ссылки при запросе из кода
+ * (даже с браузерными заголовками), а file-ссылки (downloader.disk.yandex.ru/disk/...)
+ * работают. Для сетки 3 колонки Coil декодирует оригинал с size(300,300),
+ * так что визуально всё ок, но трафик больше.
  *
- * Что важно:
- *  - previewUrl — временная ссылка на превью (живёт несколько часов).
- *    Именно её грузит Coil в сетке и в полноэкранном просмотре.
- *    Оригинал (fileUrl) НЕ качается, пока пользователь явно
- *    не нажмёт «Сохранить» (Шаг 2).
- *  - isVideo — плейсхолдер вместо картинки; в Шаге 1 видео не
- *    открывается (Toast «Видео будет в следующей версии»).
- *  - isFolder — подпапка; тап открывает новую GalleryActivity
- *    с путём этой папки.
- *
- * Поля намеренно простые и иммутабельные (val) — модель живёт
- * в списке, никакой логики не несёт.
+ * Поля:
+ *  - previewUrl — теперь ВСЕГДА file-ссылка (для отображения).
+ *  - fileUrl    — оригинал (для «Сохранить» в Шаге 2).
  */
 data class GalleryItem(
 
@@ -29,7 +23,6 @@ data class GalleryItem(
     /**
      * Абсолютный путь на Яндекс.Диске.
      * Пример: "/Романовы/Праздники/1998 Мой др/IMG_1234.jpg".
-     * Используется для навигации (подпапки) и для «Информация».
      */
     val path: String,
 
@@ -40,20 +33,15 @@ data class GalleryItem(
     val isVideo: Boolean,
 
     /**
-     * Временная ссылка на превью (маленькое изображение).
-     * Для папок — null. Для видео — обычно null (Диск не делает
-     * превью для AVI), в этом случае в адаптере рисуем плейсхолдер.
-     *
-     * Живёт несколько часов. Если Coil получит 403/410 — нужно
-     * перезапросить листинг (в Шаге 1 при ошибке просто показываем
-     * плейсхолдер; перезапрос — в Шаге 3).
+     * 🆕 v20.5.9: ссылка для ОТОБРАЖЕНИЯ.
+     * Теперь это file-ссылка (оригинал), т.к. preview-ссылки Диска
+     * отдают 403 при запросе из кода. Для папок — null.
      */
     val previewUrl: String?,
 
     /**
      * Прямая ссылка на ОРИГИНАЛ файла.
-     * НЕ используется в Шаге 1 (ни для показа, ни для сохранения).
-     * Пригодится в Шаге 2 для «💾 Сохранить в галерею».
+     * Используется в Шаге 2 для «💾 Сохранить в галерею».
      * Для папок — null.
      */
     val fileUrl: String?,
@@ -72,18 +60,8 @@ data class GalleryItem(
         /**
          * Фабрика: DiskResourceItem → GalleryItem.
          *
-         * Логика определения типа:
-         *  - type == "dir"                    → папка;
-         *  - mediaType == "video"             → видео;
-         *  - mimeType startsWith("video/")    → видео;
-         *  - mimeType startsWith("image/")    → фото;
-         *  - иначе (документ, архив и т.п.)   → фото-плейсхолдер
-         *    (в сетке будет иконка «файл», но это редкий случай
-         *    в папке с фото; ничего не ломает).
-         *
-         * @param item  элемент ответа Диска.
-         * @param parentPath путь родительской папки (без завершающего слэша),
-         *                   чтобы собрать абсолютный путь элемента.
+         * 🆕 v20.5.9: previewUrl = item.file (оригинал), т.к. item.preview
+         * даёт 403 при загрузке через Coil. file-ссылки работают.
          */
         fun fromDiskItem(item: DiskResourceItem, parentPath: String): GalleryItem {
             val isFolder = item.type.equals("dir", ignoreCase = true)
@@ -101,13 +79,19 @@ data class GalleryItem(
                 else -> "$parentPath/${item.name}"
             }
 
+            val fileLink = item.file?.takeIf { it.isNotEmpty() }
+            val previewLink = item.preview?.takeIf { it.isNotEmpty() }
+
             return GalleryItem(
                 name = item.name,
                 path = fullPath,
                 isFolder = isFolder,
                 isVideo = isVideo,
-                previewUrl = item.preview?.takeIf { it.isNotEmpty() },
-                fileUrl = item.file?.takeIf { it.isNotEmpty() },
+                // 🆕 v20.5.9: для отображения используем file-ссылку.
+                // previewLink оставлен в коде «на всякий случай» — если
+                // Яндекс когда-нибудь починит preview, вернём его.
+                previewUrl = fileLink ?: previewLink,
+                fileUrl = fileLink,
                 sizeBytes = item.size,
                 createdMillis = createdMillis
             )
@@ -126,11 +110,10 @@ data class GalleryItem(
         private fun parseIso8601(raw: String?): Long? {
             if (raw.isNullOrEmpty()) return null
 
-            // Основной формат Диска: с двоеточием в часовом поясе.
             val patterns = arrayOf(
-                "yyyy-MM-dd'T'HH:mm:ssXXX",   // 2024-12-31T23:59:59+00:00
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
                 "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-                "yyyy-MM-dd'T'HH:mm:ss'Z'",   // 2024-12-31T23:59:59Z (без двоеточия)
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
                 "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
             )
             for (pattern in patterns) {
