@@ -15,25 +15,9 @@ import com.family.base.util.Logger
 /**
  * 🆕 v20.4.9: адаптер сетки галереи.
  *
- * Один ViewType — все элементы рисуются в одной карточке
- * (item_gallery_photo.xml). Отличия:
- *  - папка: иконка ic_folder_default + бейдж «📁»;
- *  - видео: иконка ic_video_placeholder (плейсхолдер) + бейдж «▶️ AVI»;
- *  - фото:  Coil грузит previewUrl (300x300) с Диска;
- *  - ошибка загрузки фото: плейсхолдер ic_item_default.
- *
- * Клики:
- *  - папка: onFolderClick(item) → GalleryActivity открывает новый путь;
- *  - фото:  onPhotoClick(item)  → FullscreenImageActivity с previewUrl;
- *  - видео: onVideoClick(item)  → Toast «Видео будет в следующей версии».
- *
- * ⚠️ Оригинал (fileUrl) НЕ загружается. Только preview.
- *
- * 🆕 v20.5.4: добавлен ImageRequest.Listener для диагностики Coil.
- * В лог пишется onSuccess (size) и onError (точная причина: HTTP-код,
- * exception). Нужно, чтобы понять, почему превью Диска не грузятся.
- * 🆕 v20.5.5: исправлен импорт ImageRequest — coil.request.ImageRequest
- * (в Coil 2.x класс живёт в пакете coil.request, а не coil).
+ * 🆕 v20.5.6: исправлен onSuccess — в Coil 2.x у SuccessResult
+ * нет поля `image`, только `drawable`. Размеры берём из
+ * drawable.intrinsicWidth / intrinsicHeight.
  */
 class GalleryAdapter(
     private val onFolderClick: (GalleryItem) -> Unit,
@@ -66,7 +50,6 @@ class GalleryAdapter(
     private fun bind(holder: ViewHolder, item: GalleryItem) {
         holder.tvName.text = item.name
 
-        // Сбрасываем состояние от предыдущего элемента
         holder.ivThumb.load(null)
         holder.tvVideoBadge.visibility = View.GONE
         holder.tvFolderBadge.visibility = View.GONE
@@ -78,10 +61,6 @@ class GalleryAdapter(
         }
     }
 
-    // ============================================================
-    // ПАПКА
-    // ============================================================
-
     private fun bindFolder(holder: ViewHolder, item: GalleryItem) {
         holder.ivThumb.load(R.drawable.ic_folder_default) {
             crossfade(false)
@@ -89,17 +68,10 @@ class GalleryAdapter(
             error(R.drawable.ic_folder_default)
         }
         holder.tvFolderBadge.visibility = View.VISIBLE
-
         holder.itemView.setOnClickListener { onFolderClick(item) }
     }
 
-    // ============================================================
-    // ВИДЕО (плейсхолдер в Шаге 1)
-    // ============================================================
-
     private fun bindVideo(holder: ViewHolder, item: GalleryItem) {
-        // Если Диск всё-таки отдал preview для видео — используем его,
-        // иначе плейсхолдер. Так на будущее (Шаг 2/3) уже готово.
         val preview = item.previewUrl
         if (!preview.isNullOrEmpty()) {
             holder.ivThumb.load(preview) {
@@ -115,19 +87,12 @@ class GalleryAdapter(
             }
         }
         holder.tvVideoBadge.visibility = View.VISIBLE
-
         holder.itemView.setOnClickListener { onVideoClick(item) }
     }
-
-    // ============================================================
-    // ФОТО
-    // ============================================================
 
     private fun bindPhoto(holder: ViewHolder, item: GalleryItem) {
         val preview = item.previewUrl
         if (preview.isNullOrEmpty()) {
-            // Диск не дал preview (редко для фото, но бывает) —
-            // показываем плейсхолдер. Оригинал не качаем.
             Logger.log(TAG, "bindPhoto: preview is null/empty for '${item.name}'")
             holder.ivThumb.load(R.drawable.ic_item_default) {
                 crossfade(false)
@@ -135,7 +100,6 @@ class GalleryAdapter(
                 error(R.drawable.ic_item_default)
             }
         } else {
-            // 🆕 v20.5.4: диагностика Coil — видим точную причину ошибки.
             Logger.log(TAG, "bindPhoto: loading preview for '${item.name}' → $preview")
             val request = ImageRequest.Builder(holder.itemView.context)
                 .data(preview)
@@ -150,8 +114,8 @@ class GalleryAdapter(
                         Logger.log(
                             TAG,
                             "Coil onSuccess: ${req.data} " +
-                                "(w=${result.image.width}, h=${result.image.height}, " +
-                                "mime=${result.image.mimeType})"
+                                "(w=${result.drawable.intrinsicWidth}, " +
+                                "h=${result.drawable.intrinsicHeight})"
                         )
                     },
                     onError = { req, result ->
