@@ -17,6 +17,10 @@ import java.util.UUID
  * Без @Entity(indices=...) Room ожидал indices=[], а в БД они есть —
  * валидация схемы падала с "Migration didn't properly handle: folders".
  * Теперь ожидаемые и фактические индексы совпадают.
+ *
+ * 🆕 v20.4.9 (галерея): добавлены константы SYSTEM_KEY_GALLERY
+ * и SYSTEM_ID_GALLERY. Схема БД НЕ меняется — это просто строковые
+ * константы, миграция Room не нужна.
  */
 @Entity(
     tableName = "folders",
@@ -64,7 +68,8 @@ data class FolderEntity(
      * Системные папки нельзя удалять, перемещать, переименовывать,
      * архивировать. В UI скрываются соответствующие кнопки.
      *
-     * Примеры: «🏠 Домашние дела», «🛒 Покупки», «🛒 Список покупок».
+     * Примеры: «🏠 Домашние дела», «🛒 Покупки», «🛒 Список покупок»,
+     * «🖼️ Галерея».
      */
     val isSystem: Boolean = false,
 
@@ -74,6 +79,7 @@ data class FolderEntity(
      * "home_tasks"    — для папки «🏠 Домашние дела».
      * "purchases"     — для папки «🛒 Покупки» (чеки).
      * "shopping_list" — для папки «🛒 Список покупок».
+     * "gallery"       — для папки «🖼️ Галерея» (🆕 v20.4.9).
      *
      * Используется для поиска системной папки при старте приложения
      * (upsert, если её нет) и для перехвата клика в MainActivity.
@@ -151,6 +157,23 @@ data class FolderEntity(
         // ===== «🛒 Список покупок» =====
         const val SYSTEM_KEY_SHOPPING_LIST = "shopping_list"
         const val SYSTEM_ID_SHOPPING_LIST = "system-folder-shopping-list"
+
+        // ===== 🆕 v20.4.9: «🖼️ Галерея» =====
+        /**
+         * Системная папка «🖼️ Галерея».
+         *
+         * В отличие от остальных системных папок, её содержимое
+         * НЕ хранится в Room — оно живёт на Яндекс.Диске (папка
+         * «/Романовы»). Клик по этой папке в MainActivity открывает
+         * GalleryActivity, а не обычный список предметов.
+         *
+         * Сама запись FolderEntity нужна только для того, чтобы
+         * папка отображалась в корне и перехватывался клик.
+         * В неё не кладутся предметы, она не участвует в синке
+         * items/folders.json (isSystem = true защищает от tombstone).
+         */
+        const val SYSTEM_KEY_GALLERY = "gallery"
+        const val SYSTEM_ID_GALLERY = "system-folder-gallery"
 
         const val SYNC_STATUS_SYNCED = "synced"
         const val SYNC_STATUS_PENDING = "pending"
