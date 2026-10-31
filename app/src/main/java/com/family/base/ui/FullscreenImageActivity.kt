@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import coil.ImageRequest
 import coil.load
 import com.family.base.R
 import com.family.base.util.Logger
@@ -40,6 +41,11 @@ import java.io.File
  *
  * Свайп вниз для закрытия, скрытие системных баров, pinch-to-zoom —
  * без изменений (PhotoView наследует ImageView, Coil.load работает).
+ *
+ * 🆕 v20.5.4: добавлен ImageRequest.Listener для диагностики Coil.
+ * В лог пишется onSuccess (размер, mime) и onError (точная причина:
+ * HTTP-код, exception). Нужно, чтобы понять, почему превью Диска
+ * не грузятся.
  */
 class FullscreenImageActivity : AppCompatActivity() {
 
@@ -123,14 +129,38 @@ class FullscreenImageActivity : AppCompatActivity() {
      * 🆕 v20.4.9: загрузка по URL через Coil.
      * Оригинал не качается — Coil грузит превью с Диска напрямую.
      * Ошибки обрабатываются плейсхолдером (пользователь может закрыть).
+     *
+     * 🆕 v20.5.4: добавлен ImageRequest.Listener — точная диагностика.
      */
     private fun loadFromUrl(url: String) {
         try {
-            photoView.load(url) {
-                crossfade(true)
-                placeholder(R.drawable.ic_item_default)
-                error(R.drawable.ic_item_default)
-            }
+            val request = ImageRequest.Builder(this)
+                .data(url)
+                .crossfade(true)
+                .placeholder(R.drawable.ic_item_default)
+                .error(R.drawable.ic_item_default)
+                .listener(
+                    onStart = { req ->
+                        Logger.log(TAG, "Coil onStart: ${req.data}")
+                    },
+                    onSuccess = { req, result ->
+                        Logger.log(
+                            TAG,
+                            "Coil onSuccess: ${req.data} " +
+                                "(w=${result.image.width}, h=${result.image.height}, " +
+                                "mime=${result.image.mimeType})"
+                        )
+                    },
+                    onError = { req, result ->
+                        Logger.log(
+                            TAG,
+                            "Coil onError: ${req.data} → ${result.throwable.message}",
+                            result.throwable
+                        )
+                    }
+                )
+                .build()
+            photoView.load(request)
         } catch (e: Exception) {
             Logger.log(TAG, "Error loading image by URL: ${e.message}", e)
             // Не закрываем экран: пользователь увидит error-плейсхолдер
