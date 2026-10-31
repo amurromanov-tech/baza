@@ -15,39 +15,37 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import coil.load
-import coil.request.ImageRequest
+import com.family.base.BaseApplication
 import com.family.base.R
+import com.family.base.data.local.AppDatabase
+import com.family.base.data.repository.GalleryRepository
 import com.family.base.util.Logger
 import com.github.chrisbanes.photoview.PhotoView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * Полноэкранный просмотр изображения.
  *
- * 🆕 v20.4.9 (галерея): поддерживает ДВА режима:
+ * 🆕 v20.4.9: два режима:
+ *  1. Локальный файл (EXTRA_IMAGE_PATH) — как раньше.
+ *  2. URL с Диска (EXTRA_IMAGE_URL) — legacy, сохранён для совместимости.
  *
- *  1. Локальный файл (как раньше, для фото предметов):
- *     putExtra(EXTRA_IMAGE_PATH, "/data/.../images/xxx.jpg")
+ * 🆕 v20.6.1: третий режим — EXTRA_GALLERY_PATH (путь на Диске).
+ * Превью скачивается через WebDAV API с OAuth-токеном
+ * (GalleryRepository.downloadPreview). Прямые preview-ссылки REST API
+ * отдают 403 без куки браузера, а WebDAV работает.
  *
- *  2. URL с Яндекс.Диска (для галереи «🖼️ Галерея» → /Романовы):
- *     putExtra(EXTRA_IMAGE_URL, "https://downloader.disk.yandex.ru/preview/...")
- *
- *     В этом режиме картинка грузится Coil'ом по URL — оригинал НЕ
- *     скачивается, файл на телефон не попадает (Coil кэширует в
- *     своём cacheDir приложения, невидимом для системной галереи).
- *
- * Приоритет: если задан EXTRA_IMAGE_URL — используем его.
- * Иначе — старый режим с EXTRA_IMAGE_PATH.
- *
- * 🆕 v20.5.6: исправлен onSuccess — в Coil 2.x у SuccessResult
- * нет поля `image`, только `drawable`. Размеры берём из
- * drawable.intrinsicWidth / intrinsicHeight.
+ * Приоритет: GALLERY_PATH > IMAGE_URL > IMAGE_PATH.
  */
 class FullscreenImageActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_IMAGE_PATH = "image_path"
         const val EXTRA_IMAGE_URL = "image_url"
+        const val EXTRA_GALLERY_PATH = "gallery_path"
         const val EXTRA_TITLE = "title"
         private const val TAG = "FullscreenImage"
 
@@ -82,8 +80,9 @@ class FullscreenImageActivity : AppCompatActivity() {
         tvTitle = findViewById(R.id.tvTitle)
         btnClose = findViewById(R.id.btnClose)
 
-        val imagePath = intent.getStringExtra(EXTRA_IMAGE_PATH)
+        val galleryPath = intent.getStringExtra(EXTRA_GALLERY_PATH)
         val imageUrl = intent.getStringExtra(EXTRA_IMAGE_URL)
+        val imagePath = intent.getStringExtra(EXTRA_IMAGE_PATH)
         val title = intent.getStringExtra(EXTRA_TITLE)
 
         tvTitle.text = title ?: ""
@@ -93,60 +92,68 @@ class FullscreenImageActivity : AppCompatActivity() {
         dismissThreshold = resources.displayMetrics.heightPixels * DISMISS_THRESHOLD_RATIO
         swipeStartThreshold = SWIPE_START_DP * density
 
-        if (!imageUrl.isNullOrEmpty()) {
-            Logger.log(TAG, "Loading image by URL (gallery): $imageUrl")
-            loadFromUrl(imageUrl)
-        } else if (!imagePath.isNullOrEmpty()) {
-            Logger.log(TAG, "Loading image from local file: $imagePath")
-            val loaded = loadFromFile(imagePath)
-            if (!loaded) {
+        // ============================================================
+        // 🆕 v20.6.1: приоритет GALLERY_PATH > IMAGE_URL > IMAGE_PATH.
+        // ============================================================
+        when {
+            !galleryPath.isNullOrEmpty() -> {
+                Logger.log(TAG, "Loading image via WebDAV (gallery): $galleryPath")
+                loadFromWebDav(galleryPath)
+            }
+            !imageUrl.isNullOrEmpty() -> {
+                Logger.log(TAG, "Loading image by URL (legacy): $imageUrl")
+                photoView.load(imageUrl) {
+                    crossfade(true)
+                    placeholder(R.drawable.ic_item_default)
+                    error(R.drawable.ic_item_default)
+                }
+            }
+            !imagePath.isNullOrEmpty() -> {
+                Logger.log(TAG, "Loading image from local file: $imagePath")
+                val loaded = loadFromFile(imagePath)
+                if (!loaded) {
+                    finish()
+                    return
+                }
+            }
+            else -> {
+                Logger.log(TAG, "No image path, URL or gallery path provided")
                 finish()
                 return
             }
-        } else {
-            Logger.log(TAG, "No image path or URL provided")
-            finish()
-            return
         }
 
         hideSystemBars()
         Logger.log(TAG, "=== FullscreenImageActivity onCreate FINISHED ===")
     }
 
-    private fun loadFromUrl(url: String) {
-        try {
-            val request = ImageRequest.Builder(this)
-                .data(url)
-                .crossfade(true)
-                .placeholder(R.drawable.ic_item_default)
-                .error(R.drawable.ic_item_default)
-                .listener(
-                    onStart = { req ->
-                        Logger.log(TAG, "Coil onStart: ${req.data}")
-                    },
-                    onSuccess = { req, result ->
-                        Logger.log(
-                            TAG,
-                            "Coil onSuccess: ${req.data} " +
-                                "(w=${result.drawable.intrinsicWidth}, " +
-                                "h=${result.drawable.intrinsicHeight})"
-                        )
-                    },
-                    onError = { req, result ->
-                        Logger.log(
-                            TAG,
-                            "Coil onError: ${req.data} → ${result.throwable.message}",
-                            result.throwable
-                        )
-                    }
-                )
-                .build()
-            photoView.load(request)
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error loading image by URL: ${e.message}", e)
+    /**
+     * 🆕 v20.6.1: загрузка через WebDAV (OAuth-токен).
+     * Качаем превью size=M в память и грузим через Coil.load(byteArray).
+     */
+    private fun loadFromWebDav(path: String) {
+        val db = AppDatabase.getInstance(this)
+        val repo = GalleryRepository(db)
+
+        BaseApplication.applicationScope.launch {
+            val bytes = repo.downloadPreview(path)
+            if (bytes == null) {
+                Logger.log(TAG, "WebDAV preview null for $path")
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                photoView.load(bytes) {
+                    crossfade(true)
+                    placeholder(R.drawable.ic_item_default)
+                    error(R.drawable.ic_item_default)
+                }
+            }
         }
     }
 
+    /**
+     * Старый режим: локальный файл.
+     */
     private fun loadFromFile(path: String): Boolean {
         val file = File(path)
         if (!file.exists()) {
@@ -162,6 +169,9 @@ class FullscreenImageActivity : AppCompatActivity() {
         }
     }
 
+    // ============================================================
+    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ
+    // ============================================================
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (photoView.scale > ZOOM_THRESHOLD) {
             if (isDragging) {
