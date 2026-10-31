@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class BaseApplication : Application(), ImageLoaderFactory {
 
@@ -75,6 +77,19 @@ class BaseApplication : Application(), ImageLoaderFactory {
             AppCompatDelegate.setDefaultNightMode(nightMode)
             Logger.log("BaseApplication", "Applied theme: $mode (nightMode=$nightMode)")
         }
+
+        // ============================================================
+        // 🆕 v20.4.10: User-Agent для Coil при загрузке с Яндекс.Диска
+        // ============================================================
+        // Яндекс.Диск блокирует запросы к /preview/... с не-браузерным
+        // User-Agent (OkHttp по умолчанию шлёт "okhttp/4.11.0" → 403).
+        // Браузер шлёт браузерный UA → 200. Coil использует свой
+        // OkHttpClient, поэтому подменяем UA ТОЛЬКО для хоста
+        // downloader.disk.yandex.ru — остальные запросы не трогаем.
+        private const val YANDEX_DISK_HOST = "downloader.disk.yandex.ru"
+        private const val BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
     override fun onCreate() {
@@ -134,7 +149,29 @@ class BaseApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
+        // 🆕 v20.4.10: OkHttpClient для Coil с подменой User-Agent
+        // для хоста downloader.disk.yandex.ru (иначе 403 на preview).
+        val coilOkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val host = request.url.host
+                val newRequest = if (host == YANDEX_DISK_HOST) {
+                    request.newBuilder()
+                        .header("User-Agent", BROWSER_USER_AGENT)
+                        .header("Accept", "image/*,*/*;q=0.8")
+                        .build()
+                } else {
+                    request
+                }
+                chain.proceed(newRequest)
+            }
+            .build()
+
         return ImageLoader.Builder(this)
+            .okHttpClient(coilOkHttpClient)
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
