@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🆕 v20.4.9: экран галереи «🖼️ Галерея».
+
+  Структура:
+   - Toolbar: кнопка «Назад» (up), заголовок = имя текущей папки,
+     кнопка «Обновить» (pull-to-refresh тоже работает);
+   - SwipeRefreshLayout: обёртка над RecyclerView, чтобы потянуть вниз
+     и обновить список;
+   - RecyclerView: GridLayoutManager, 3 колонки (настраивается в Activity);
+   - Пустое состояние: иконка + текст «Здесь пока нет фото»;
+   - Индикатор загрузки: ProgressBar по центру (для первой страницы).
+
+  M2-атрибуты (Theme.BAZA — Material 2).
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
+        app:navigationIcon="?attr/homeAsUpIndicator"
+        app:title="@string/gallery_title"
+        app:titleTextColor="@android:color/white">
+
+        <ImageButton
+            android:id="@+id/btnRefresh"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end"
+            android:src="@drawable/ic_sync"
+            android:background="@drawable/btn_dark_circle"
+            android:contentDescription="@string/gallery_refresh"
+            android:tint="?attr/colorControlNormal" />
+
+    </com.google.android.material.appbar.MaterialToolbar>
+
+    <!-- Контейнер с содержимым: сетка / пусто / загрузка -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvGallery"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:scrollbars="vertical" />
+
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+        <!-- Индикатор загрузки (первая страница) -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- Пустое состояние -->
+        <LinearLayout
+            android:id="@+id/emptyState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/gallery_empty_emoji"
+                android:textSize="48sp" />
+
+            <TextView
+                android:id="@+id/tvEmptyTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/gallery_empty_title"
+                android:textSize="17sp"
+                android:textColor="?android:attr/textColorPrimary"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvEmptySubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/gallery_empty_subtitle"
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:gravity="center" />
+
+            <Button
+                android:id="@+id/btnRetry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/gallery_retry"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+
+        <!-- Состояние ошибки (загрузка упала, но список ещё пуст) -->
+        <LinearLayout
+            android:id="@+id/errorState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/gallery_error_emoji"
+                android:textSize="48sp" />
+
+            <TextView
+                android:id="@+id/tvErrorText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/gallery_error_title"
+                android:textSize="16sp"
+                android:textColor="?android:attr/textColorPrimary"
+                android:gravity="center" />
+
+            <Button
+                android:id="@+id/btnErrorRetry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/gallery_retry" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+</LinearLayout>
