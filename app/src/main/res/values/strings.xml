@@ -34,4 +34,34 @@
     <string name="home_tasks_menu_show_today">📅 Показать сводку на сегодня</string>
     <string name="home_tasks_menu_settings">⚙️ Настройки напоминаний</string>
     <string name="home_tasks_menu_cancel">Отмена</string>
+
+    <!-- ============================================================ -->
+    <!-- 🆕 v20.4.9: ГАЛЕРЕЯ (папка «🖼️ Галерея» → /Романовы на Диске) -->
+    <!-- ============================================================ -->
+
+    <!-- Заголовок и навигация -->
+    <string name="gallery_title">🖼️ Галерея</string>
+    <string name="gallery_refresh">Обновить</string>
+    <string name="gallery_back">Назад</string>
+
+    <!-- Карточка элемента -->
+    <string name="gallery_thumb_desc">Миниатюра фото</string>
+    <string name="gallery_video_badge">▶️ AVI</string>
+    <string name="gallery_folder_badge">📁</string>
+
+    <!-- Пустое состояние -->
+    <string name="gallery_empty_emoji">🖼️</string>
+    <string name="gallery_empty_title">Здесь пока нет фото</string>
+    <string name="gallery_empty_subtitle">Загляните в другую папку или обновите</string>
+
+    <!-- Ошибка -->
+    <string name="gallery_error_emoji">⚠️</string>
+    <string name="gallery_error_title">Не удалось загрузить галерею</string>
+
+    <!-- Кнопки -->
+    <string name="gallery_retry">Повторить</string>
+
+    <!-- Toast (Шаг 1) -->
+    <string name="gallery_video_soon">Видео будет в следующей версии</string>
+    <string name="gallery_load_error">Ошибка загрузки: %1$s</string>
 </resources>
