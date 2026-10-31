@@ -10,6 +10,7 @@ import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
 import com.family.base.data.repository.CatalogRepository
+import com.family.base.data.repository.GalleryRepository
 import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
@@ -40,6 +41,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getInstance(application)
     private val repository = CatalogRepository(db)
     private val taskRepository = TaskRepository(application.applicationContext, db)
+
+    /**
+     * 🆕 v20.4.9: репозиторий галереи.
+     * Используется только для ensureGalleryFolder — создание системной
+     * папки «🖼️ Галерея» при первом запуске. Листинг фото идёт из
+     * GalleryViewModel (у него свой экземпляр GalleryRepository).
+     */
+    private val galleryRepository = GalleryRepository(db)
+
     private val tokenStorage = TokenStorage(application)
     private val lockDao = db.lockDao()
     private val syncInfoDao = db.syncInfoDao()
@@ -100,11 +110,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var allItems: List<ItemEntity> = emptyList()
     private var searchQuery: String? = null
 
-    // ============================================================
-    // 🆕 v20.4.6: КЛЮЧИ НАСТРОЙКИ СОРТИРОВКИ
-    // ============================================================
-    // Значения совпадают с sortOptions в AppSettingsActivity:
-    //   "По имени", "По сроку годности", "По цене", "По дате добавления"
     private companion object {
         const val PREFS_SORT_ORDER = "sort_order"
         const val SORT_BY_NAME = "По имени"
@@ -152,6 +157,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "checkFirstLaunch: system folder 'home_tasks' ensured")
         } catch (e: Exception) {
             Logger.log(TAG, "Error ensuring system folder: ${e.message}")
+        }
+
+        // ============================================================
+        // 🆕 v20.4.9: системная папка «🖼️ Галерея».
+        // Создаётся рядом с «🏠 Домашние дела» — один раз при первом
+        // запуске. Содержимое (фото) живёт на Диске в /Романовы,
+        // в локальной БД хранится только запись папки для отображения
+        // в корне и перехвата клика в MainActivity.
+        // ============================================================
+        try {
+            galleryRepository.ensureGalleryFolder(currentUser)
+            Logger.log(TAG, "checkFirstLaunch: system folder 'gallery' ensured")
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error ensuring gallery folder: ${e.message}")
         }
 
         try {
@@ -304,34 +323,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // 🆕 v20.4.6: ЗАГРУЗКА СОДЕРЖИМОГО С СОРТИРОВКОЙ
+    // ЗАГРУЗКА СОДЕРЖИМОГО С СОРТИРОВКОЙ
     // ============================================================
-    /**
-     * Логика:
-     *
-     *  1. Если активен поиск — старое поведение:
-     *     всё вперемешку, по имени (поиск по всей базе).
-     *
-     *  2. Иначе — два блока:
-     *     • ВЕРХНИЙ: все папки + все предметы, у которых есть
-     *       вложения (parentItemId = items.id). Сортировка ЖЁСТКО
-     *       по имени A→Я. sort_order здесь НЕ применяется —
-     *       у папок нет цены/срока годности, сравнивать не с чем.
-     *     • НИЖНИЙ: предметы без вложений. Сортировка по sort_order
-     *       из AppSettingsActivity:
-     *         - "По имени"          → A→Я
-     *         - "По сроку годности"  → просроченные → ближайшие → остальные → без срока
-     *         - "По цене"            → дешёвые → дорогие (null в конце)
-     *         - "По дате добавления" → новые сверху
-     *
-     *  3. entries = верхний + нижний.
-     *
-     * Batch-запрос getItemIdsWithChildren() — один раз, без N+1.
-     *
-     * ⚠️ v20.4.8: DAO возвращает List<String>, а не Set<String>
-     * (Room не умеет Cursor→Set). Здесь делаем .toSet() в памяти.
-     * Для списка предметов-контейнеров это O(n), n — небольшое.
-     */
     fun loadContents() {
         viewModelScope.launch {
             try {
@@ -341,7 +334,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val allItemsFromDb = db.itemDao().getAllItems()
                     allItems = allItemsFromDb
 
-                    // -------- ПОИСК: старое поведение --------
                     if (!searchQuery.isNullOrEmpty()) {
                         val q = searchQuery!!
                         val foundItems = allItemsFromDb
@@ -351,23 +343,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         return@withContext
                     }
 
-                    // -------- ОБЫЧНЫЙ РЕЖИМ: два блока --------
                     val itemsAtLevel = repository.getItems(currentFolderId)
 
-                    // Batch-запрос: id предметов, у которых есть вложения.
-                    // DAO возвращает List<String> — конвертируем в Set.
                     val itemsWithChildrenIds: Set<String> =
                         db.itemDao().getItemIdsWithChildren().toSet()
 
                     val (itemsWithChildren, itemsWithoutChildren) =
                         itemsAtLevel.partition { it.id in itemsWithChildrenIds }
 
-                    // ВЕРХНИЙ БЛОК: папки + предметы с вложениями, по имени A→Я
                     val topBlock = mutableListOf<Any>()
                     topBlock.addAll(folders.sortedBy { it.name.lowercase() })
                     topBlock.addAll(itemsWithChildren.sortedBy { it.name.lowercase() })
 
-                    // НИЖНИЙ БЛОК: предметы без вложений, по sort_order
                     val sortOrder = readSortOrder()
                     val bottomBlock = sortItems(itemsWithoutChildren, sortOrder)
 
@@ -388,10 +375,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 🆕 v20.4.6: читает sort_order из SharedPreferences.
-     * Ключ и значения — как в AppSettingsActivity.
-     */
     private fun readSortOrder(): String {
         return try {
             val prefs = getApplication<Application>()
@@ -403,20 +386,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 🆕 v20.4.6: сортирует предметы без вложений по выбранному критерию.
-     *
-     *  - По имени:          A→Я (lowercase).
-     *  - По сроку годности: просроченные → ближайшие → остальные → без срока.
-     *  - По цене:           дешёвые → дорогие; null в конце.
-     *  - По дате добавления: новые сверху.
-     *
-     * ⚠️ v20.4.7: убрана ветка `SORT_BY_NAME, else ->` — в Kotlin нельзя
-     * перечислять значение вместе с `else` через запятую (ошибка компиляции:
-     * "Expecting an expression, is-condition or in-condition"). Оставлен
-     * только `else`, который покрывает и «По имени», и любое неизвестное
-     * значение — это безопасный дефолт.
-     */
     private fun sortItems(items: List<ItemEntity>, sortOrder: String): List<ItemEntity> {
         return when (sortOrder) {
             SORT_BY_EXPIRY -> items.sortedWith(
@@ -624,13 +593,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // СПИСАНИЕ — ДЕЛЕГИРУЕТСЯ В CatalogViewModel
     // ============================================================
 
-    /**
-     * 🆕 v20.3.8: добавлен onDone(archived: Boolean).
-     *  - archived = true  → полностью списали, предмет ушёл в архив → UI закрывает карточку.
-     *  - archived = false → частичное списание, оригинал остался → UI обновляет счётчик.
-     *
-     * При onBlocked (есть вложенные, полное списание невозможно) — onDone НЕ вызывается.
-     */
     fun writeOffItem(
         itemId: String,
         count: Int,
