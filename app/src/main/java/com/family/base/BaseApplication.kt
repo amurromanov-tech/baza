@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -69,7 +70,6 @@ class BaseApplication : Application(), ImageLoaderFactory {
             Logger.log("BaseApplication", "Applied theme: $mode (nightMode=$nightMode)")
         }
 
-        // 🆕 v20.5.3: Coil для Яндекс.Диска
         private const val YANDEX_DISK_HOST = "downloader.disk.yandex.ru"
         private const val BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
@@ -130,12 +130,18 @@ class BaseApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
-        // 🆕 v20.5.3: сетевой клиент Coil с принудительной подменой UA для хоста Яндекс.Диска.
-        // 🆕 v20.5.7: добавлена диагностика ответа (код, Content-Type, длина),
-        //             и Accept сужен до image/*.
-        // 🆕 v20.5.8: добавлен Referer и Sec-Fetch-* для downloader.disk.yandex.ru,
-        //             чтобы обойти 403 при загрузке preview-ссылок.
+        // 🆕 v20.6.0: ограничиваем количество параллельных запросов.
+        // Яндекс.Диск отдаёт 302/403 при массовых параллельных загрузках,
+        // считая это парсингом. 2 запроса одновременно — безопасно.
+        val dispatcher = Dispatcher().apply {
+            maxRequests = 2
+            maxRequestsPerHost = 2
+        }
+
         val okHttpClient = OkHttpClient.Builder()
+            .dispatcher(dispatcher)
+            .followRedirects(true)
+            .followSslRedirects(true)
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(40, TimeUnit.SECONDS)
             .writeTimeout(40, TimeUnit.SECONDS)
@@ -148,13 +154,6 @@ class BaseApplication : Application(), ImageLoaderFactory {
                         .header("User-Agent", BROWSER_USER_AGENT)
                         .header("Accept", "image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5")
                         .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-                        // 🆕 v20.5.8: имитируем браузерный контекст.
-                        // Яндекс.Диск отдаёт 403 на preview-ссылки без Referer/Origin.
-                        .header("Referer", "https://disk.yandex.ru/")
-                        .header("Origin", "https://disk.yandex.ru")
-                        .header("Sec-Fetch-Dest", "image")
-                        .header("Sec-Fetch-Mode", "no-cors")
-                        .header("Sec-Fetch-Site", "cross-site")
                         .build()
                 } else {
                     request
