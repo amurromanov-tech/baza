@@ -39,25 +39,15 @@ import java.io.File
  * Приоритет: если задан EXTRA_IMAGE_URL — используем его.
  * Иначе — старый режим с EXTRA_IMAGE_PATH.
  *
- * Свайп вниз для закрытия, скрытие системных баров, pinch-to-zoom —
- * без изменений (PhotoView наследует ImageView, Coil.load работает).
- *
- * 🆕 v20.5.4: добавлен ImageRequest.Listener для диагностики Coil.
- * В лог пишется onSuccess (размер, mime) и onError (точная причина:
- * HTTP-код, exception). Нужно, чтобы понять, почему превью Диска
- * не грузятся.
- * 🆕 v20.5.5: исправлен импорт ImageRequest — coil.request.ImageRequest
- * (в Coil 2.x класс живёт в пакете coil.request, а не coil).
+ * 🆕 v20.5.6: исправлен onSuccess — в Coil 2.x у SuccessResult
+ * нет поля `image`, только `drawable`. Размеры берём из
+ * drawable.intrinsicWidth / intrinsicHeight.
  */
 class FullscreenImageActivity : AppCompatActivity() {
 
     companion object {
-        /** Локальный файл (как раньше). */
         const val EXTRA_IMAGE_PATH = "image_path"
-
-        /** 🆕 v20.4.9: URL с Диска (превью). Приоритетнее EXTRA_IMAGE_PATH. */
         const val EXTRA_IMAGE_URL = "image_url"
-
         const val EXTRA_TITLE = "title"
         private const val TAG = "FullscreenImage"
 
@@ -103,10 +93,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         dismissThreshold = resources.displayMetrics.heightPixels * DISMISS_THRESHOLD_RATIO
         swipeStartThreshold = SWIPE_START_DP * density
 
-        // ============================================================
-        // 🆕 v20.4.9: два режима — URL (галерея) или локальный файл.
-        // Приоритет у URL: если он задан, локальный путь игнорируется.
-        // ============================================================
         if (!imageUrl.isNullOrEmpty()) {
             Logger.log(TAG, "Loading image by URL (gallery): $imageUrl")
             loadFromUrl(imageUrl)
@@ -127,13 +113,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         Logger.log(TAG, "=== FullscreenImageActivity onCreate FINISHED ===")
     }
 
-    /**
-     * 🆕 v20.4.9: загрузка по URL через Coil.
-     * Оригинал не качается — Coil грузит превью с Диска напрямую.
-     * Ошибки обрабатываются плейсхолдером (пользователь может закрыть).
-     *
-     * 🆕 v20.5.4: добавлен ImageRequest.Listener — точная диагностика.
-     */
     private fun loadFromUrl(url: String) {
         try {
             val request = ImageRequest.Builder(this)
@@ -149,8 +128,8 @@ class FullscreenImageActivity : AppCompatActivity() {
                         Logger.log(
                             TAG,
                             "Coil onSuccess: ${req.data} " +
-                                "(w=${result.image.width}, h=${result.image.height}, " +
-                                "mime=${result.image.mimeType})"
+                                "(w=${result.drawable.intrinsicWidth}, " +
+                                "h=${result.drawable.intrinsicHeight})"
                         )
                     },
                     onError = { req, result ->
@@ -165,21 +144,15 @@ class FullscreenImageActivity : AppCompatActivity() {
             photoView.load(request)
         } catch (e: Exception) {
             Logger.log(TAG, "Error loading image by URL: ${e.message}", e)
-            // Не закрываем экран: пользователь увидит error-плейсхолдер
-            // и сможет выйти свайпом/крестиком.
         }
     }
 
-    /**
-     * Старый режим: локальный файл. Возвращает false, если файла нет.
-     */
     private fun loadFromFile(path: String): Boolean {
         val file = File(path)
         if (!file.exists()) {
             Logger.log(TAG, "Image file not found: $path")
             return false
         }
-
         return try {
             photoView.setImageURI(Uri.fromFile(file))
             true
@@ -189,9 +162,6 @@ class FullscreenImageActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // СВАЙП ВНИЗ ДЛЯ ЗАКРЫТИЯ
-    // ============================================================
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (photoView.scale > ZOOM_THRESHOLD) {
             if (isDragging) {
