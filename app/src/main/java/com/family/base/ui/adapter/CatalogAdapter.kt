@@ -32,38 +32,26 @@ class CatalogAdapter(
      *  - home_tasks     → активные задачи;
      *  - purchases      → предметы в «Покупках» рекурсивно (v17.0.9);
      *  - shopping_list  → предметы в корне «Списка покупок» («купить»).
+     *
+     * 🆕 v20.4.9: для «🖼️ Галерея» счётчик не нужен (фото на Диске,
+     * не в БД). Поле galleryPhotos оставлено на будущее (Шаг 3:
+     * можно показать «N фото» после листинга), сейчас не заполняется.
      */
     data class SystemFolderCounters(
         val homeTasksActive: Int = 0,
         val purchasesItems: Int = 0,
-        val shoppingListItems: Int = 0
+        val shoppingListItems: Int = 0,
+        val galleryPhotos: Int = 0
     )
 
     private var items: List<Any> = emptyList()
 
     private var systemFolderCounters: SystemFolderCounters = SystemFolderCounters()
 
-    /**
-     * 🆕 v20.1.1: агрегаты по обычным папкам — количество + сумма.
-     * Ключ — folderId. Заполняется из MainActivity одним batch-запросом
-     * (getFolderStatsShallow), чтобы не делать N+1 при отрисовке.
-     *
-     * Если для папки нет записи — info у неё пустой (как раньше).
-     */
     private var folderStats: Map<String, FolderStatsRow> = emptyMap()
 
-    /**
-     * 🆕 v20.1.1: агрегат для системной «🛒 Покупки» — рекурсивно.
-     * Сюда же кладётся itemCount, чтобы не дублировать purchasesItems
-     * из systemFolderCounters (там только число). Сумма — только здесь.
-     */
     private var purchasesStats: FolderStatsRow? = null
 
-    /**
-     * 🆕 v20.1.1: единый формат денег для карточек.
-     * Целые — без копеек; дробные — с двумя знаками, запятая.
-     * Разряды — пробел (4 560).
-     */
     private val moneyFormat: DecimalFormat by lazy {
         val symbols = DecimalFormatSymbols(Locale.getDefault())
         symbols.groupingSeparator = ' '
@@ -75,39 +63,24 @@ class CatalogAdapter(
         notifyDataSetChanged()
     }
 
-    /**
-     * 🆕 v16.0.14: обновить счётчики системных папок.
-     * Если ничего не изменилось — не перерисовываем.
-     */
     fun setSystemFolderCounters(counters: SystemFolderCounters) {
         if (systemFolderCounters == counters) return
         systemFolderCounters = counters
         notifyDataSetChanged()
     }
 
-    /**
-     * 🆕 v20.1.1: обновить статистику обычных папок (batch).
-     * Если ничего не изменилось — не перерисовываем.
-     */
     fun setFolderStats(stats: Map<String, FolderStatsRow>) {
         if (folderStats == stats) return
         folderStats = stats
         notifyDataSetChanged()
     }
 
-    /**
-     * 🆕 v20.1.1: обновить статистику системной «Покупок».
-     */
     fun setPurchasesStats(stats: FolderStatsRow?) {
         if (purchasesStats == stats) return
         purchasesStats = stats
         notifyDataSetChanged()
     }
 
-    /**
-     * Устаревший метод — оставлен для совместимости.
-     * Обновляет только счётчик задач (home_tasks), остальные сохраняет.
-     */
     @Deprecated("Используй setSystemFolderCounters")
     fun setSystemFolderTaskCount(count: Int) {
         setSystemFolderCounters(systemFolderCounters.copy(homeTasksActive = count))
@@ -121,7 +94,6 @@ class CatalogAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val entry = items[position]
-        val context = holder.itemView.context
 
         when (entry) {
             is FolderEntity -> bindFolder(holder, entry)
@@ -142,7 +114,6 @@ class CatalogAdapter(
         if (entry.isSystem) {
             bindSystemFolder(holder, entry)
         } else {
-            // ===== ОБЫЧНАЯ ПАПКА =====
             val iconFile = ImageUtils.getLocalImageFile(context, "folder_${entry.id}")
             if (iconFile != null && iconFile.exists()) {
                 holder.icon.load(iconFile) {
@@ -155,8 +126,6 @@ class CatalogAdapter(
             }
 
             holder.name.text = entry.name
-
-            // 🆕 v20.1.1: «📦 N · 💰 X ₽» мелким текстом под названием.
             holder.info.text = buildFolderInfoText(entry.id)
             holder.expiryInfo.visibility = View.GONE
             holder.lentInfo.visibility = View.GONE
@@ -170,14 +139,6 @@ class CatalogAdapter(
         holder.itemView.setOnLongClickListener { onFolderLongClick(entry); true }
     }
 
-    /**
-     * 🆕 v20.1.1: текст «📦 N · 💰 X ₽» для обычной папки.
-     *
-     *  - нет статистики (папку только что создали / список обновляется) → "" ;
-     *  - N = 0 → "" (пустая папка — как раньше, без шума) ;
-     *  - N > 0, total = 0 → "📦 N предмет(а/ов)" (цены нет ни у одного) ;
-     *  - N > 0, total > 0 → "📦 N · 💰 X ₽" .
-     */
     private fun buildFolderInfoText(folderId: String): String {
         val stats = folderStats[folderId] ?: return ""
         if (stats.itemCount <= 0) return ""
@@ -190,16 +151,13 @@ class CatalogAdapter(
 
     /**
      * 🆕 v16.0.14: отрисовка системной папки по её systemKey.
-     *  - home_tasks     → 🏠 + «📋 N активных»
-     *  - purchases      → 🧾 + «🛒 N предметов · 💰 X ₽»
-     *  - shopping_list  → 🛒 + «🛒 N купить»
      *
-     * 🆕 v17.2.8: иконки системных папок:
-     *  - home_tasks     → ic_home (как было);
-     *  - purchases      → ic_purchases_receipt (чек);
-     *  - shopping_list  → ic_shopping_list_cart (тележка).
-     *
-     * 🆕 v20.1.1: для «Покупок» добавлена сумма по всем подпапкам.
+     * 🆕 v20.4.9: добавлена ветка SYSTEM_KEY_GALLERY.
+     *  - иконка ic_gallery;
+     *  - название из entry.name («🖼️ Галерея»);
+     *  - подпись «Открыть фотоархив» (счётчик фото не считаем —
+     *    они на Диске, не в БД);
+     *  - цветная полоса — цвет primary (как у остальных системных).
      */
     private fun bindSystemFolder(holder: ViewHolder, entry: FolderEntity) {
         val context = holder.itemView.context
@@ -227,9 +185,6 @@ class CatalogAdapter(
                 }
                 holder.name.text = entry.name
 
-                // 🆕 v20.1.1: количество берём из systemFolderCounters (как раньше),
-                // сумму — из purchasesStats. Если stats ещё не пришли — показываем
-                // только количество, без «💰 0 ₽» (иначе выглядит как ошибка).
                 val n = systemFolderCounters.purchasesItems
                 val total = purchasesStats?.totalPrice ?: 0.0
 
@@ -255,8 +210,19 @@ class CatalogAdapter(
                 }
             }
 
+            // ============================================================
+            // 🆕 v20.4.9: СИСТЕМНАЯ ПАПКА «🖼️ ГАЛЕРЕЯ»
+            // ============================================================
+            FolderEntity.SYSTEM_KEY_GALLERY -> {
+                holder.icon.load(R.drawable.ic_gallery) {
+                    placeholder(R.drawable.ic_gallery)
+                    error(R.drawable.ic_gallery)
+                }
+                holder.name.text = entry.name
+                holder.info.text = "📷 Открыть фотоархив"
+            }
+
             else -> {
-                // Неизвестная системная папка — общий вид
                 holder.icon.load(R.drawable.ic_home) {
                     placeholder(R.drawable.ic_home)
                     error(R.drawable.ic_home)
@@ -274,9 +240,6 @@ class CatalogAdapter(
         )
     }
 
-    /**
-     * «1 предмет», «2 предмета», «5 предметов».
-     */
     private fun pluralItems(n: Int): String {
         val mod10 = n % 10
         val mod100 = n % 100
@@ -287,15 +250,6 @@ class CatalogAdapter(
         }
     }
 
-    /**
-     * 🆕 v20.1.1: единый формат денег.
-     *  - целые → «4 560»;
-     *  - дробные → «4 560,5» (без хвостовых нулей, запятая как десятичный
-     *    разделитель в русской локали — DecimalFormat сам подставит).
-     *
-     * ВАЖНО: сумму в карточке папки показываем БЕЗ копеек, если они нулевые,
-     * чтобы «💰 4 560 ₽» не превращалось в «💰 4 560,00 ₽».
-     */
     private fun formatMoney(value: Double): String {
         return try {
             if (value == value.toLong().toDouble()) {
@@ -325,7 +279,6 @@ class CatalogAdapter(
                 error(R.drawable.ic_item_default)
             }
 
-            // ===== КЛИК ПО ИКОНКЕ → ПОЛНОЭКРАННЫЙ ПРОСМОТР =====
             holder.icon.setOnClickListener {
                 val intent = Intent(context, FullscreenImageActivity::class.java).apply {
                     putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, localFile.absolutePath)
@@ -340,19 +293,15 @@ class CatalogAdapter(
 
         holder.name.text = entry.name
 
-        // ===== ИНФО: количество + цена =====
         val infoParts = mutableListOf<String>()
         if (entry.quantity > 1) {
             infoParts.add("×${entry.quantity}")
         }
         if (entry.price != null && entry.price != 0.0) {
-            // 🆕 v20.1.1: используем общий formatMoney — единый вид
-            // и здесь, и в папках.
             infoParts.add("${formatMoney(entry.price)} ₽")
         }
         holder.info.text = infoParts.joinToString("  •  ")
 
-        // ===== СРОК ГОДНОСТИ =====
         if (entry.isExpired) {
             holder.expiryInfo.visibility = View.VISIBLE
             holder.expiryInfo.text = "⚠️ Просрочен"
@@ -369,7 +318,6 @@ class CatalogAdapter(
             holder.expiryInfo.visibility = View.GONE
         }
 
-        // ===== ЗАЙМ =====
         if (entry.isLent && !entry.lentTo.isNullOrEmpty()) {
             holder.lentInfo.visibility = View.VISIBLE
             var text = "🤝 У ${entry.lentTo}"
@@ -381,7 +329,6 @@ class CatalogAdapter(
             holder.lentInfo.visibility = View.GONE
         }
 
-        // ===== ЦВЕТНАЯ ПОЛОСА =====
         val colorRes = when {
             entry.isLent -> android.R.color.holo_orange_light
             entry.isExpired -> R.color.colorExpired
