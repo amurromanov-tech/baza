@@ -47,6 +47,13 @@ class GalleryActivity : AppCompatActivity() {
         private const val TAG = "GalleryActivity"
         private const val GRID_COLUMNS = 3
         private const val PREFETCH_THRESHOLD = 6
+
+        /**
+         * 🆕 v20.4.9: ключ Intent — абсолютный путь папки на Диске,
+         * которую нужно открыть. Если не передан — используется
+         * DiskPaths.GALLERY ("/Романовы").
+         */
+        const val EXTRA_PATH = "gallery_path"
     }
 
     private lateinit var binding: ActivityGalleryBinding
@@ -63,7 +70,6 @@ class GalleryActivity : AppCompatActivity() {
         binding = ActivityGalleryBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Путь из Intent (или корень галереи по умолчанию)
         startPath = intent.getStringExtra(EXTRA_PATH) ?: DiskPaths.GALLERY
         Logger.log(TAG, "onCreate: startPath=$startPath")
 
@@ -75,21 +81,13 @@ class GalleryActivity : AppCompatActivity() {
         setupEmptyStateButtons()
         observeState()
 
-        // Стартовая загрузка
         viewModel.openFolder(startPath)
     }
-
-    // ============================================================
-    // TOOLBAR
-    // ============================================================
 
     private fun setupToolbar() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
-
-        // Своё название установим в observeState() (по folderPath).
-        // Здесь — дефолт.
         supportActionBar?.title = getString(R.string.gallery_title)
 
         binding.toolbar.setNavigationOnClickListener {
@@ -102,10 +100,6 @@ class GalleryActivity : AppCompatActivity() {
             viewModel.refresh()
         }
     }
-
-    // ============================================================
-    // СЕТКА
-    // ============================================================
 
     private fun setupRecyclerView() {
         adapter = GalleryAdapter(
@@ -124,12 +118,9 @@ class GalleryActivity : AppCompatActivity() {
         binding.rvGallery.layoutManager = lm
         binding.rvGallery.adapter = adapter
 
-        // Пагинация: при приближении к концу — грузим следующую страницу.
         binding.rvGallery.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
-
-                // Только вниз и только если есть смысл.
                 if (dy <= 0) return
 
                 val totalItems = lm.itemCount
@@ -143,53 +134,34 @@ class GalleryActivity : AppCompatActivity() {
         })
     }
 
-    // ============================================================
-    // PULL-TO-REFRESH
-    // ============================================================
-
     private fun setupSwipeRefresh() {
         binding.swipeRefresh.setOnRefreshListener {
             Logger.log(TAG, "swipe refresh")
             viewModel.refresh()
         }
-        // Цвет индикатора — акцент темы
         binding.swipeRefresh.setColorSchemeResources(R.color.colorPrimary)
     }
-
-    // ============================================================
-    // ПУСТОЕ СОСТОЯНИЕ / ОШИБКА
-    // ============================================================
 
     private fun setupEmptyStateButtons() {
         binding.btnRetry.setOnClickListener { viewModel.retry() }
         binding.btnErrorRetry.setOnClickListener { viewModel.retry() }
     }
 
-    // ============================================================
-    // OBSERVE
-    // ============================================================
-
     private fun observeState() {
-        // Список элементов
         viewModel.items.observe(this) { items ->
             adapter.submitList(items)
             updateEmptyOrGrid(items)
         }
 
-        // Загрузка первой страницы / следующей
         viewModel.isLoading.observe(this) { loading ->
-            // Спиннер показываем только когда список ещё пуст
-            // (первая загрузка). Для догрузки — не мигаем.
             val showSpinner = loading && viewModel.items.value.isNullOrEmpty()
             binding.progressBar.visibility = if (showSpinner) View.VISIBLE else View.GONE
 
-            // При pull-to-refresh — гасим индикатор после окончания
             if (!loading) {
                 binding.swipeRefresh.isRefreshing = false
             }
         }
 
-        // Ошибка
         viewModel.error.observe(this) { err ->
             if (err.isNullOrEmpty()) {
                 binding.errorState.visibility = View.GONE
@@ -199,38 +171,25 @@ class GalleryActivity : AppCompatActivity() {
 
             val items = viewModel.items.value
             if (items.isNullOrEmpty()) {
-                // Нет данных и ошибка — показываем экран ошибки
                 binding.tvErrorText.text = getString(R.string.gallery_load_error, err)
                 binding.errorState.visibility = View.VISIBLE
                 binding.emptyState.visibility = View.GONE
                 binding.rvGallery.visibility = View.GONE
             } else {
-                // Данные есть, но догрузка упала — Toast, список оставляем
                 Toast.makeText(this, getString(R.string.gallery_load_error, err), Toast.LENGTH_SHORT).show()
             }
             binding.swipeRefresh.isRefreshing = false
         }
 
-        // Путь — обновляем заголовок
         viewModel.folderPath.observe(this) { path ->
             if (path.isNullOrEmpty()) {
                 supportActionBar?.title = getString(R.string.gallery_title)
             } else {
-                // Показываем последний сегмент пути.
-                // Например, "/Романовы/Праздники/1998 Мой др" → "1998 Мой др".
-                // На корне "/Романовы" → "Романовы".
                 val last = path.trimEnd('/').substringAfterLast('/')
                 supportActionBar?.title = last.ifEmpty { getString(R.string.gallery_title) }
             }
         }
-
-        // hasMore нам напрямую в UI не нужно — используется в scroll listener,
-        // который читает viewModel.hasMore.value.
     }
-
-    // ============================================================
-    // ОБНОВЛЕНИЕ ВИДИМОСТИ СЕТКИ / ПУСТОГО СОСТОЯНИЯ
-    // ============================================================
 
     private fun updateEmptyOrGrid(items: List<GalleryItem>) {
         if (items.isNotEmpty()) {
@@ -240,8 +199,6 @@ class GalleryActivity : AppCompatActivity() {
             return
         }
 
-        // Список пуст. Показываем empty state только если загрузка уже
-        // закончилась и нет ошибки (иначе поверх будет экран ошибки / спиннер).
         val loading = viewModel.isLoading.value == true
         val hasError = !viewModel.error.value.isNullOrEmpty()
 
@@ -252,14 +209,6 @@ class GalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // КЛИКИ
-    // ============================================================
-
-    /**
-     * Клик по папке: открываем новый экземпляр GalleryActivity с путём.
-     * Системный стек Activity сам сделает «Назад» правильно.
-     */
     private fun openFolder(item: GalleryItem) {
         Logger.log(TAG, "openFolder: ${item.path}")
         val intent = Intent(this, GalleryActivity::class.java).apply {
@@ -268,21 +217,14 @@ class GalleryActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    /**
-     * Клик по фото: полноэкранный просмотр.
-     *
-     * В Шаге 1 передаём ТОЛЬКО previewUrl (превью 1200x1200 через параметр
-     * `preview` мы получим в Шаге 3; сейчас используем тот же preview,
-     * что и в сетке — он откроется больше по экрану благодаря PhotoView).
-     *
-     * ВАЖНО: FullscreenImageActivity должен поддерживать EXTRA_IMAGE_URL
-     * (правка — в файле 14 этого шага). Если по каким-то причинам
-     * URL пустой — показываем Toast, не открываем экран.
-     */
     private fun openPhotoFullscreen(item: GalleryItem) {
         val url = item.previewUrl
         if (url.isNullOrEmpty()) {
-            Toast.makeText(this, getString(R.string.gallery_load_error, "нет ссылки на превью"), Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                getString(R.string.gallery_load_error, "нет ссылки на превью"),
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
@@ -292,14 +234,5 @@ class GalleryActivity : AppCompatActivity() {
             putExtra(FullscreenImageActivity.EXTRA_TITLE, item.name)
         }
         startActivity(intent)
-    }
-
-    companion object Public {
-        /**
-         * 🆕 v20.4.9: ключ Intent — абсолютный путь папки на Диске,
-         * которую нужно открыть. Если не передан — используется
-         * DiskPaths.GALLERY ("/Романовы").
-         */
-        const val EXTRA_PATH = "gallery_path"
     }
 }
