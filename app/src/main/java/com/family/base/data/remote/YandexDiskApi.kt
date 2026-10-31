@@ -5,7 +5,9 @@ import com.family.base.data.remote.model.DiskResourcesResponse
 import com.family.base.data.remote.model.LinkResponse
 import com.family.base.data.remote.model.PublicResourcesResponse
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
@@ -14,6 +16,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Интерфейс для работы с API Яндекс.Диска.
  * Содержит методы для публичных (чтение) и приватных (чтение/запись) операций.
+ *
+ * 🆕 v20.6.1: добавлен метод downloadPreviewWebDav для скачивания превью
+ * через WebDAV API. Прямые preview-ссылки REST API отдают 403 без куки,
+ * а WebDAV с OAuth-токеном работает.
  */
 interface YandexDiskApi {
 
@@ -21,9 +27,6 @@ interface YandexDiskApi {
     // ПУБЛИЧНЫЕ МЕТОДЫ (работа с публичной папкой по public_key)
     // ============================================================
 
-    /**
-     * Получение информации о публичной папке (список файлов и папок).
-     */
     @GET("disk/public/resources")
     suspend fun getPublicResources(
         @Query("public_key") publicKey: String,
@@ -32,26 +35,17 @@ interface YandexDiskApi {
         @Query("offset") offset: Int? = null
     ): retrofit2.Response<PublicResourcesResponse>
 
-    /**
-     * Получение ссылки для скачивания файла из публичной папки.
-     */
     @GET("disk/public/resources/download")
     suspend fun getPublicDownloadUrl(
         @Query("public_key") publicKey: String,
         @Query("path") path: String
     ): retrofit2.Response<LinkResponse>
 
-    /**
-     * Скачивание файла по прямой ссылке.
-     */
     @GET
     suspend fun downloadFile(
         @Url url: String
     ): retrofit2.Response<okhttp3.ResponseBody>
 
-    /**
-     * Удаление файла из публичной папки.
-     */
     @DELETE("disk/public/resources")
     suspend fun deletePublicFile(
         @Query("public_key") publicKey: String,
@@ -62,9 +56,6 @@ interface YandexDiskApi {
     // ПРИВАТНЫЕ МЕТОДЫ (с OAuth-токеном, для записи и управления)
     // ============================================================
 
-    /**
-     * Получение ссылки для загрузки файла в личный диск пользователя.
-     */
     @GET("disk/resources/upload")
     suspend fun getUploadUrl(
         @Header("Authorization") authorization: String,
@@ -72,27 +63,18 @@ interface YandexDiskApi {
         @Query("overwrite") overwrite: Boolean = true
     ): retrofit2.Response<LinkResponse>
 
-    /**
-     * Загрузка файла по полученной ссылке (метод PUT).
-     */
     @PUT
     suspend fun uploadFileToUrl(
         @Url url: String,
         @Body file: okhttp3.RequestBody
     ): retrofit2.Response<Void>
 
-    /**
-     * Создание папки на диске пользователя.
-     */
     @PUT("disk/resources")
     suspend fun createFolder(
         @Header("Authorization") authorization: String,
         @Query("path") path: String
     ): retrofit2.Response<Void>
 
-    /**
-     * Получение ссылки для скачивания файла с приватного диска.
-     */
     @GET("disk/resources/download")
     suspend fun getDiskDownloadUrl(
         @Header("Authorization") authorization: String,
@@ -101,13 +83,6 @@ interface YandexDiskApi {
 
     /**
      * Получение информации о ресурсе (файле или папке) на диске пользователя.
-     *
-     * 🆕 v17.0.7: добавлены параметры `limit` и `offset`.
-     * 🆕 v20.4.10: добавлен параметр `previewSize` (preview_size) —
-     *              без него Диск не возвращает превью для галереи.
-     *
-     * ВАЖНО: Яндекс.Диск возвращает по умолчанию только 20 элементов.
-     * Если в папке больше 20 файлов — новые НЕ попадут в выдачу.
      *
      * @param limit       максимум элементов в выдаче (default 200).
      * @param offset      сдвиг для пагинации (default 0).
@@ -123,18 +98,40 @@ interface YandexDiskApi {
         @Query("preview_size") previewSize: String? = null
     ): retrofit2.Response<DiskResourcesResponse>
 
-    /**
-     * Удаление файла или папки с приватного диска пользователя.
-     * @param authorization заголовок "OAuth <токен>"
-     * @param path путь к файлу/папке на диске (например, "/BAZA/data/items.json")
-     * @param permanently если true, файл удаляется без возможности восстановления (по умолчанию false)
-     */
     @DELETE("disk/resources")
     suspend fun deleteFile(
         @Header("Authorization") authorization: String,
         @Query("path") path: String,
         @Query("permanently") permanently: Boolean = false
     ): retrofit2.Response<Unit>
+
+    // ============================================================
+    // 🆕 v20.6.1: WEBDAV — скачивание превью с OAuth-токеном
+    // ============================================================
+
+    /**
+     * Скачивает превью файла через WebDAV API Яндекс.Диска.
+     *
+     * Почему WebDAV, а не REST preview-ссылка:
+     *  - REST API в поле `preview` возвращает ссылку на downloader.disk.yandex.ru,
+     *    которая при запросе из кода (без браузерных куки) отдаёт 403;
+     *  - WebDAV API с заголовком Authorization: OAuth <токен> возвращает
+     *    готовое изображение (тело ответа) с кодом 200.
+     *
+     * Пример URL:
+     *   https://webdav.yandex.ru/Романовы/Праздники/фото.jpg?preview&size=M
+     *
+     * Требует тариф Яндекс 360 (у пользователя есть).
+     *
+     * @param url           полный URL WebDAV с параметрами ?preview&size=M
+     * @param authorization заголовок "OAuth <токен>"
+     * @return Response<ResponseBody> — тело ответа содержит байты изображения
+     */
+    @GET
+    suspend fun downloadPreviewWebDav(
+        @Url url: String,
+        @Header("Authorization") authorization: String
+    ): Response<ResponseBody>
 
     // ============================================================
     // КОМПАНЬОН ДЛЯ СОЗДАНИЯ КЛИЕНТА
