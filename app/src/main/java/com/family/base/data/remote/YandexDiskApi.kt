@@ -103,25 +103,24 @@ interface YandexDiskApi {
      * Получение информации о ресурсе (файле или папке) на диске пользователя.
      *
      * 🆕 v17.0.7: добавлены параметры `limit` и `offset`.
+     * 🆕 v20.4.10: добавлен параметр `previewSize` (preview_size) —
+     *              без него Диск не возвращает превью для галереи.
      *
      * ВАЖНО: Яндекс.Диск возвращает по умолчанию только 20 элементов.
-     * Если в папке больше 20 файлов — новые НЕ попадут в выдачу, и всё,
-     * что за 20-м элементом, будет невидимым. Именно из-за этого ломался
-     * changelog: файлы физически лежали на Диске, но list их не видел.
+     * Если в папке больше 20 файлов — новые НЕ попадут в выдачу.
      *
-     * @param limit максимум элементов в выдаче (default 200 — с запасом
-     *              для нашего changelog; Яндекс допускает до 10000).
-     * @param offset сдвиг для пагинации (default 0 — берём с начала).
+     * @param limit       максимум элементов в выдаче (default 200).
+     * @param offset      сдвиг для пагинации (default 0).
+     * @param previewSize размер превью (null — не запрашивать;
+     *                    "S"/"M"/"L" — запросить ссылку в поле `preview`).
      */
-      @GET("disk/resources")
     @GET("disk/resources")
     suspend fun getDiskResources(
         @Header("Authorization") authorization: String,
         @Query("path") path: String,
         @Query("limit") limit: Int = 200,
         @Query("offset") offset: Int = 0,
-        @Query("preview_size") previewSize: String? = null,
-        @Query("preview_crop") previewCrop: Boolean? = null
+        @Query("preview_size") previewSize: String? = null
     ): retrofit2.Response<DiskResourcesResponse>
 
     /**
@@ -144,10 +143,6 @@ interface YandexDiskApi {
     companion object {
         private var INSTANCE: YandexDiskApi? = null
 
-        /**
-         * Таймауты подобраны так, чтобы «плохая сеть» отваливалась
-         * за 10-20 секунд, а не висела на дефолтных 10 / 60 / 60.
-         */
         private const val CONNECT_TIMEOUT_SEC = 10L
         private const val READ_TIMEOUT_SEC = 15L
         private const val WRITE_TIMEOUT_SEC = 20L
