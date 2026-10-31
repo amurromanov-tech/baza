@@ -113,12 +113,13 @@ class GalleryRepository(
                 )
 
             val api = YandexDiskApi.getInstance()
-            val response = api.getDiskResources(
-                authorization = auth,
-                path = path,
-                limit = PAGE_SIZE,
-                offset = offset
-            )
+           val response = api.getDiskResources(
+    authorization = auth,
+    path = path,
+    limit = PAGE_SIZE,
+    offset = offset,
+    previewSize = "M"
+)
 
             if (!response.isSuccessful) {
                 Logger.log(
