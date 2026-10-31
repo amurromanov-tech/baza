@@ -74,6 +74,8 @@ class BaseApplication : Application(), ImageLoaderFactory {
         private const val BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
+        private const val TAG_COIL = "CoilNetwork"
     }
 
     override fun onCreate() {
@@ -129,25 +131,43 @@ class BaseApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         // 🆕 v20.5.3: сетевой клиент Coil с принудительной подменой UA для хоста Яндекс.Диска.
-        // Предыдущая версия интерцептора, возможно, не применялась к запросам Coil
-        // (Coil 2.x использует Call.Factory, а не переданный OkHttpClient напрямую).
-        // Здесь используем networkInterceptors, чтобы гарантировать выполнение на сетевом уровне.
+        // 🆕 v20.5.7: добавлена диагностика ответа (код, Content-Type, длина),
+        //             и Accept сужен до image/* (без avif/webp, которые Coil 2.4.0
+        //             может не декодировать).
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(40, TimeUnit.SECONDS)
             .writeTimeout(40, TimeUnit.SECONDS)
             .addNetworkInterceptor { chain ->
                 val request = chain.request()
-                if (request.url.host == YANDEX_DISK_HOST) {
-                    val newRequest = request.newBuilder()
+                val isYandex = request.url.host == YANDEX_DISK_HOST
+
+                val newRequest = if (isYandex) {
+                    request.newBuilder()
                         .header("User-Agent", BROWSER_USER_AGENT)
-                        .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                        // ⚠️ Только image/jpeg и image/png — без avif/webp,
+                        // чтобы Coil 2.4.0 точно смог декодировать.
+                        .header("Accept", "image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5")
                         .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                         .build()
-                    chain.proceed(newRequest)
                 } else {
-                    chain.proceed(request)
+                    request
                 }
+
+                val response = chain.proceed(newRequest)
+
+                if (isYandex) {
+                    val code = response.code
+                    val contentType = response.header("Content-Type") ?: "null"
+                    val length = response.header("Content-Length") ?: "null"
+                    Logger.log(
+                        TAG_COIL,
+                        "Coil network: code=$code, Content-Type=$contentType, " +
+                            "Content-Length=$length, url=${request.url}"
+                    )
+                }
+
+                response
             }
             .build()
 
