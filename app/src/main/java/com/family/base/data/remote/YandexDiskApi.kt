@@ -113,12 +113,13 @@ interface YandexDiskApi {
      *              для нашего changelog; Яндекс допускает до 10000).
      * @param offset сдвиг для пагинации (default 0 — берём с начала).
      */
-    @GET("disk/resources")
+      @GET("disk/resources")
     suspend fun getDiskResources(
         @Header("Authorization") authorization: String,
         @Query("path") path: String,
         @Query("limit") limit: Int = 200,
-        @Query("offset") offset: Int = 0
+        @Query("offset") offset: Int = 0,
+        @Query("preview_size") previewSize: String? = null
     ): retrofit2.Response<DiskResourcesResponse>
 
     /**
