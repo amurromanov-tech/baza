@@ -27,21 +27,12 @@ class BaseApplication : Application(), ImageLoaderFactory {
     companion object {
         private var instance: BaseApplication? = null
 
-        // ============================================================
-        // ГЛОБАЛЬНЫЙ VIEWMODEL — живёт всё время жизни приложения
-        // ============================================================
         lateinit var mainViewModel: MainViewModel
             private set
 
-        // ============================================================
-        // ГЛОБАЛЬНЫЙ СКОУП ДЛЯ ФОНОВЫХ ЗАДАЧ
-        // ============================================================
         val applicationScope: CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-        // ============================================================
-        // НАСТРОЙКИ ТЕМЫ (SharedPreferences)
-        // ============================================================
         const val PREFS_NAME = "baza_settings"
         const val KEY_THEME_MODE = "theme_mode"
 
@@ -78,14 +69,7 @@ class BaseApplication : Application(), ImageLoaderFactory {
             Logger.log("BaseApplication", "Applied theme: $mode (nightMode=$nightMode)")
         }
 
-        // ============================================================
-        // 🆕 v20.4.10: User-Agent для Coil при загрузке с Яндекс.Диска
-        // ============================================================
-        // Яндекс.Диск блокирует запросы к /preview/... с не-браузерным
-        // User-Agent (OkHttp по умолчанию шлёт "okhttp/4.11.0" → 403).
-        // Браузер шлёт браузерный UA → 200. Coil использует свой
-        // OkHttpClient, поэтому подменяем UA ТОЛЬКО для хоста
-        // downloader.disk.yandex.ru — остальные запросы не трогаем.
+        // 🆕 v20.5.3: Coil для Яндекс.Диска
         private const val YANDEX_DISK_HOST = "downloader.disk.yandex.ru"
         private const val BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
@@ -97,18 +81,13 @@ class BaseApplication : Application(), ImageLoaderFactory {
         instance = this
 
         Logger.init(this)
-
         applySavedTheme(this)
 
         mainViewModel = MainViewModel(this)
         Logger.log("BaseApplication", "Global MainViewModel initialized")
 
-        // Канал уведомлений для напоминаний
         ensureReminderChannel(this)
 
-        // 🆕 v20.1.0 (Вариант A): глобальное время суток убрано.
-        // Здесь по-прежнему только isEnabled — читаем флаг «напоминания включены».
-        // Планировщик сам решит: per-task remindAt / dueDate-15мин / умный пинг 08:00.
         try {
             if (TaskReminderPreferences.isEnabled(this)) {
                 applicationScope.launch {
@@ -149,29 +128,31 @@ class BaseApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
-        // 🆕 v20.4.10: OkHttpClient для Coil с подменой User-Agent
-        // для хоста downloader.disk.yandex.ru (иначе 403 на preview).
-        val coilOkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor { chain ->
+        // 🆕 v20.5.3: сетевой клиент Coil с принудительной подменой UA для хоста Яндекс.Диска.
+        // Предыдущая версия интерцептора, возможно, не применялась к запросам Coil
+        // (Coil 2.x использует Call.Factory, а не переданный OkHttpClient напрямую).
+        // Здесь используем networkInterceptors, чтобы гарантировать выполнение на сетевом уровне.
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(40, TimeUnit.SECONDS)
+            .writeTimeout(40, TimeUnit.SECONDS)
+            .addNetworkInterceptor { chain ->
                 val request = chain.request()
-                val host = request.url.host
-                val newRequest = if (host == YANDEX_DISK_HOST) {
-                    request.newBuilder()
+                if (request.url.host == YANDEX_DISK_HOST) {
+                    val newRequest = request.newBuilder()
                         .header("User-Agent", BROWSER_USER_AGENT)
-                        .header("Accept", "image/*,*/*;q=0.8")
+                        .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                        .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                         .build()
+                    chain.proceed(newRequest)
                 } else {
-                    request
+                    chain.proceed(request)
                 }
-                chain.proceed(newRequest)
             }
             .build()
 
         return ImageLoader.Builder(this)
-            .okHttpClient(coilOkHttpClient)
+            .okHttpClient(okHttpClient)
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
