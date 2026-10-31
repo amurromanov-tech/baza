@@ -14,8 +14,8 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import coil.ImageRequest
 import coil.load
+import coil.request.ImageRequest
 import com.family.base.R
 import com.family.base.util.Logger
 import com.github.chrisbanes.photoview.PhotoView
@@ -46,6 +46,8 @@ import java.io.File
  * В лог пишется onSuccess (размер, mime) и onError (точная причина:
  * HTTP-код, exception). Нужно, чтобы понять, почему превью Диска
  * не грузятся.
+ * 🆕 v20.5.5: исправлен импорт ImageRequest — coil.request.ImageRequest
+ * (в Coil 2.x класс живёт в пакете coil.request, а не coil).
  */
 class FullscreenImageActivity : AppCompatActivity() {
 
