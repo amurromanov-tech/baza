@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🆕 v20.5.12 (Шаг 2): фон нижней панели кнопок в FullscreenImageActivity.
+
+  Полупрозрачная тёмная «капсула» со скруглением 24dp.
+  Кнопки внутри — белые иконки (тинтинг в коде).
+  M2-совместим (никаких M3-атрибутов).
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <solid android:color="#66000000" />
+
+    <corners android:radius="24dp" />
+
+</shape>
