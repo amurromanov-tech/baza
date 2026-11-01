@@ -12,9 +12,11 @@ import com.family.base.R
 import com.family.base.data.model.GalleryItem
 import com.family.base.data.repository.GalleryRepository
 import com.family.base.util.Logger
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 
 /**
  * 🆕 v20.4.9: адаптер сетки галереи.
@@ -22,13 +24,9 @@ import kotlinx.coroutines.Dispatchers
  * 🆕 v20.6.1: превью грузятся через WebDAV (GalleryRepository.downloadPreview),
  * а не по прямой preview-ссылке Диска (она отдаёт 403 без куки).
  *
- * Логика bindPhoto:
- *  1. Показываем плейсхолдер.
- *  2. В applicationScope запускаем downloadPreview(item.path).
- *  3. По завершении на главном потоке грузим байты через Coil.load(byteArray).
- *
- * Кэш: Coil кэширует байты в своём memory/disk cache по ключу byteArray.hashCode().
- * При повторном bind (скролл туда-обратно) повторного запроса не будет.
+ * 🆕 v20.6.2: добавлен Semaphore(3) — не больше 3 параллельных
+ * запросов к WebDAV. Без этого 60+ одновременных запросов дают
+ * SocketTimeoutException (WebDAV не любит такое количество соединений).
  */
 class GalleryAdapter(
     private val onFolderClick: (GalleryItem) -> Unit,
@@ -38,6 +36,7 @@ class GalleryAdapter(
 
     companion object {
         private const val TAG = "GalleryAdapter"
+        private const val MAX_PARALLEL_DOWNLOADS = 3
     }
 
     private var items: List<GalleryItem> = emptyList()
@@ -47,6 +46,12 @@ class GalleryAdapter(
      * Передаётся из GalleryActivity (там уже есть GalleryRepository).
      */
     var galleryRepository: GalleryRepository? = null
+
+    /**
+     * 🆕 v20.6.2: ограничитель параллельных загрузок.
+     * Не больше 3 одновременных запросов к WebDAV — иначе таймауты.
+     */
+    private val downloadSemaphore = Semaphore(MAX_PARALLEL_DOWNLOADS)
 
     fun submitList(newItems: List<GalleryItem>) {
         items = newItems
@@ -99,8 +104,6 @@ class GalleryAdapter(
     // ============================================================
 
     private fun bindVideo(holder: ViewHolder, item: GalleryItem) {
-        // Превью для видео через WebDAV не запрашиваем —
-        // Диск не генерирует превью для видео. Только плейсхолдер.
         holder.ivThumb.load(R.drawable.ic_item_default) {
             crossfade(false)
             placeholder(R.drawable.ic_item_default)
@@ -132,18 +135,22 @@ class GalleryAdapter(
 
         val imageView = holder.ivThumb
         val itemName = item.name
+        val itemPath = item.path
 
         BaseApplication.applicationScope.launch {
-            val bytes = repo.downloadPreview(item.path)
-            if (bytes == null) {
-                Logger.log(TAG, "bindPhoto: preview null for '$itemName'")
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                imageView.load(bytes) {
-                    crossfade(true)
-                    placeholder(R.drawable.ic_item_default)
-                    error(R.drawable.ic_item_default)
+            // 🆕 v20.6.2: не больше 3 параллельных запросов.
+            downloadSemaphore.withPermit {
+                val bytes = repo.downloadPreview(itemPath)
+                if (bytes == null) {
+                    Logger.log(TAG, "bindPhoto: preview null for '$itemName'")
+                    return@withPermit
+                }
+                withContext(Dispatchers.Main) {
+                    imageView.load(bytes) {
+                        crossfade(true)
+                        placeholder(R.drawable.ic_item_default)
+                        error(R.drawable.ic_item_default)
+                    }
                 }
             }
         }
