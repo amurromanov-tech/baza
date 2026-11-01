@@ -47,8 +47,8 @@ class GalleryRepository(
         // 🆕 v20.6.3: учётные данные для WebDAV (Basic-аутентификация).
         // Логин — твой Яндекс ID. Пароль — пароль приложения (тип «Файлы WebDAV»).
         // ⚠️ ВСТАВЬ ПАРОЛЬ СЮДА (между кавычками):
-        private const val WEBDAV_LOGIN = "AmurSVB@yandex.ru"
-        private const val WEBDAV_PASSWORD = "ВСТАВЬ_ПАРОЛЬ_СЮДА"
+        private const val WEBDAV_LOGIN = "AmurSVB"
+        private const val WEBDAV_PASSWORD = "sespaidjlcwijqbu"
     }
 
     // ============================================================
