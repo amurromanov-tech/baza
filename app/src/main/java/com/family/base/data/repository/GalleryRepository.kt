@@ -1,5 +1,11 @@
 package com.family.base.data.repository
 
+import android.content.ContentValues
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
 import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
@@ -13,6 +19,8 @@ import com.family.base.util.DiskPaths
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.net.URLEncoder
 
 /**
@@ -22,8 +30,10 @@ import java.net.URLEncoder
  *  1. Листинг папки «/Романовы» (и вложенных) через Яндекс.Диск API.
  *  2. Создание системной папки «🖼️ Галерея» в локальной БД (Room).
  *  3. 🆕 v20.6.3: скачивание превью через WebDAV с Basic-аутентификацией.
+ *  4. 🆕 v20.5.12: скачивание ОРИГИНАЛА (downloadOriginal) и сохранение
+ *     в галерею телефона через MediaStore (saveToMediaStore).
  *
- * ⚠️ Оригиналы не качаются. Только превью через WebDAV.
+ * ⚠️ Превью — через WebDAV, оригинал — тоже через WebDAV (?download).
  *
  * 🆕 v20.6.3: для WebDAV используем Basic-аутентификацию
  * (логин + пароль приложения), а не OAuth-токен. Причина: OAuth-токен,
@@ -49,6 +59,12 @@ class GalleryRepository(
         // ⚠️ ВСТАВЬ ПАРОЛЬ СЮДА (между кавычками):
         private const val WEBDAV_LOGIN = "AmurSVB"
         private const val WEBDAV_PASSWORD = "sespaidjlcwijqbu"
+
+        /** 🆕 v20.5.12: папка в галерее телефона. */
+        const val MEDIA_SUBDIR = "BAZA"
+
+        /** 🆕 v20.5.12: имя файла по умолчанию, если из пути не извлеклось. */
+        private const val DEFAULT_FILE_NAME = "baza_photo.jpg"
     }
 
     // ============================================================
@@ -200,6 +216,212 @@ class GalleryRepository(
         } catch (e: Exception) {
             Logger.log(TAG, "downloadPreview error for $path: ${e.message}", e)
             null
+        }
+    }
+
+    // ============================================================
+    // 🆕 v20.5.12: СКАЧИВАНИЕ ОРИГИНАЛА ЧЕРЕЗ WEBDAV
+    // ============================================================
+
+    /**
+     * Скачивает ОРИГИНАЛ файла с Диска через WebDAV.
+     *
+     * Используется для «💾 Сохранить в галерею» — оригинал 4-5 МБ.
+     * Для превью сетки используй [downloadPreview] (size=M, быстрее).
+     *
+     * @param path путь на Диске, например "/Романовы/.../IMG_1234.jpg".
+     * @return байты файла или null при ошибке/отсутствии учётных данных.
+     */
+    suspend fun downloadOriginal(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val auth = getBasicAuthHeader()
+                ?: run {
+                    Logger.log(TAG, "downloadOriginal: no WebDAV credentials")
+                    return@withContext null
+                }
+
+            val encodedPath = encodeWebDavPath(path)
+            // ?download — WebDAV отдаёт оригинал как есть (без ресайза).
+            val url = "$WEBDAV_BASE$encodedPath?download"
+
+            Logger.log(
+                TAG,
+                "downloadOriginal: start for '$path' (url=$url)"
+            )
+
+            val api = YandexDiskApi.getInstance()
+            val response = api.downloadPreviewWebDav(url, auth)
+
+            if (!response.isSuccessful) {
+                Logger.log(
+                    TAG,
+                    "downloadOriginal: HTTP ${response.code()} for $path (url=$url)"
+                )
+                return@withContext null
+            }
+
+            val body = response.body()
+                ?: return@withContext null
+
+            val bytes = body.bytes()
+            Logger.log(
+                TAG,
+                "downloadOriginal: OK ${bytes.size} bytes for '${path.substringAfterLast('/')}'"
+            )
+            bytes
+        } catch (e: Exception) {
+            Logger.log(TAG, "downloadOriginal error for $path: ${e.message}", e)
+            null
+        }
+    }
+
+    // ============================================================
+    // 🆕 v20.5.12: СОХРАНЕНИЕ В ГАЛЕРЕЮ ТЕЛЕФОНА (MediaStore)
+    // ============================================================
+
+    /**
+     * Сохраняет байты изображения в галерею телефона.
+     *
+     * API 29+ (Q): через MediaStore, без разрешений, папка Pictures/BAZA.
+     * API 24-28: через прямой File в Pictures/BAZA + WRITE_EXTERNAL_STORAGE.
+     *
+     * @param bytes    байты оригинала (см. [downloadOriginal]).
+     * @param fileName желаемое имя файла (обычно имя с Диска).
+     * @return Uri сохранённого файла или null при ошибке.
+     */
+    suspend fun saveToMediaStore(
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val context = BaseApplication.getAppContext()
+            val safeName = sanitizeFileName(fileName)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveViaMediaStoreQ(context, bytes, safeName)
+            } else {
+                saveViaLegacyFile(context, bytes, safeName)
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveToMediaStore error for '$fileName': ${e.message}", e)
+            null
+        }
+    }
+
+    /** API 29+: MediaStore без разрешений. */
+    private fun saveViaMediaStoreQ(
+        context: Context,
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, mimeForFileName(fileName))
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$MEDIA_SUBDIR")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+
+        try {
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(bytes)
+                out.flush()
+            } ?: run {
+                resolver.delete(uri, null, null)
+                return null
+            }
+
+            val done = ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }
+            resolver.update(uri, done, null, null)
+
+            Logger.log(TAG, "saveViaMediaStoreQ: OK $uri ($fileName, ${bytes.size} bytes)")
+            return uri
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveViaMediaStoreQ error: ${e.message}", e)
+            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+            return null
+        }
+    }
+
+    /** API 24-28: прямой File + WRITE_EXTERNAL_STORAGE. */
+    @Suppress("DEPRECATION")
+    private fun saveViaLegacyFile(
+        context: Context,
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? {
+        val picturesDir = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_PICTURES
+        )
+        val targetDir = File(picturesDir, MEDIA_SUBDIR)
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            Logger.log(TAG, "saveViaLegacyFile: cannot create dir $targetDir")
+            return null
+        }
+
+        val targetFile = uniqueFile(targetDir, fileName)
+        FileOutputStream(targetFile).use { out ->
+            out.write(bytes)
+            out.flush()
+        }
+
+        // Сообщаем галерее телефона о новом файле (иначе не увидит сразу).
+        try {
+            android.media.MediaScannerConnection.scanFile(
+                context,
+                arrayOf(targetFile.absolutePath),
+                arrayOf(mimeForFileName(fileName)),
+                null
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveViaLegacyFile: scanFile error: ${e.message}")
+        }
+
+        val uri = Uri.fromFile(targetFile)
+        Logger.log(TAG, "saveViaLegacyFile: OK $uri ($fileName, ${bytes.size} bytes)")
+        return uri
+    }
+
+    /** Уникальное имя в папке: IMG.jpg → IMG_1.jpg, IMG_2.jpg... */
+    private fun uniqueFile(dir: File, fileName: String): File {
+        val base = File(dir, fileName)
+        if (!base.exists()) return base
+
+        val dot = fileName.lastIndexOf('.')
+        val name = if (dot > 0) fileName.substring(0, dot) else fileName
+        val ext = if (dot > 0) fileName.substring(dot) else ""
+
+        var i = 1
+        while (true) {
+            val candidate = File(dir, "${name}_$i$ext")
+            if (!candidate.exists()) return candidate
+            i++
+        }
+    }
+
+    /** Убираем недопустимые символы из имени. */
+    private fun sanitizeFileName(raw: String): String {
+        val trimmed = raw.trim().ifEmpty { DEFAULT_FILE_NAME }
+        val cleaned = trimmed.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
+        return if (cleaned.isEmpty()) DEFAULT_FILE_NAME else cleaned
+    }
+
+    /** MIME по расширению. По умолчанию image/jpeg. */
+    private fun mimeForFileName(fileName: String): String {
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".gif") -> "image/gif"
+            lower.endsWith(".heic") || lower.endsWith(".heif") -> "image/heic"
+            lower.endsWith(".bmp") -> "image/bmp"
+            else -> "image/jpeg"
         }
     }
 
