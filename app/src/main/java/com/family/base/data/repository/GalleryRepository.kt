@@ -243,7 +243,7 @@ class GalleryRepository(
      * Возвращает "Basic base64(login:password)" или null, если пароль не задан.
      */
     private fun getBasicAuthHeader(): String? {
-        if (WEBDAV_PASSWORD == "sespaidjlcwijqbu" || WEBDAV_PASSWORD.isEmpty()) {
+        if (WEBDAV_PASSWORD == "ВСТАВЬ_ПАРОЛЬ_СЮДА" || WEBDAV_PASSWORD.isEmpty()) {
             Logger.log(TAG, "getBasicAuthHeader: password not set, skip")
             return null
         }
