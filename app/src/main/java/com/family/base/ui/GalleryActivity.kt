@@ -28,6 +28,10 @@ import com.family.base.util.Logger
  * openPhoto теперь передаёт EXTRA_GALLERY_PATH (путь на Диске),
  * а не EXTRA_IMAGE_URL — FullscreenImageActivity сама скачает превью
  * через WebDAV.
+ *
+ * 🆕 v20.5.12 (Шаг 2): openPhoto дополнительно передаёт
+ * EXTRA_FILE_URL (для «Копировать ссылку», вариант B),
+ * EXTRA_SIZE_BYTES и EXTRA_CREATED_MILLIS (для «Информация»).
  */
 class GalleryActivity : AppCompatActivity() {
 
@@ -226,10 +230,17 @@ class GalleryActivity : AppCompatActivity() {
         // 🆕 v20.6.1: передаём ПУТЬ на Диске — FullscreenImageActivity
         // сама скачает превью через WebDAV (preview-ссылки REST API
         // отдают 403 без куки браузера).
+        //
+        // 🆕 v20.5.12 (Шаг 2): дополнительно передаём fileUrl (для
+        // «Копировать ссылку», вариант B), размер и дату создания
+        // (для «Информация»).
         Logger.log(TAG, "openPhoto: ${item.name} → ${item.path}")
         val intent = Intent(this, FullscreenImageActivity::class.java).apply {
             putExtra(FullscreenImageActivity.EXTRA_GALLERY_PATH, item.path)
             putExtra(FullscreenImageActivity.EXTRA_TITLE, item.name)
+            item.fileUrl?.let { putExtra(FullscreenImageActivity.EXTRA_FILE_URL, it) }
+            item.sizeBytes?.let { putExtra(FullscreenImageActivity.EXTRA_SIZE_BYTES, it) }
+            item.createdMillis?.let { putExtra(FullscreenImageActivity.EXTRA_CREATED_MILLIS, it) }
         }
         startActivity(intent)
     }
