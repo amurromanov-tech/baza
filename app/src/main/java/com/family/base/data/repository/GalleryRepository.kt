@@ -23,6 +23,10 @@ import java.net.URLEncoder
  *  3. 🆕 v20.6.1: скачивание превью через WebDAV (с OAuth-токеном).
  *
  * ⚠️ Оригиналы не качаются. Только превью через WebDAV.
+ *
+ * 🆕 v20.6.2: encodeWebDavPath теперь срезает префикс "disk:".
+ * REST API возвращает пути вида "disk:/Романовы/...", а WebDAV
+ * ожидает просто "/Романовы/...". Без срезания — HTTP 401.
  */
 class GalleryRepository(
     private val db: AppDatabase
@@ -154,17 +158,10 @@ class GalleryRepository(
     /**
      * Скачивает превью файла через WebDAV API (с OAuth-токеном).
      *
-     * @param path абсолютный путь на Диске, например
-     *             "/Романовы/Праздники/2017.05.09 - др Витя Соснин/фото.jpg".
-     *             Берётся из GalleryItem.path.
+     * @param path абсолютный путь на Диске. Может быть в формате
+     *             "disk:/Романовы/..." (из REST API) или "/Романовы/..."
+     *             (уже очищенный). Префикс "disk:" срезается.
      * @return байты изображения (JPEG) или null при ошибке.
-     *
-     * Кодирование пути:
-     *  - Каждый сегмент пути кодируется через URLEncoder (UTF-8),
-     *    пробелы → %20, кириллица → %D0%... и т.д.
-     *  - Слэши между сегментами сохраняются как есть.
-     *  - Пример: "/Романовы/фото 1.jpg" →
-     *    "https://webdav.yandex.ru/%D0%A0%D0%BE%D0%BC%D0%B0%D0%BD%D0%BE%D0%B2%D1%8B/%D1%84%D0%BE%D1%82%D0%BE%201.jpg?preview&size=M"
      */
     suspend fun downloadPreview(path: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
@@ -177,7 +174,12 @@ class GalleryRepository(
             val encodedPath = encodeWebDavPath(path)
             val url = "$WEBDAV_BASE$encodedPath?preview&size=M"
 
-            Logger.log(TAG, "downloadPreview: GET $url")
+            // 🆕 v20.6.2: логируем длину заголовка и префикс (без токена).
+            Logger.log(
+                TAG,
+                "downloadPreview: auth length=${auth.length}, " +
+                    "prefix=${auth.take(6)}, url=$url"
+            )
 
             val api = YandexDiskApi.getInstance()
             val response = api.downloadPreviewWebDav(url, auth)
@@ -185,7 +187,7 @@ class GalleryRepository(
             if (!response.isSuccessful) {
                 Logger.log(
                     TAG,
-                    "downloadPreview: HTTP ${response.code()} for $path"
+                    "downloadPreview: HTTP ${response.code()} for $path (url=$url)"
                 )
                 return@withContext null
             }
@@ -208,10 +210,21 @@ class GalleryRepository(
     /**
      * Кодирует путь для WebDAV: каждый сегмент через URLEncoder,
      * слэши сохраняются.
+     *
+     * 🆕 v20.6.2: срезаем префикс "disk:" — REST API возвращает
+     * пути вида "disk:/Романовы/...", а WebDAV ожидает "/Романовы/...".
+     * Без этого WebDAV отдаёт 401.
      */
     private fun encodeWebDavPath(path: String): String {
+        // Срезаем "disk:" (если есть).
+        val cleanPath = if (path.startsWith("disk:")) {
+            path.removePrefix("disk:")
+        } else {
+            path
+        }
+
         // Путь всегда начинается с "/".
-        val normalized = if (path.startsWith("/")) path else "/$path"
+        val normalized = if (cleanPath.startsWith("/")) cleanPath else "/$cleanPath"
         val segments = normalized.split("/").filter { it.isNotEmpty() }
         val encodedSegments = segments.map { seg ->
             URLEncoder.encode(seg, "UTF-8").replace("+", "%20")
