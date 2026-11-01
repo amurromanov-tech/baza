@@ -1,5 +1,6 @@
 package com.family.base.data.repository
 
+import android.util.Base64
 import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
@@ -20,13 +21,18 @@ import java.net.URLEncoder
  * Отвечает за:
  *  1. Листинг папки «/Романовы» (и вложенных) через Яндекс.Диск API.
  *  2. Создание системной папки «🖼️ Галерея» в локальной БД (Room).
- *  3. 🆕 v20.6.1: скачивание превью через WebDAV (с OAuth-токеном).
+ *  3. 🆕 v20.6.3: скачивание превью через WebDAV с Basic-аутентификацией.
  *
  * ⚠️ Оригиналы не качаются. Только превью через WebDAV.
  *
- * 🆕 v20.6.2: encodeWebDavPath теперь срезает префикс "disk:".
- * REST API возвращает пути вида "disk:/Романовы/...", а WebDAV
- * ожидает просто "/Романовы/...". Без срезания — HTTP 401.
+ * 🆕 v20.6.3: для WebDAV используем Basic-аутентификацию
+ * (логин + пароль приложения), а не OAuth-токен. Причина: OAuth-токен,
+ * который работает для REST API, WebDAV-сервер отклоняет с 401.
+ * Basic с паролем приложения (тип «Файлы WebDAV») — официальный путь.
+ *
+ * ⚠️ ПАРОЛЬ ПРИЛОЖЕНИЯ: вставь его в WEBDAV_PASSWORD ниже.
+ * Создаётся в Яндекс ID → Безопасность → Пароли приложений →
+ * тип «Файлы WebDAV». Начинает действовать через 2-3 часа после создания.
  */
 class GalleryRepository(
     private val db: AppDatabase
@@ -37,16 +43,18 @@ class GalleryRepository(
     companion object {
         const val PAGE_SIZE = 100
         private const val WEBDAV_BASE = "https://webdav.yandex.ru"
+
+        // 🆕 v20.6.3: учётные данные для WebDAV (Basic-аутентификация).
+        // Логин — твой Яндекс ID. Пароль — пароль приложения (тип «Файлы WebDAV»).
+        // ⚠️ ВСТАВЬ ПАРОЛЬ СЮДА (между кавычками):
+        private const val WEBDAV_LOGIN = "AmurSVB@yandex.ru"
+        private const val WEBDAV_PASSWORD = "ВСТАВЬ_ПАРОЛЬ_СЮДА"
     }
 
     // ============================================================
     // ЛОКАЛЬНАЯ СИСТЕМНАЯ ПАПКА «🖼️ ГАЛЕРЕЯ»
     // ============================================================
 
-    /**
-     * Создаёт системную папку «🖼️ Галерея» в локальной БД,
-     * если её ещё нет. Идемпотентно.
-     */
     suspend fun ensureGalleryFolder(createdBy: String) = withContext(Dispatchers.IO) {
         val existing = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_GALLERY)
         if (existing != null) {
@@ -75,18 +83,15 @@ class GalleryRepository(
     }
 
     // ============================================================
-    // ЛИСТИНГ ПАПКИ
+    // ЛИСТИНГ ПАПКИ (REST API, OAuth)
     // ============================================================
 
-    /**
-     * Одна страница листинга папки на Яндекс.Диске.
-     */
     suspend fun listPage(
         path: String,
         offset: Int
     ): Result<GalleryListPage> = withContext(Dispatchers.IO) {
         try {
-            val auth = getAuthHeader()
+            val auth = getOAuthHeader()
                 ?: return@withContext Result.failure(
                     IllegalStateException("Нет токена Яндекс.Диска")
                 )
@@ -152,29 +157,20 @@ class GalleryRepository(
     }
 
     // ============================================================
-    // 🆕 v20.6.1: СКАЧИВАНИЕ ПРЕВЬЮ ЧЕРЕЗ WEBDAV
+    // 🆕 v20.6.3: СКАЧИВАНИЕ ПРЕВЬЮ ЧЕРЕЗ WEBDAV (Basic)
     // ============================================================
 
-    /**
-     * Скачивает превью файла через WebDAV API (с OAuth-токеном).
-     *
-     * @param path абсолютный путь на Диске. Может быть в формате
-     *             "disk:/Романовы/..." (из REST API) или "/Романовы/..."
-     *             (уже очищенный). Префикс "disk:" срезается.
-     * @return байты изображения (JPEG) или null при ошибке.
-     */
     suspend fun downloadPreview(path: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
-            val auth = getAuthHeader()
+            val auth = getBasicAuthHeader()
                 ?: run {
-                    Logger.log(TAG, "downloadPreview: no token")
+                    Logger.log(TAG, "downloadPreview: no WebDAV credentials")
                     return@withContext null
                 }
 
             val encodedPath = encodeWebDavPath(path)
             val url = "$WEBDAV_BASE$encodedPath?preview&size=M"
 
-            // 🆕 v20.6.2: логируем длину заголовка и префикс (без токена).
             Logger.log(
                 TAG,
                 "downloadPreview: auth length=${auth.length}, " +
@@ -208,22 +204,15 @@ class GalleryRepository(
     }
 
     /**
-     * Кодирует путь для WebDAV: каждый сегмент через URLEncoder,
-     * слэши сохраняются.
-     *
-     * 🆕 v20.6.2: срезаем префикс "disk:" — REST API возвращает
-     * пути вида "disk:/Романовы/...", а WebDAV ожидает "/Романовы/...".
-     * Без этого WebDAV отдаёт 401.
+     * Кодирует путь для WebDAV. Срезает префикс "disk:".
      */
     private fun encodeWebDavPath(path: String): String {
-        // Срезаем "disk:" (если есть).
         val cleanPath = if (path.startsWith("disk:")) {
             path.removePrefix("disk:")
         } else {
             path
         }
 
-        // Путь всегда начинается с "/".
         val normalized = if (cleanPath.startsWith("/")) cleanPath else "/$cleanPath"
         val segments = normalized.split("/").filter { it.isNotEmpty() }
         val encodedSegments = segments.map { seg ->
@@ -233,17 +222,37 @@ class GalleryRepository(
     }
 
     // ============================================================
-    // ВСПОМОГАТЕЛЬНЫЕ
+    // АУТЕНТИФИКАЦИЯ
     // ============================================================
 
-    private fun getAuthHeader(): String? {
+    /** OAuth-токен для REST API. */
+    private fun getOAuthHeader(): String? {
         return try {
             val context = BaseApplication.getAppContext()
             val tokenStorage = TokenStorage(context)
             val token = tokenStorage.getAccessToken()
             if (token.isNullOrEmpty()) null else "OAuth $token"
         } catch (e: Exception) {
-            Logger.log(TAG, "getAuthHeader error: ${e.message}")
+            Logger.log(TAG, "getOAuthHeader error: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 🆕 v20.6.3: Basic-аутентификация для WebDAV.
+     * Возвращает "Basic base64(login:password)" или null, если пароль не задан.
+     */
+    private fun getBasicAuthHeader(): String? {
+        if (WEBDAV_PASSWORD == "sespaidjlcwijqbu" || WEBDAV_PASSWORD.isEmpty()) {
+            Logger.log(TAG, "getBasicAuthHeader: password not set, skip")
+            return null
+        }
+        return try {
+            val credentials = "$WEBDAV_LOGIN:$WEBDAV_PASSWORD"
+            val encoded = Base64.encodeToString(credentials.toByteArray(), Base64.NO_WRAP)
+            "Basic $encoded"
+        } catch (e: Exception) {
+            Logger.log(TAG, "getBasicAuthHeader error: ${e.message}")
             null
         }
     }
