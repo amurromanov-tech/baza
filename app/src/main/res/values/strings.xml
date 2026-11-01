@@ -64,4 +64,24 @@
     <!-- Toast (Шаг 1) -->
     <string name="gallery_video_soon">Видео будет в следующей версии</string>
     <string name="gallery_load_error">Ошибка загрузки: %1$s</string>
+
+    <!-- ============================================================ -->
+    <!-- 🆕 v20.5.12 (Шаг 2): СОХРАНЕНИЕ / ССЫЛКА / ИНФОРМАЦИЯ -->
+    <!-- ============================================================ -->
+
+    <string name="gallery_save">💾 Сохранить</string>
+    <string name="gallery_save_ok">Сохранено в галерею: Pictures/%1$s</string>
+    <string name="gallery_save_error">Не удалось сохранить фото</string>
+    <string name="gallery_save_permission_denied">Нет разрешения на запись в галерею</string>
+
+    <string name="gallery_copy_link">🔗 Копировать ссылку</string>
+    <string name="gallery_link_copied">Ссылка скопирована</string>
+    <string name="gallery_link_unavailable">Ссылка недоступна</string>
+
+    <string name="gallery_info_title">ℹ️ Информация</string>
+    <string name="gallery_info_name">Имя файла</string>
+    <string name="gallery_info_path">Путь на Диске</string>
+    <string name="gallery_info_size">Размер</string>
+    <string name="gallery_info_date">Дата создания</string>
+    <string name="gallery_close">Закрыть</string>
 </resources>
