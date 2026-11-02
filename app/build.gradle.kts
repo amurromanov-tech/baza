@@ -131,6 +131,12 @@ dependencies {
     // ===== OCR =====
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
 
+    // ===== 🆕 v20.5.14: ВИДЕО (ExoPlayer / Media3) =====
+    // MP4, MKV, WebM, 3GP, MOV — играет.
+    // AVI — НЕ играет (нет поддержки контейнера), уходит во внешний плеер.
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+
     // ===== TEST =====
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
