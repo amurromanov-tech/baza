@@ -1,6 +1,8 @@
 package com.family.base.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
@@ -32,6 +34,11 @@ import com.family.base.util.Logger
  * 🆕 v20.5.12 (Шаг 2): openPhoto дополнительно передаёт
  * EXTRA_FILE_URL (для «Копировать ссылку», вариант B),
  * EXTRA_SIZE_BYTES и EXTRA_CREATED_MILLIS (для «Информация»).
+ *
+ * 🆕 v20.5.14: onVideoClick выбирает плеер:
+ *  - MP4 / MKV / WebM / 3GP / MOV / M4V → VideoPlayerActivity (ExoPlayer);
+ *  - всё остальное (AVI и экзотика) → внешний плеер через ACTION_VIEW.
+ *  Причина: ExoPlayer не поддерживает контейнер AVI.
  */
 class GalleryActivity : AppCompatActivity() {
 
@@ -41,6 +48,26 @@ class GalleryActivity : AppCompatActivity() {
         const val EXTRA_PATH = "gallery_path"
 
         private const val PREFETCH_THRESHOLD = 5
+
+        /**
+         * 🆕 v20.5.14: расширения, которые ExoPlayer (Media3) точно играет.
+         * Всё остальное (AVI, WMV, FLV и т.п.) — во внешний плеер.
+         */
+        private val EXO_SUPPORTED_EXTENSIONS = setOf(
+            "mp4", "m4v", "mkv", "webm", "3gp", "3gpp", "mov"
+        )
+
+        /**
+         * MIME-типы, которые ExoPlayer точно играет.
+         */
+        private val EXO_SUPPORTED_MIMES = setOf(
+            "video/mp4",
+            "video/x-matroska",
+            "video/webm",
+            "video/3gpp",
+            "video/quicktime",
+            "video/x-m4v"
+        )
     }
 
     private lateinit var binding: ActivityGalleryBinding
@@ -111,7 +138,7 @@ class GalleryActivity : AppCompatActivity() {
         adapter = GalleryAdapter(
             onFolderClick = { item -> openSubfolder(item) },
             onPhotoClick = { item -> openPhoto(item) },
-            onVideoClick = { item -> showVideoSoonToast() }
+            onVideoClick = { item -> openVideo(item) }
         )
 
         // 🆕 v20.6.1: передаём repository адаптеру для WebDAV-превью.
@@ -245,7 +272,71 @@ class GalleryActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    private fun showVideoSoonToast() {
-        Toast.makeText(this, R.string.gallery_video_soon, Toast.LENGTH_SHORT).show()
+    // ============================================================
+    // 🆕 v20.5.14: ВИДЕО — ExoPlayer или внешний плеер
+    // ============================================================
+
+    private fun openVideo(item: GalleryItem) {
+        Logger.log(TAG, "openVideo: ${item.name} (fileUrl=${item.fileUrl})")
+
+        val url = item.fileUrl
+        if (url.isNullOrEmpty()) {
+            Logger.log(TAG, "openVideo: fileUrl is empty for '${item.name}'")
+            Toast.makeText(this, R.string.video_error, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val ext = item.name.substringAfterLast('.', "").lowercase()
+        val mime = mimeForExtension(ext)
+
+        if (isExoPlayerSupported(ext, mime)) {
+            Logger.log(TAG, "openVideo: ExoPlayer for '$ext' ($mime)")
+            val intent = Intent(this, VideoPlayerActivity::class.java).apply {
+                putExtra(VideoPlayerActivity.EXTRA_URL, url)
+                putExtra(VideoPlayerActivity.EXTRA_TITLE, item.name)
+                putExtra(VideoPlayerActivity.EXTRA_MIME, mime)
+            }
+            startActivity(intent)
+        } else {
+            Logger.log(TAG, "openVideo: external player for '$ext' ($mime)")
+            openInExternalPlayer(url, mime, item.name)
+        }
+    }
+
+    private fun isExoPlayerSupported(ext: String, mime: String): Boolean {
+        if (ext.isNotEmpty() && ext in EXO_SUPPORTED_EXTENSIONS) return true
+        if (mime in EXO_SUPPORTED_MIMES) return true
+        return false
+    }
+
+    private fun mimeForExtension(ext: String): String {
+        return when (ext) {
+            "mp4", "m4v" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "3gp", "3gpp" -> "video/3gpp"
+            "mov" -> "video/quicktime"
+            "avi" -> "video/x-msvideo"
+            "wmv" -> "video/x-ms-wmv"
+            "flv" -> "video/x-flv"
+            else -> "video/*"
+        }
+    }
+
+    private fun openInExternalPlayer(url: String, mime: String, title: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.parse(url), mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+            Logger.log(TAG, "openInExternalPlayer: launched '$title' ($mime)")
+        } catch (e: ActivityNotFoundException) {
+            Logger.log(TAG, "openInExternalPlayer: no app for $mime", e)
+            Toast.makeText(this, R.string.video_no_player, Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Logger.log(TAG, "openInExternalPlayer error: ${e.message}", e)
+            Toast.makeText(this, R.string.video_error, Toast.LENGTH_SHORT).show()
+        }
     }
 }
