@@ -11,7 +11,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.family.base.R
 import com.family.base.databinding.ActivityVideoPlayerBinding
 import com.family.base.util.Logger
@@ -19,21 +19,22 @@ import com.family.base.util.Logger
 /**
  * 🆕 v20.5.14: экран видеоплеера (ExoPlayer / Media3).
  *
+ * 🆕 v20.5.14-fix: useController и resizeMode выставляются здесь,
+ * в коде, потому что в XML Media3 таких атрибутов нет (это Java-сеттеры).
+ *
  * Что играет:
  *  - MP4, MKV, WebM, 3GP, MOV — ExoPlayer справляется.
  *  - AVI — ExoPlayer НЕ поддерживает контейнер, сюда не доходит:
- *    GalleryActivity для .avi сразу открывает внешний плеер
- *    (Intent.ACTION_VIEW). См. VideoFormats.isExoPlayerSupported().
+ *    GalleryActivity для .avi сразу открывает внешний плеер.
  *
  * Fallback:
- *  - Если ExoPlayer упал с ошибкой (битый файл, редкий кодек) —
- *    показываем errorContainer с кнопкой «Открыть в другом плеере».
+ *  - Если ExoPlayer упал с ошибкой — показываем errorContainer
+ *    с кнопкой «Открыть в другом плеере».
  *  - Кнопка в toolbar — тоже всегда доступна.
  *
  * Жизненный цикл:
  *  - onStart: инициализируем ExoPlayer.
  *  - onStop: release() — обязательно, иначе утечка и звук в фоне.
- *  - onNewIntent не нужен (launchMode standard).
  */
 class VideoPlayerActivity : AppCompatActivity() {
 
@@ -80,8 +81,20 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         setupToolbar()
         setupErrorButtons()
+        setupPlayerView()
 
         Logger.log(TAG, "=== VideoPlayerActivity onCreate FINISHED ===")
+    }
+
+    /**
+     * 🆕 v20.5.14-fix: настройки PlayerView, которых нет в XML.
+     *  - useController = true — встроенные контролы (play/pause, seek).
+     *  - resizeMode = FIT — вписываем видео в экран без обрезки.
+     */
+    private fun setupPlayerView() {
+        binding.playerView.useController = true
+        binding.playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        binding.playerView.setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
     }
 
     private fun setupToolbar() {
@@ -159,9 +172,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 Logger.log(TAG, "onPlayerError: ${error.errorCodeName} — ${error.message}", error)
                 binding.progressBar.visibility = View.GONE
                 binding.errorContainer.visibility = View.VISIBLE
-                binding.tvError.text = getString(
-                    R.string.video_error_open_external
-                )
+                binding.tvError.text = getString(R.string.video_error_open_external)
             }
         })
 
