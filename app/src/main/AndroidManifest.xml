@@ -36,6 +36,11 @@
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="mailto" />
         </intent>
+        <!-- 🆕 v20.5.14: внешний видеоплеер (для AVI и fallback) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
     </queries>
 
     <application
@@ -166,6 +171,19 @@
             android:exported="false"
             android:screenOrientation="portrait"
             tools:ignore="DiscouragedApi,LockedOrientationActivity" />
+
+        <!-- ============================================================ -->
+        <!-- 🆕 v20.5.14: ВИДЕОПЛЕЕР (ExoPlayer / Media3)               -->
+        <!-- Свободная ориентация — видео удобнее смотреть в ландшафте.   -->
+        <!-- configChanges — чтобы поворот не пересоздавал Activity       -->
+        <!-- (ExoPlayer продолжает играть без паузы).                    -->
+        <!-- ============================================================ -->
+        <activity
+            android:name=".ui.VideoPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.BAZA.Fullscreen"
+            tools:ignore="DiscouragedApi" />
 
         <!-- ============================================================ -->
         <!-- НАСТРОЙКИ И РАЗДЕЛЫ -->
