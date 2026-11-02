@@ -31,7 +31,6 @@ import coil.load
 import com.family.base.BaseApplication
 import com.family.base.R
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.model.GalleryItem
 import com.family.base.data.repository.GalleryRepository
 import com.family.base.util.Logger
 import com.github.chrisbanes.photoview.PhotoView
@@ -277,7 +276,6 @@ class FullscreenImageActivity : AppCompatActivity() {
                 d.cornerRadius = dp(24).toFloat()
                 d
             }
-            tintList = null
             setColorFilter(android.graphics.Color.WHITE)
             val size = dp(48)
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
@@ -293,7 +291,7 @@ class FullscreenImageActivity : AppCompatActivity() {
     private fun setupProgressOverlay() {
         progressOverlay = ProgressBar(this).apply {
             visibility = View.GONE
-            indeterminate = true
+            isIndeterminate = true
         }
         val lp = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
