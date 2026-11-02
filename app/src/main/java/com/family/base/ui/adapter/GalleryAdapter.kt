@@ -27,6 +27,11 @@ import kotlinx.coroutines.withContext
  * 🆕 v20.6.2: добавлен Semaphore(3) — не больше 3 параллельных
  * запросов к WebDAV. Без этого 60+ одновременных запросов дают
  * SocketTimeoutException (WebDAV не любит такое количество соединений).
+ *
+ * 🆕 v20.5.14: bindVideo теперь тоже грузит превью через WebDAV
+ * (для видео ?preview&size=M возвращает кадр), а не серый плейсхолдер.
+ * Бейдж ▶️ остаётся, клик уходит в onVideoClick → VideoPlayerActivity
+ * (или внешний плеер для AVI, решает GalleryActivity).
  */
 class GalleryAdapter(
     private val onFolderClick: (GalleryItem) -> Unit,
@@ -100,16 +105,47 @@ class GalleryAdapter(
     }
 
     // ============================================================
-    // ВИДЕО (плейсхолдер в Шаге 1)
+    // 🆕 v20.5.14: ВИДЕО — превью-кадр через WebDAV + бейдж ▶️
     // ============================================================
 
     private fun bindVideo(holder: ViewHolder, item: GalleryItem) {
+        // Сначала плейсхолдер, чтобы не было «пустоты» при загрузке.
         holder.ivThumb.load(R.drawable.ic_item_default) {
             crossfade(false)
             placeholder(R.drawable.ic_item_default)
             error(R.drawable.ic_item_default)
         }
         holder.tvVideoBadge.visibility = View.VISIBLE
+
+        val repo = galleryRepository
+        if (repo == null) {
+            Logger.log(TAG, "bindVideo: galleryRepository is null, skip preview '${item.name}'")
+            holder.itemView.setOnClickListener { onVideoClick(item) }
+            return
+        }
+
+        val imageView = holder.ivThumb
+        val itemName = item.name
+        val itemPath = item.path
+
+        BaseApplication.applicationScope.launch {
+            // 🆕 v20.6.2: не больше 3 параллельных запросов.
+            downloadSemaphore.withPermit {
+                // WebDAV для видео с ?preview&size=M отдаёт кадр-превью.
+                val bytes = repo.downloadPreview(itemPath)
+                if (bytes == null) {
+                    Logger.log(TAG, "bindVideo: preview null for '$itemName'")
+                    return@withPermit
+                }
+                withContext(Dispatchers.Main) {
+                    imageView.load(bytes) {
+                        crossfade(true)
+                        placeholder(R.drawable.ic_item_default)
+                        error(R.drawable.ic_item_default)
+                    }
+                }
+            }
+        }
 
         holder.itemView.setOnClickListener { onVideoClick(item) }
     }
