@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🆕 v20.5.14: экран видеоплеера (ExoPlayer / Media3).
+
+  Структура:
+   - Toolbar: «Назад», заголовок (имя файла), кнопка «Открыть во внешнем плеере»;
+   - PlayerView: чёрный фон, контролы Media3 (play/pause, seek, time);
+   - ProgressBar: пока идёт подготовка;
+   - tvError: сообщение об ошибке (если воспроизведение упало).
+
+  M2-атрибуты (Theme.BAZA — Material 2).
+  PlayerView из media3-ui: useController=true — встроенные контролы.
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#000000">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#000000"
+        app:navigationIcon="?attr/homeAsUpIndicator"
+        app:title="@string/video_title"
+        app:titleTextColor="@android:color/white">
+
+        <ImageButton
+            android:id="@+id/btnOpenExternal"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end"
+            android:src="@android:drawable/ic_menu_share"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/video_open_external"
+            android:tint="#FFFFFF" />
+
+    </com.google.android.material.appbar.MaterialToolbar>
+
+    <!-- Контейнер с плеером / прогрессом / ошибкой -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/playerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000"
+            app:useController="true"
+            app:showBuffering="true"
+            app:resizeMode="fit" />
+
+        <!-- Индикатор загрузки (пока ExoPlayer готовится) -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminateTint="#FFFFFF"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- Сообщение об ошибке -->
+        <LinearLayout
+            android:id="@+id/errorContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:background="#CC000000"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚠️"
+                android:textSize="48sp" />
+
+            <TextView
+                android:id="@+id/tvError"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/video_error"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:gravity="center" />
+
+            <Button
+                android:id="@+id/btnOpenExternalError"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/video_open_external" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+</LinearLayout>
