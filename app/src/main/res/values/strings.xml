@@ -84,4 +84,18 @@
     <string name="gallery_info_size">Размер</string>
     <string name="gallery_info_date">Дата создания</string>
     <string name="gallery_close">Закрыть</string>
+
+    <!-- ============================================================ -->
+    <!-- 🆕 v20.5.14: ВИДЕО (ExoPlayer + fallback на внешний плеер) -->
+    <!-- ============================================================ -->
+
+    <string name="video_title">🎬 Видео</string>
+    <string name="video_loading">Загрузка видео…</string>
+    <string name="video_error">Не удалось воспроизвести видео</string>
+    <string name="video_error_open_external">Открыть во внешнем плеере?</string>
+    <string name="video_open_external">Открыть в другом плеере</string>
+    <string name="video_no_player">Нет приложения для воспроизведения этого видео</string>
+    <string name="video_unsupported_format">Этот формат не поддерживается встроенным плеером</string>
+    <string name="video_close">Закрыть</string>
+    <string name="video_badge">▶️</string>
 </resources>
