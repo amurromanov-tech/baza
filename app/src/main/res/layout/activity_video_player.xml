@@ -1,16 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  🆕 v20.5.14: экран видеоплеера (ExoPlayer / Media3).
-
-  Структура:
-   - Toolbar: «Назад», заголовок (имя файла), кнопка «Открыть во внешнем плеере»;
-   - PlayerView: чёрный фон, контролы Media3 (play/pause, seek, time);
-   - ProgressBar: пока идёт подготовка;
-   - tvError: сообщение об ошибке (если воспроизведение упало).
-
-  M2-атрибуты (Theme.BAZA — Material 2).
-  PlayerView из media3-ui: useController=true — встроенные контролы.
--->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -41,22 +29,20 @@
 
     </com.google.android.material.appbar.MaterialToolbar>
 
-    <!-- Контейнер с плеером / прогрессом / ошибкой -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
+        <!-- Только валидные XML-атрибуты: show_buffering + surface_type -->
         <androidx.media3.ui.PlayerView
             android:id="@+id/playerView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="#000000"
-            app:useController="true"
-            app:showBuffering="true"
-            app:resizeMode="fit" />
+            app:show_buffering="when_playing"
+            app:surface_type="surface_view" />
 
-        <!-- Индикатор загрузки (пока ExoPlayer готовится) -->
         <ProgressBar
             android:id="@+id/progressBar"
             android:layout_width="wrap_content"
@@ -66,7 +52,6 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
-        <!-- Сообщение об ошибке -->
         <LinearLayout
             android:id="@+id/errorContainer"
             android:layout_width="match_parent"
