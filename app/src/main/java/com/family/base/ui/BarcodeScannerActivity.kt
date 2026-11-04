@@ -28,6 +28,18 @@ class BarcodeScannerActivity : AppCompatActivity() {
 
     private var isScanning = true
 
+    companion object {
+        /**
+         * 🆕 Режим сканирования: обычный штрих-код или QR чека.
+         * Если передан EXTRA_SCAN_MODE = MODE_RECEIPT_QR, то после
+         * распознавания QR-кода сразу открывается ReceiptPreviewActivity
+         * (запрос к proverkacheka.com), а не возвращается результат.
+         */
+        const val EXTRA_SCAN_MODE = "extra_scan_mode"
+        const val MODE_DEFAULT = "default"
+        const val MODE_RECEIPT_QR = "receipt_qr"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityBarcodeScannerBinding.inflate(layoutInflater)
@@ -125,10 +137,24 @@ class BarcodeScannerActivity : AppCompatActivity() {
                         Toast.makeText(this, "Код: $value", Toast.LENGTH_SHORT).show()
                     }
 
-                    val resultIntent = android.content.Intent()
-                    resultIntent.putExtra("barcode", value)
-                    setResult(RESULT_OK, resultIntent)
-                    finish()
+                    val scanMode = intent.getStringExtra(EXTRA_SCAN_MODE) ?: MODE_DEFAULT
+                    if (scanMode == MODE_RECEIPT_QR) {
+                        // 🆕 QR чека → сразу на экран предпросмотра чека
+                        val intent = android.content.Intent(
+                            this,
+                            ReceiptPreviewActivity::class.java
+                        ).apply {
+                            putExtra(ReceiptPreviewActivity.EXTRA_QR_RAW, value)
+                        }
+                        startActivity(intent)
+                        finish()
+                    } else {
+                        // Обычный режим — вернуть результат в вызывающую Activity
+                        val resultIntent = android.content.Intent()
+                        resultIntent.putExtra("barcode", value)
+                        setResult(RESULT_OK, resultIntent)
+                        finish()
+                    }
                 }
             }
             .addOnFailureListener { e ->
