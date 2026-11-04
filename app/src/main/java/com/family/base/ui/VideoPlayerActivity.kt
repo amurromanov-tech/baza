@@ -85,9 +85,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     /** 🆕 v20.5.15: репозиторий и панель сохранения. */
     private lateinit var repository: GalleryRepository
-    private lateinit var bottomPanel: LinearLayout
-    private lateinit var btnSave: ImageButton
-    private lateinit var saveProgress: ProgressBar
+    private var bottomPanel: LinearLayout? = null
+    private var btnSave: ImageButton? = null
+    private var saveProgress: ProgressBar? = null
 
     /** 🆕 v20.5.15: защита от двойного нажатия «Сохранить». */
     private var isSaving = false
@@ -169,7 +169,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v20.5.15: ПАНЕЛЬ «СОХРАНИТЬ» (программно, как в FullscreenImage)
+    // 🆕 v20.5.15: ПАНЕЛЬ «СОХРАНИТЬ» (в playerContainer, поверх видео)
     // ============================================================
 
     private fun setupSavePanel() {
@@ -179,7 +179,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             return
         }
 
-        bottomPanel = LinearLayout(this).apply {
+        val container = binding.playerContainer
+
+        val panel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             val pad = dp(8)
@@ -196,7 +198,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             visibility = View.VISIBLE
         }
 
-        btnSave = ImageButton(this).apply {
+        val saveBtn = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_save)
             contentDescription = getString(R.string.video_save)
             background = ContextCompat.getDrawable(
@@ -219,7 +221,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             setOnClickListener { onSaveClicked() }
         }
 
-        bottomPanel.addView(btnSave)
+        panel.addView(saveBtn)
 
         val lp = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -228,15 +230,10 @@ class VideoPlayerActivity : AppCompatActivity() {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             bottomMargin = dp(80)
         }
-
-        // Панель кладём в корневой контейнер — он FrameLayout (binding.root).
-        (binding.root as? FrameLayout)?.addView(bottomPanel, lp)
-            ?: run {
-                Logger.log(TAG, "setupSavePanel: root is not FrameLayout, skip panel")
-            }
+        container.addView(panel, lp)
 
         // Прогресс-оверлей при сохранении.
-        saveProgress = ProgressBar(this).apply {
+        val progress = ProgressBar(this).apply {
             visibility = View.GONE
             isIndeterminate = true
         }
@@ -244,7 +241,13 @@ class VideoPlayerActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.CENTER }
-        (binding.root as? FrameLayout)?.addView(saveProgress, progressLp)
+        container.addView(progress, progressLp)
+
+        bottomPanel = panel
+        btnSave = saveBtn
+        saveProgress = progress
+
+        Logger.log(TAG, "setupSavePanel: panel added to playerContainer")
     }
 
     // ============================================================
@@ -281,7 +284,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun doSaveVideo(path: String) {
         isSaving = true
-        if (::saveProgress.isInitialized) saveProgress.visibility = View.VISIBLE
+        saveProgress?.visibility = View.VISIBLE
 
         val fileName = videoTitle?.takeIf { it.isNotEmpty() }
             ?: path.substringAfterLast('/')
@@ -293,7 +296,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             if (bytes == null) {
                 Logger.log(TAG, "doSaveVideo: downloadOriginal returned null")
                 withContext(Dispatchers.Main) {
-                    if (::saveProgress.isInitialized) saveProgress.visibility = View.GONE
+                    saveProgress?.visibility = View.GONE
                     isSaving = false
                     Toast.makeText(
                         this@VideoPlayerActivity,
@@ -306,7 +309,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
             val uri = repository.saveVideoToMediaStore(bytes, fileName)
             withContext(Dispatchers.Main) {
-                if (::saveProgress.isInitialized) saveProgress.visibility = View.GONE
+                saveProgress?.visibility = View.GONE
                 isSaving = false
                 if (uri != null) {
                     Logger.log(TAG, "doSaveVideo: OK → $uri")
