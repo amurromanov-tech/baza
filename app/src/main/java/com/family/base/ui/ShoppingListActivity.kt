@@ -48,6 +48,10 @@ import java.util.Locale
  *  - DEFAULT — порядок как отдаёт ViewModel.
  *
  * 🆕 v20.2.1: голосовой ввод в диалоге быстрого добавления покупки.
+ *
+ * 🆕 ЧЕКИ: кнопка «📷 Сканировать чек» в тулбаре → BarcodeScannerActivity
+ * в режиме MODE_RECEIPT_QR → ReceiptPreviewActivity → добавление
+ * позиций чека в «🛒 Список покупок».
  */
 class ShoppingListActivity : AppCompatActivity() {
 
@@ -91,6 +95,20 @@ class ShoppingListActivity : AppCompatActivity() {
             }
         }
         pendingVoiceField = null
+    }
+
+    /**
+     * 🆕 ЧЕКИ: launcher для ReceiptPreviewActivity.
+     * После добавления позиций чека в Покупки — перезагружаем список.
+     */
+    private val receiptPreviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            Logger.log(TAG, "receiptPreviewLauncher: RESULT_OK — перезагружаю список")
+            setResult(RESULT_OK)
+            loadItems()
+        }
     }
 
     private val currentUser: String
@@ -155,6 +173,11 @@ class ShoppingListActivity : AppCompatActivity() {
                     showSortDialog()
                     true
                 }
+                // 🆕 ЧЕКИ: сканировать QR-код чека
+                R.id.action_scan_receipt -> {
+                    openReceiptScanner()
+                    true
+                }
                 else -> false
             }
         }
@@ -185,6 +208,31 @@ class ShoppingListActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadItems()
+    }
+
+    // ============================================================
+    // 🆕 ЧЕКИ
+    // ============================================================
+
+    /**
+     * Открыть сканер QR-кода чека (BarcodeScannerActivity в режиме MODE_RECEIPT_QR).
+     * Дальше BarcodeScannerActivity сама откроет ReceiptPreviewActivity.
+     */
+    private fun openReceiptScanner() {
+        try {
+            val intent = Intent(this, BarcodeScannerActivity::class.java).apply {
+                putExtra(
+                    BarcodeScannerActivity.EXTRA_SCAN_MODE,
+                    BarcodeScannerActivity.MODE_RECEIPT_QR
+                )
+            }
+            // Запускаем через launcher, чтобы получить RESULT_OK после
+            // добавления позиций чека (ReceiptPreviewActivity → finish)
+            receiptPreviewLauncher.launch(intent)
+        } catch (e: Exception) {
+            Logger.log(TAG, "openReceiptScanner error: ${e.message}", e)
+            Toast.makeText(this, "Ошибка запуска сканера: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // ============================================================
