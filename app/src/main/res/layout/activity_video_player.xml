@@ -29,7 +29,10 @@
 
     </com.google.android.material.appbar.MaterialToolbar>
 
+    <!-- 🆕 v20.5.15: id playerContainer — чтобы класть панель «Сохранить»
+         поверх видео (как в FullscreenImageActivity). -->
     <FrameLayout
+        android:id="@+id/playerContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
