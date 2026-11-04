@@ -77,6 +77,7 @@
     <string name="gallery_copy_link">🔗 Копировать ссылку</string>
     <string name="gallery_link_copied">Ссылка скопирована</string>
     <string name="gallery_link_unavailable">Ссылка недоступна</string>
+    <string name="gallery_share">🔗 Поделиться</string>
 
     <string name="gallery_info_title">ℹ️ Информация</string>
     <string name="gallery_info_name">Имя файла</string>
