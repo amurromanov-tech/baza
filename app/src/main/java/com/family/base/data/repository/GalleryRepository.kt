@@ -31,7 +31,8 @@ import java.net.URLEncoder
  *  2. Создание системной папки «🖼️ Галерея» в локальной БД (Room).
  *  3. 🆕 v20.6.3: скачивание превью через WebDAV с Basic-аутентификацией.
  *  4. 🆕 v20.5.12: скачивание ОРИГИНАЛА (downloadOriginal) и сохранение
- *     в галерею телефона через MediaStore (saveToMediaStore).
+ *     в галерею телефона через MediaStore (saveToMediaStore для фото).
+ *  5. 🆕 v20.5.15: сохранение ВИДЕО в галерею телефона (saveVideoToMediaStore).
  *
  * ⚠️ Превью — через WebDAV, оригинал — тоже через WebDAV (?download).
  *
@@ -39,10 +40,6 @@ import java.net.URLEncoder
  * (логин + пароль приложения), а не OAuth-токен. Причина: OAuth-токен,
  * который работает для REST API, WebDAV-сервер отклоняет с 401.
  * Basic с паролем приложения (тип «Файлы WebDAV») — официальный путь.
- *
- * ⚠️ ПАРОЛЬ ПРИЛОЖЕНИЯ: вставь его в WEBDAV_PASSWORD ниже.
- * Создаётся в Яндекс ID → Безопасность → Пароли приложений →
- * тип «Файлы WebDAV». Начинает действовать через 2-3 часа после создания.
  */
 class GalleryRepository(
     private val db: AppDatabase
@@ -56,15 +53,20 @@ class GalleryRepository(
 
         // 🆕 v20.6.3: учётные данные для WebDAV (Basic-аутентификация).
         // Логин — твой Яндекс ID. Пароль — пароль приложения (тип «Файлы WebDAV»).
-        // ⚠️ ВСТАВЬ ПАРОЛЬ СЮДА (между кавычками):
         private const val WEBDAV_LOGIN = "AmurSVB"
         private const val WEBDAV_PASSWORD = "sespaidjlcwijqbu"
 
-        /** 🆕 v20.5.12: папка в галерее телефона. */
+        /** 🆕 v20.5.12: папка в галерее телефона для ФОТО. */
         const val MEDIA_SUBDIR = "BAZA"
+
+        /** 🆕 v20.5.15: папка в галерее телефона для ВИДЕО. */
+        const val MEDIA_VIDEO_SUBDIR = "BAZA"
 
         /** 🆕 v20.5.12: имя файла по умолчанию, если из пути не извлеклось. */
         private const val DEFAULT_FILE_NAME = "baza_photo.jpg"
+
+        /** 🆕 v20.5.15: имя видеофайла по умолчанию. */
+        private const val DEFAULT_VIDEO_NAME = "baza_video.mp4"
     }
 
     // ============================================================
@@ -226,7 +228,7 @@ class GalleryRepository(
     /**
      * Скачивает ОРИГИНАЛ файла с Диска через WebDAV.
      *
-     * Используется для «💾 Сохранить в галерею» — оригинал 4-5 МБ.
+     * Используется и для «💾 Сохранить фото», и для «💾 Сохранить видео».
      * Для превью сетки используй [downloadPreview] (size=M, быстрее).
      *
      * @param path путь на Диске, например "/Романовы/.../IMG_1234.jpg".
@@ -276,11 +278,11 @@ class GalleryRepository(
     }
 
     // ============================================================
-    // 🆕 v20.5.12: СОХРАНЕНИЕ В ГАЛЕРЕЮ ТЕЛЕФОНА (MediaStore)
+    // 🆕 v20.5.12: СОХРАНЕНИЕ ФОТО В ГАЛЕРЕЮ ТЕЛЕФОНА (MediaStore)
     // ============================================================
 
     /**
-     * Сохраняет байты изображения в галерею телефона.
+     * Сохраняет байты ИЗОБРАЖЕНИЯ в галерею телефона.
      *
      * API 29+ (Q): через MediaStore, без разрешений, папка Pictures/BAZA.
      * API 24-28: через прямой File в Pictures/BAZA + WRITE_EXTERNAL_STORAGE.
@@ -295,7 +297,7 @@ class GalleryRepository(
     ): Uri? = withContext(Dispatchers.IO) {
         try {
             val context = BaseApplication.getAppContext()
-            val safeName = sanitizeFileName(fileName)
+            val safeName = sanitizeFileName(fileName, DEFAULT_FILE_NAME)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 saveViaMediaStoreQ(context, bytes, safeName)
@@ -308,7 +310,40 @@ class GalleryRepository(
         }
     }
 
-    /** API 29+: MediaStore без разрешений. */
+    // ============================================================
+    // 🆕 v20.5.15: СОХРАНЕНИЕ ВИДЕО В ГАЛЕРЕЮ ТЕЛЕФОНА (MediaStore)
+    // ============================================================
+
+    /**
+     * Сохраняет байты ВИДЕО в галерею телефона.
+     *
+     * API 29+ (Q): через MediaStore.Video, без разрешений, папка Movies/BAZA.
+     * API 24-28: через прямой File в Movies/BAZA + WRITE_EXTERNAL_STORAGE.
+     *
+     * @param bytes    байты оригинала (см. [downloadOriginal]).
+     * @param fileName желаемое имя файла (обычно имя с Диска).
+     * @return Uri сохранённого файла или null при ошибке.
+     */
+    suspend fun saveVideoToMediaStore(
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val context = BaseApplication.getAppContext()
+            val safeName = sanitizeFileName(fileName, DEFAULT_VIDEO_NAME)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveVideoViaMediaStoreQ(context, bytes, safeName)
+            } else {
+                saveVideoViaLegacyFile(context, bytes, safeName)
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveVideoToMediaStore error for '$fileName': ${e.message}", e)
+            null
+        }
+    }
+
+    /** API 29+: MediaStore.Images без разрешений. */
     private fun saveViaMediaStoreQ(
         context: Context,
         bytes: ByteArray,
@@ -317,7 +352,7 @@ class GalleryRepository(
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, mimeForFileName(fileName))
+            put(MediaStore.Images.Media.MIME_TYPE, mimeForImageFileName(fileName))
             put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$MEDIA_SUBDIR")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
@@ -348,7 +383,47 @@ class GalleryRepository(
         }
     }
 
-    /** API 24-28: прямой File + WRITE_EXTERNAL_STORAGE. */
+    /** API 29+: MediaStore.Video без разрешений. */
+    private fun saveVideoViaMediaStoreQ(
+        context: Context,
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Video.Media.MIME_TYPE, mimeForVideoFileName(fileName))
+            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/$MEDIA_VIDEO_SUBDIR")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+
+        try {
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(bytes)
+                out.flush()
+            } ?: run {
+                resolver.delete(uri, null, null)
+                return null
+            }
+
+            val done = ContentValues().apply {
+                put(MediaStore.Video.Media.IS_PENDING, 0)
+            }
+            resolver.update(uri, done, null, null)
+
+            Logger.log(TAG, "saveVideoViaMediaStoreQ: OK $uri ($fileName, ${bytes.size} bytes)")
+            return uri
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveVideoViaMediaStoreQ error: ${e.message}", e)
+            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+            return null
+        }
+    }
+
+    /** API 24-28: фото — прямой File + WRITE_EXTERNAL_STORAGE. */
     @Suppress("DEPRECATION")
     private fun saveViaLegacyFile(
         context: Context,
@@ -375,7 +450,7 @@ class GalleryRepository(
             android.media.MediaScannerConnection.scanFile(
                 context,
                 arrayOf(targetFile.absolutePath),
-                arrayOf(mimeForFileName(fileName)),
+                arrayOf(mimeForImageFileName(fileName)),
                 null
             )
         } catch (e: Exception) {
@@ -384,6 +459,44 @@ class GalleryRepository(
 
         val uri = Uri.fromFile(targetFile)
         Logger.log(TAG, "saveViaLegacyFile: OK $uri ($fileName, ${bytes.size} bytes)")
+        return uri
+    }
+
+    /** API 24-28: видео — прямой File + WRITE_EXTERNAL_STORAGE. */
+    @Suppress("DEPRECATION")
+    private fun saveVideoViaLegacyFile(
+        context: Context,
+        bytes: ByteArray,
+        fileName: String
+    ): Uri? {
+        val moviesDir = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_MOVIES
+        )
+        val targetDir = File(moviesDir, MEDIA_VIDEO_SUBDIR)
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            Logger.log(TAG, "saveVideoViaLegacyFile: cannot create dir $targetDir")
+            return null
+        }
+
+        val targetFile = uniqueFile(targetDir, fileName)
+        FileOutputStream(targetFile).use { out ->
+            out.write(bytes)
+            out.flush()
+        }
+
+        try {
+            android.media.MediaScannerConnection.scanFile(
+                context,
+                arrayOf(targetFile.absolutePath),
+                arrayOf(mimeForVideoFileName(fileName)),
+                null
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "saveVideoViaLegacyFile: scanFile error: ${e.message}")
+        }
+
+        val uri = Uri.fromFile(targetFile)
+        Logger.log(TAG, "saveVideoViaLegacyFile: OK $uri ($fileName, ${bytes.size} bytes)")
         return uri
     }
 
@@ -405,14 +518,14 @@ class GalleryRepository(
     }
 
     /** Убираем недопустимые символы из имени. */
-    private fun sanitizeFileName(raw: String): String {
-        val trimmed = raw.trim().ifEmpty { DEFAULT_FILE_NAME }
+    private fun sanitizeFileName(raw: String, fallback: String): String {
+        val trimmed = raw.trim().ifEmpty { fallback }
         val cleaned = trimmed.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
-        return if (cleaned.isEmpty()) DEFAULT_FILE_NAME else cleaned
+        return if (cleaned.isEmpty()) fallback else cleaned
     }
 
-    /** MIME по расширению. По умолчанию image/jpeg. */
-    private fun mimeForFileName(fileName: String): String {
+    /** MIME для изображения по расширению. По умолчанию image/jpeg. */
+    private fun mimeForImageFileName(fileName: String): String {
         val lower = fileName.lowercase()
         return when {
             lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
@@ -422,6 +535,22 @@ class GalleryRepository(
             lower.endsWith(".heic") || lower.endsWith(".heif") -> "image/heic"
             lower.endsWith(".bmp") -> "image/bmp"
             else -> "image/jpeg"
+        }
+    }
+
+    /** MIME для видео по расширению. По умолчанию video/mp4. */
+    private fun mimeForVideoFileName(fileName: String): String {
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".mp4") || lower.endsWith(".m4v") -> "video/mp4"
+            lower.endsWith(".mkv") -> "video/x-matroska"
+            lower.endsWith(".webm") -> "video/webm"
+            lower.endsWith(".3gp") || lower.endsWith(".3gpp") -> "video/3gpp"
+            lower.endsWith(".mov") -> "video/quicktime"
+            lower.endsWith(".avi") -> "video/x-msvideo"
+            lower.endsWith(".wmv") -> "video/x-ms-wmv"
+            lower.endsWith(".flv") -> "video/x-flv"
+            else -> "video/mp4"
         }
     }
 
