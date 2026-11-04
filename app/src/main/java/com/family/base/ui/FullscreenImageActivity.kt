@@ -3,9 +3,7 @@ package com.family.base.ui
 import android.Manifest
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -55,10 +53,11 @@ import java.util.Locale
  * отдают 403 без куки браузера, а WebDAV работает.
  *
  * 🆕 v20.5.12 (Шаг 2):
- *  - Кнопки «💾 Сохранить», «🔗 Копировать ссылку», «ℹ️ Информация»
+ *  - Кнопки «💾 Сохранить», «🔗 Поделиться», «ℹ️ Информация»
  *    добавляются программно в нижнюю панель (layout не трогаем).
  *  - «Сохранить»: downloadOriginal() → saveToMediaStore() → Pictures/BAZA.
- *  - «Копировать ссылку»: fileUrl (вариант B) в ClipboardManager.
+ *  - «Поделиться»: fileUrl (вариант B) через Intent.ACTION_SEND +
+ *    createChooser (системный Sharesheet).
  *  - «Информация»: имя, путь, размер, дата создания.
  *  - Прогресс-бар поверх экрана при скачивании оригинала.
  *
@@ -96,7 +95,7 @@ class FullscreenImageActivity : AppCompatActivity() {
     /** 🆕 v20.5.12: панель кнопок внизу. */
     private lateinit var bottomPanel: LinearLayout
     private lateinit var btnSave: ImageButton
-    private lateinit var btnCopyLink: ImageButton
+    private lateinit var btnShare: ImageButton
     private lateinit var btnInfo: ImageButton
     private lateinit var progressOverlay: ProgressBar
 
@@ -106,7 +105,7 @@ class FullscreenImageActivity : AppCompatActivity() {
     private var dismissThreshold = 0f
     private var swipeStartThreshold = 0f
 
-    // 🆕 v20.5.12: данные текущего элемента для «Сохранить/Ссылка/Инфо».
+    // 🆕 v20.5.12: данные текущего элемента для «Сохранить/Поделиться/Инфо».
     private var currentGalleryPath: String? = null
     private var currentFileUrl: String? = null
     private var currentTitle: String? = null
@@ -214,10 +213,10 @@ class FullscreenImageActivity : AppCompatActivity() {
             contentDesc = getString(R.string.gallery_save)
         ) { onSaveClicked() }
 
-        btnCopyLink = makePanelButton(
+        btnShare = makePanelButton(
             iconRes = android.R.drawable.ic_menu_share,
-            contentDesc = getString(R.string.gallery_copy_link)
-        ) { onCopyLinkClicked() }
+            contentDesc = getString(R.string.gallery_share)
+        ) { onShareClicked() }
 
         btnInfo = makePanelButton(
             iconRes = android.R.drawable.ic_menu_info_details,
@@ -232,9 +231,9 @@ class FullscreenImageActivity : AppCompatActivity() {
         if (currentGalleryPath.isNullOrEmpty()) {
             btnSave.visibility = View.GONE
         }
-        // «Копировать ссылку» — только если есть fileUrl (вариант B).
+        // «Поделиться» — только если есть fileUrl (вариант B).
         if (currentFileUrl.isNullOrEmpty()) {
-            btnCopyLink.visibility = View.GONE
+            btnShare.visibility = View.GONE
         }
         // «Информация» — только для галереи (есть путь).
         if (currentGalleryPath.isNullOrEmpty()) {
@@ -242,7 +241,7 @@ class FullscreenImageActivity : AppCompatActivity() {
         }
 
         bottomPanel.addView(btnSave)
-        bottomPanel.addView(btnCopyLink)
+        bottomPanel.addView(btnShare)
         bottomPanel.addView(btnInfo)
         bottomPanel.addView(spacer)
 
@@ -402,23 +401,32 @@ class FullscreenImageActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v20.5.12: «🔗 КОПИРОВАТЬ ССЫЛКУ» (вариант B — fileUrl)
+    // 🆕 v20.5.14: «🔗 ПОДЕЛИТЬСЯ» (системный Sharesheet)
     // ============================================================
 
-    private fun onCopyLinkClicked() {
+    private fun onShareClicked() {
         val url = currentFileUrl
         if (url.isNullOrEmpty()) {
-            Logger.log(TAG, "onCopyLinkClicked: fileUrl is empty")
+            Logger.log(TAG, "onShareClicked: fileUrl is empty")
             Toast.makeText(this, R.string.gallery_link_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
+
         try {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("BAZA", url))
-            Logger.log(TAG, "onCopyLinkClicked: copied, length=${url.length}")
-            Toast.makeText(this, R.string.gallery_link_copied, Toast.LENGTH_SHORT).show()
+            // 🆕 v20.5.14: ACTION_SEND + createChooser — системный диалог
+            // «Поделиться» (мессенджеры, почта, менеджеры и т.д.).
+            // createChooser гарантирует показ диалога, даже если есть
+            // приложение по умолчанию.
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(Intent.EXTRA_TEXT, url)
+                type = "text/plain"
+            }
+            val shareIntent = Intent.createChooser(sendIntent, getString(R.string.gallery_share))
+            startActivity(shareIntent)
+            Logger.log(TAG, "onShareClicked: chooser launched, length=${url.length}")
         } catch (e: Exception) {
-            Logger.log(TAG, "onCopyLinkClicked error: ${e.message}", e)
+            Logger.log(TAG, "onShareClicked error: ${e.message}", e)
             Toast.makeText(this, R.string.gallery_link_unavailable, Toast.LENGTH_SHORT).show()
         }
     }
@@ -628,7 +636,7 @@ class FullscreenImageActivity : AppCompatActivity() {
                         or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                         or View.SYSTEM_UI_FLAG_FULLSCREEN
                     )
-            }
+                }
         } catch (e: Exception) {
             Logger.log(TAG, "Error hiding system bars: ${e.message}")
         }
