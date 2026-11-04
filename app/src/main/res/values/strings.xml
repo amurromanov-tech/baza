@@ -66,7 +66,7 @@
     <string name="gallery_load_error">Ошибка загрузки: %1$s</string>
 
     <!-- ============================================================ -->
-    <!-- 🆕 v20.5.12 (Шаг 2): СОХРАНЕНИЕ / ССЫЛКА / ИНФОРМАЦИЯ -->
+    <!-- 🆕 v20.5.12 (Шаг 2): СОХРАНЕНИЕ / ПОДЕЛИТЬСЯ / ИНФОРМАЦИЯ -->
     <!-- ============================================================ -->
 
     <string name="gallery_save">💾 Сохранить</string>
@@ -74,10 +74,8 @@
     <string name="gallery_save_error">Не удалось сохранить фото</string>
     <string name="gallery_save_permission_denied">Нет разрешения на запись в галерею</string>
 
-    <string name="gallery_copy_link">🔗 Копировать ссылку</string>
-    <string name="gallery_link_copied">Ссылка скопирована</string>
-    <string name="gallery_link_unavailable">Ссылка недоступна</string>
     <string name="gallery_share">🔗 Поделиться</string>
+    <string name="gallery_link_unavailable">Ссылка недоступна</string>
 
     <string name="gallery_info_title">ℹ️ Информация</string>
     <string name="gallery_info_name">Имя файла</string>
@@ -99,4 +97,10 @@
     <string name="video_unsupported_format">Этот формат не поддерживается встроенным плеером</string>
     <string name="video_close">Закрыть</string>
     <string name="video_badge">▶️</string>
+
+    <!-- 🆕 v20.5.15: сохранение видео -->
+    <string name="video_save">💾 Сохранить видео</string>
+    <string name="video_save_ok">Видео сохранено: Movies/%1$s</string>
+    <string name="video_save_error">Не удалось сохранить видео</string>
+    <string name="video_save_permission_denied">Нет разрешения на запись в галерею</string>
 </resources>
