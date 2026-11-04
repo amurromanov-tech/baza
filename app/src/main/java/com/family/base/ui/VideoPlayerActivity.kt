@@ -1,23 +1,45 @@
 package com.family.base.ui
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.family.base.BaseApplication
 import com.family.base.R
+import com.family.base.data.local.AppDatabase
+import com.family.base.data.repository.GalleryRepository
 import com.family.base.databinding.ActivityVideoPlayerBinding
 import com.family.base.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 🆕 v20.5.14: экран видеоплеера (ExoPlayer / Media3).
+ *
+ * 🆕 v20.5.15: добавлена кнопка «💾 Сохранить видео» — скачивает оригинал
+ * через WebDAV (downloadOriginal) и кладёт в Movies/BAZA через MediaStore.
+ *  - API 29+: без разрешений (MediaStore.Video).
+ *  - API 24-28: WRITE_EXTERNAL_STORAGE.
  *
  * 🆕 v20.5.14-fix: useController и resizeMode выставляются здесь,
  * в коде, потому что в XML Media3 таких атрибутов нет (это Java-сеттеры).
@@ -43,7 +65,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         const val EXTRA_TITLE = "video_title"
         const val EXTRA_MIME = "video_mime"
 
+        // 🆕 v20.5.15: путь на Диске — для «Сохранить видео».
+        const val EXTRA_GALLERY_PATH = "video_gallery_path"
+
         private const val TAG = "VideoPlayerActivity"
+
+        private const val REQ_WRITE_STORAGE = 1002
     }
 
     private lateinit var binding: ActivityVideoPlayerBinding
@@ -52,6 +79,18 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var videoUrl: String? = null
     private var videoTitle: String? = null
     private var videoMime: String? = null
+
+    /** 🆕 v20.5.15: путь на Диске — для сохранения оригинала. */
+    private var galleryPath: String? = null
+
+    /** 🆕 v20.5.15: репозиторий и панель сохранения. */
+    private lateinit var repository: GalleryRepository
+    private lateinit var bottomPanel: LinearLayout
+    private lateinit var btnSave: ImageButton
+    private lateinit var saveProgress: ProgressBar
+
+    /** 🆕 v20.5.15: защита от двойного нажатия «Сохранить». */
+    private var isSaving = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,11 +105,17 @@ class VideoPlayerActivity : AppCompatActivity() {
             return
         }
 
+        repository = GalleryRepository(AppDatabase.getInstance(this))
+
         videoUrl = intent.getStringExtra(EXTRA_URL)
         videoTitle = intent.getStringExtra(EXTRA_TITLE)
         videoMime = intent.getStringExtra(EXTRA_MIME)
+        galleryPath = intent.getStringExtra(EXTRA_GALLERY_PATH)
 
-        Logger.log(TAG, "onCreate: url=$videoUrl, title=$videoTitle, mime=$videoMime")
+        Logger.log(
+            TAG,
+            "onCreate: url=$videoUrl, title=$videoTitle, mime=$videoMime, path=$galleryPath"
+        )
 
         if (videoUrl.isNullOrEmpty()) {
             Logger.log(TAG, "onCreate: url is empty, finish")
@@ -82,6 +127,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         setupToolbar()
         setupErrorButtons()
         setupPlayerView()
+        setupSavePanel()
 
         Logger.log(TAG, "=== VideoPlayerActivity onCreate FINISHED ===")
     }
@@ -119,6 +165,186 @@ class VideoPlayerActivity : AppCompatActivity() {
         binding.btnOpenExternalError.setOnClickListener {
             Logger.log(TAG, "btnOpenExternalError clicked")
             openInExternalPlayer()
+        }
+    }
+
+    // ============================================================
+    // 🆕 v20.5.15: ПАНЕЛЬ «СОХРАНИТЬ» (программно, как в FullscreenImage)
+    // ============================================================
+
+    private fun setupSavePanel() {
+        // Если нет пути на Диске — сохранить нечего, панель не создаём.
+        if (galleryPath.isNullOrEmpty()) {
+            Logger.log(TAG, "setupSavePanel: no galleryPath, skip")
+            return
+        }
+
+        bottomPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            val pad = dp(8)
+            setPadding(pad, pad, pad, pad)
+            background = ContextCompat.getDrawable(
+                this@VideoPlayerActivity,
+                R.drawable.bg_bottom_panel
+            ) ?: run {
+                val d = android.graphics.drawable.GradientDrawable()
+                d.setColor(0x66000000)
+                d.cornerRadius = dp(24).toFloat()
+                d
+            }
+            visibility = View.VISIBLE
+        }
+
+        btnSave = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_save)
+            contentDescription = getString(R.string.video_save)
+            background = ContextCompat.getDrawable(
+                this@VideoPlayerActivity,
+                android.R.drawable.btn_default
+            )?.apply { alpha = 0x40 } ?: run {
+                val d = android.graphics.drawable.GradientDrawable()
+                d.setColor(0x33FFFFFF)
+                d.cornerRadius = dp(24).toFloat()
+                d
+            }
+            setColorFilter(android.graphics.Color.WHITE)
+            val size = dp(48)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            }
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setOnClickListener { onSaveClicked() }
+        }
+
+        bottomPanel.addView(btnSave)
+
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(80)
+        }
+
+        // Панель кладём в корневой контейнер — он FrameLayout (binding.root).
+        (binding.root as? FrameLayout)?.addView(bottomPanel, lp)
+            ?: run {
+                Logger.log(TAG, "setupSavePanel: root is not FrameLayout, skip panel")
+            }
+
+        // Прогресс-оверлей при сохранении.
+        saveProgress = ProgressBar(this).apply {
+            visibility = View.GONE
+            isIndeterminate = true
+        }
+        val progressLp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER }
+        (binding.root as? FrameLayout)?.addView(saveProgress, progressLp)
+    }
+
+    // ============================================================
+    // 🆕 v20.5.15: СОХРАНЕНИЕ ВИДЕО
+    // ============================================================
+
+    private fun onSaveClicked() {
+        val path = galleryPath ?: return
+        if (isSaving) {
+            Logger.log(TAG, "onSaveClicked: already saving, skip")
+            return
+        }
+
+        // API ≤28: нужно WRITE_EXTERNAL_STORAGE.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!granted) {
+                Logger.log(TAG, "onSaveClicked: requesting WRITE_EXTERNAL_STORAGE")
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    REQ_WRITE_STORAGE
+                )
+                return
+            }
+        }
+
+        doSaveVideo(path)
+    }
+
+    private fun doSaveVideo(path: String) {
+        isSaving = true
+        if (::saveProgress.isInitialized) saveProgress.visibility = View.VISIBLE
+
+        val fileName = videoTitle?.takeIf { it.isNotEmpty() }
+            ?: path.substringAfterLast('/')
+
+        Logger.log(TAG, "doSaveVideo: start for '$path' (fileName=$fileName)")
+
+        BaseApplication.applicationScope.launch {
+            val bytes = repository.downloadOriginal(path)
+            if (bytes == null) {
+                Logger.log(TAG, "doSaveVideo: downloadOriginal returned null")
+                withContext(Dispatchers.Main) {
+                    if (::saveProgress.isInitialized) saveProgress.visibility = View.GONE
+                    isSaving = false
+                    Toast.makeText(
+                        this@VideoPlayerActivity,
+                        R.string.video_save_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+
+            val uri = repository.saveVideoToMediaStore(bytes, fileName)
+            withContext(Dispatchers.Main) {
+                if (::saveProgress.isInitialized) saveProgress.visibility = View.GONE
+                isSaving = false
+                if (uri != null) {
+                    Logger.log(TAG, "doSaveVideo: OK → $uri")
+                    Toast.makeText(
+                        this@VideoPlayerActivity,
+                        getString(R.string.video_save_ok, GalleryRepository.MEDIA_VIDEO_SUBDIR),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Logger.log(TAG, "doSaveVideo: saveVideoToMediaStore returned null")
+                    Toast.makeText(
+                        this@VideoPlayerActivity,
+                        R.string.video_save_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_WRITE_STORAGE) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                galleryPath?.let { doSaveVideo(it) }
+            } else {
+                Toast.makeText(
+                    this,
+                    R.string.video_save_permission_denied,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -230,5 +456,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             Logger.log(TAG, "openInExternalPlayer error: ${e.message}", e)
             Toast.makeText(this, R.string.video_error, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
     }
 }
