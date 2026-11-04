@@ -25,6 +25,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import coil.load
 import com.family.base.BaseApplication
 import com.family.base.R
@@ -56,8 +57,8 @@ import java.util.Locale
  *  - Кнопки «💾 Сохранить», «🔗 Поделиться», «ℹ️ Информация»
  *    добавляются программно в нижнюю панель (layout не трогаем).
  *  - «Сохранить»: downloadOriginal() → saveToMediaStore() → Pictures/BAZA.
- *  - «Поделиться»: fileUrl (вариант B) через Intent.ACTION_SEND +
- *    createChooser (системный Sharesheet).
+ *  - «Поделиться»: 🆕 v20.5.16 — отправляем САМ ФАЙЛ (не ссылку):
+ *    downloadOriginal() → cacheDir/shared/ → FileProvider → ACTION_SEND.
  *  - «Информация»: имя, путь, размер, дата создания.
  *  - Прогресс-бар поверх экрана при скачивании оригинала.
  *
@@ -83,6 +84,9 @@ class FullscreenImageActivity : AppCompatActivity() {
         private const val SWIPE_START_DP = 24f
 
         private const val REQ_WRITE_STORAGE = 1001
+
+        /** 🆕 v20.5.16: папка для шаринга внутри cacheDir. */
+        private const val SHARE_DIR = "shared"
     }
 
     private lateinit var rootContainer: FrameLayout
@@ -117,6 +121,9 @@ class FullscreenImageActivity : AppCompatActivity() {
 
     /** 🆕 v20.5.12: защита от двойного нажатия «Сохранить». */
     private var isSaving = false
+
+    /** 🆕 v20.5.16: защита от двойного нажатия «Поделиться». */
+    private var isSharing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -231,8 +238,8 @@ class FullscreenImageActivity : AppCompatActivity() {
         if (currentGalleryPath.isNullOrEmpty()) {
             btnSave.visibility = View.GONE
         }
-        // «Поделиться» — только если есть fileUrl (вариант B).
-        if (currentFileUrl.isNullOrEmpty()) {
+        // «Поделиться» — только для галереи (нужен путь на Диске).
+        if (currentGalleryPath.isNullOrEmpty()) {
             btnShare.visibility = View.GONE
         }
         // «Информация» — только для галереи (есть путь).
@@ -401,33 +408,151 @@ class FullscreenImageActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v20.5.14: «🔗 ПОДЕЛИТЬСЯ» (системный Sharesheet)
+    // 🆕 v20.5.16: «🔗 ПОДЕЛИТЬСЯ» — ОТПРАВЛЯЕМ САМ ФАЙЛ
     // ============================================================
 
     private fun onShareClicked() {
-        val url = currentFileUrl
-        if (url.isNullOrEmpty()) {
-            Logger.log(TAG, "onShareClicked: fileUrl is empty")
+        val path = currentGalleryPath
+        if (path.isNullOrEmpty()) {
+            Logger.log(TAG, "onShareClicked: galleryPath is empty")
             Toast.makeText(this, R.string.gallery_link_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
+        if (isSharing) {
+            Logger.log(TAG, "onShareClicked: already sharing, skip")
+            return
+        }
 
-        try {
-            // 🆕 v20.5.14: ACTION_SEND + createChooser — системный диалог
-            // «Поделиться» (мессенджеры, почта, менеджеры и т.д.).
-            // createChooser гарантирует показ диалога, даже если есть
-            // приложение по умолчанию.
-            val sendIntent = Intent().apply {
-                action = Intent.ACTION_SEND
-                putExtra(Intent.EXTRA_TEXT, url)
-                type = "text/plain"
+        isSharing = true
+        progressOverlay.visibility = View.VISIBLE
+
+        val fileName = currentTitle?.takeIf { it.isNotEmpty() }
+            ?: path.substringAfterLast('/')
+
+        Logger.log(TAG, "onShareClicked: start for '$path' (fileName=$fileName)")
+
+        BaseApplication.applicationScope.launch {
+            // 1. Скачиваем оригинал (4-5 МБ).
+            val bytes = repository.downloadOriginal(path)
+            if (bytes == null) {
+                Logger.log(TAG, "onShareClicked: downloadOriginal returned null")
+                withContext(Dispatchers.Main) {
+                    progressOverlay.visibility = View.GONE
+                    isSharing = false
+                    Toast.makeText(
+                        this@FullscreenImageActivity,
+                        R.string.gallery_share_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
             }
-            val shareIntent = Intent.createChooser(sendIntent, getString(R.string.gallery_share))
-            startActivity(shareIntent)
-            Logger.log(TAG, "onShareClicked: chooser launched, length=${url.length}")
-        } catch (e: Exception) {
-            Logger.log(TAG, "onShareClicked error: ${e.message}", e)
-            Toast.makeText(this, R.string.gallery_link_unavailable, Toast.LENGTH_SHORT).show()
+
+            // 2. Пишем во временный файл в cacheDir/shared/.
+            val cacheFile = try {
+                val shareDir = File(cacheDir, SHARE_DIR)
+                if (!shareDir.exists() && !shareDir.mkdirs()) {
+                    Logger.log(TAG, "onShareClicked: cannot create $shareDir")
+                    null
+                } else {
+                    val f = File(shareDir, sanitizeShareName(fileName))
+                    f.outputStream().use { out ->
+                        out.write(bytes)
+                        out.flush()
+                    }
+                    f
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "onShareClicked: write cache error: ${e.message}", e)
+                null
+            }
+
+            if (cacheFile == null) {
+                withContext(Dispatchers.Main) {
+                    progressOverlay.visibility = View.GONE
+                    isSharing = false
+                    Toast.makeText(
+                        this@FullscreenImageActivity,
+                        R.string.gallery_share_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+
+            // 3. content:// URI через FileProvider.
+            val contentUri: Uri? = try {
+                FileProvider.getUriForFile(
+                    this@FullscreenImageActivity,
+                    "${packageName}.fileprovider",
+                    cacheFile
+                )
+            } catch (e: Exception) {
+                Logger.log(TAG, "onShareClicked: FileProvider error: ${e.message}", e)
+                null
+            }
+
+            if (contentUri == null) {
+                withContext(Dispatchers.Main) {
+                    progressOverlay.visibility = View.GONE
+                    isSharing = false
+                    Toast.makeText(
+                        this@FullscreenImageActivity,
+                        R.string.gallery_share_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+
+            // 4. Sharesheet с файлом.
+            withContext(Dispatchers.Main) {
+                progressOverlay.visibility = View.GONE
+                isSharing = false
+                try {
+                    val mime = mimeForShareName(fileName)
+                    val sendIntent = Intent().apply {
+                        action = Intent.ACTION_SEND
+                        putExtra(Intent.EXTRA_STREAM, contentUri)
+                        type = mime
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val shareIntent = Intent.createChooser(
+                        sendIntent,
+                        getString(R.string.gallery_share)
+                    )
+                    startActivity(shareIntent)
+                    Logger.log(TAG, "onShareClicked: chooser launched, uri=$contentUri, mime=$mime")
+                } catch (e: Exception) {
+                    Logger.log(TAG, "onShareClicked: chooser error: ${e.message}", e)
+                    Toast.makeText(
+                        this@FullscreenImageActivity,
+                        R.string.gallery_share_error,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    /** 🆕 v20.5.16: безопасное имя для временного файла шаринга. */
+    private fun sanitizeShareName(raw: String): String {
+        val trimmed = raw.trim().ifEmpty { "baza_photo.jpg" }
+        val cleaned = trimmed.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
+        return if (cleaned.isEmpty()) "baza_photo.jpg" else cleaned
+    }
+
+    /** 🆕 v20.5.16: MIME по расширению для шаринга. */
+    private fun mimeForShareName(fileName: String): String {
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".gif") -> "image/gif"
+            lower.endsWith(".heic") || lower.endsWith(".heif") -> "image/heic"
+            lower.endsWith(".bmp") -> "image/bmp"
+            else -> "image/*"
         }
     }
 
