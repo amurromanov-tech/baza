@@ -39,6 +39,9 @@ import com.family.base.util.Logger
  *  - MP4 / MKV / WebM / 3GP / MOV / M4V → VideoPlayerActivity (ExoPlayer);
  *  - всё остальное (AVI и экзотика) → внешний плеер через ACTION_VIEW.
  *  Причина: ExoPlayer не поддерживает контейнер AVI.
+ *
+ * 🆕 v20.5.15: openVideo передаёт EXTRA_GALLERY_PATH (item.path)
+ * в VideoPlayerActivity — для кнопки «💾 Сохранить видео».
  */
 class GalleryActivity : AppCompatActivity() {
 
@@ -259,7 +262,7 @@ class GalleryActivity : AppCompatActivity() {
         // отдают 403 без куки браузера).
         //
         // 🆕 v20.5.12 (Шаг 2): дополнительно передаём fileUrl (для
-        // «Копировать ссылку», вариант B), размер и дату создания
+        // «Поделиться», вариант B), размер и дату создания
         // (для «Информация»).
         Logger.log(TAG, "openPhoto: ${item.name} → ${item.path}")
         val intent = Intent(this, FullscreenImageActivity::class.java).apply {
@@ -295,6 +298,8 @@ class GalleryActivity : AppCompatActivity() {
                 putExtra(VideoPlayerActivity.EXTRA_URL, url)
                 putExtra(VideoPlayerActivity.EXTRA_TITLE, item.name)
                 putExtra(VideoPlayerActivity.EXTRA_MIME, mime)
+                // 🆕 v20.5.15: путь на Диске — для «💾 Сохранить видео».
+                putExtra(VideoPlayerActivity.EXTRA_GALLERY_PATH, item.path)
             }
             startActivity(intent)
         } else {
