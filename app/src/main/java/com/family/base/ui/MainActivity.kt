@@ -206,18 +206,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val checkPreviewLauncher = registerForActivityResult(
+    /**
+     * 🆕 ЧЕКИ: launcher для сканирования QR-кода чека.
+     *
+     * Запускает BarcodeScannerActivity в режиме MODE_RECEIPT_QR.
+     * Сканер сам открывает ReceiptPreviewActivity, а та — по RESULT_OK
+     * возвращает id созданной папки покупки → навигация в неё.
+     */
+    private val receiptPreviewLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
             val folderId = result.data?.getStringExtra("navigate_to_folder_id")
             if (!folderId.isNullOrEmpty()) {
-                Logger.log(TAG, "Navigate to purchase folder: $folderId")
+                Logger.log(TAG, "Navigate to purchase folder (receipt): $folderId")
                 Toast.makeText(this, "Открываю папку с покупкой…", Toast.LENGTH_SHORT).show()
                 viewModel.navigateToFolder(folderId)
+            } else {
+                viewModel.loadContents()
+                loadSystemFolderCounters()
             }
         } else {
-            Logger.log(TAG, "Check preview cancelled or failed")
+            Logger.log(TAG, "Receipt preview cancelled or failed")
+            loadSystemFolderCounters()
         }
     }
 
@@ -364,9 +375,20 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        // 🆕 ЧЕКИ: кнопка «📷 Сканировать QR чека»
+        // (иконка в layout — прежняя, от сканера чеков).
+        // Запускаем BarcodeScannerActivity в режиме MODE_RECEIPT_QR,
+        // она сама откроет ReceiptPreviewActivity.
         binding.btnScanCheck.setOnClickListener {
-            Logger.log(TAG, "Scan check clicked")
-            checkPreviewLauncher.launch(Intent(this, CheckScannerActivity::class.java))
+            Logger.log(TAG, "Scan receipt QR clicked")
+            receiptPreviewLauncher.launch(
+                Intent(this, BarcodeScannerActivity::class.java).apply {
+                    putExtra(
+                        BarcodeScannerActivity.EXTRA_SCAN_MODE,
+                        BarcodeScannerActivity.MODE_RECEIPT_QR
+                    )
+                }
+            )
         }
 
         viewModel.navigateToFolder(null)
