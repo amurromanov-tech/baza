@@ -344,6 +344,13 @@ class AddItemActivity : AppCompatActivity() {
      *  - imageUrl — да (показываем превью, если у пользователя нет фото);
      *  - expiryDate, manufacturedDate — НЕ подставляем;
      *  - price — НЕ подставляем.
+     *
+     * 🆕 v20.6.5: фото грузится каскадом:
+     *   1. локальный файл (filesDir/images/<name>.jpg) — если есть;
+     *   2. если локально нет — скачиваем с Яндекс.Диска через
+     *      viewModel.downloadItemImageBytes(template.id) (REST, OAuth),
+     *      сохраняем локально через ImageUtils.saveImageLocally и показываем;
+     *   3. если и на Диске нет — молча оставляем ivManualPhoto пустым + лог.
      */
     private fun applyTemplateFromHistory(template: ItemEntity) {
         selectedTemplate = template
@@ -384,19 +391,7 @@ class AddItemActivity : AppCompatActivity() {
 
         // Фото — только если у пользователя нет фото
         if (imageBytes == null && !template.imageUrl.isNullOrBlank()) {
-            // Загружаем превью через Coil в ivManualPhoto
-            try {
-                binding.ivManualPhoto.visibility = View.VISIBLE
-                coil.Coil.imageLoader(this).enqueue(
-                    coil.request.ImageRequest.Builder(this)
-                        .data(ImageUtils.getLocalImageFileByUrl(this, template.imageUrl))
-                        .target(binding.ivManualPhoto)
-                        .build()
-                )
-                Logger.log(TAG, "applyTemplateFromHistory: показано фото '${template.imageUrl}'")
-            } catch (e: Exception) {
-                Logger.log(TAG, "applyTemplateFromHistory: не удалось загрузить фото: ${e.message}")
-            }
+            loadTemplatePhoto(template)
         }
 
         // Гасим фокус с поля названия, чтобы dropdown не переоткрылся
@@ -411,6 +406,85 @@ class AddItemActivity : AppCompatActivity() {
             "Поля заполнены из «${template.name}»",
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    /**
+     * 🆕 v20.6.5: каскадная загрузка фото шаблона.
+     *  1. Локальный файл (filesDir/images/...) → Coil.
+     *  2. Иначе — скачать с Яндекс.Диска по itemId через MainViewModel,
+     *     сохранить локально, показать Coil'ом.
+     *  3. Иначе — ничего не показываем (лог).
+     */
+    private fun loadTemplatePhoto(template: ItemEntity) {
+        lifecycleScope.launch {
+            try {
+                // 1. Локальный файл
+                val localFile = withContext(Dispatchers.IO) {
+                    ImageUtils.getLocalImageFileByUrl(this@AddItemActivity, template.imageUrl)
+                }
+                if (localFile != null && localFile.exists()) {
+                    showPhotoFromFile(localFile)
+                    Logger.log(TAG, "loadTemplatePhoto: локальный файл '${localFile.absolutePath}'")
+                    return@launch
+                }
+
+                // 2. Скачать с Диска
+                Logger.log(
+                    TAG,
+                    "loadTemplatePhoto: локального файла нет для '${template.imageUrl}', " +
+                        "пробуем скачать с Диска по id=${template.id}"
+                )
+                val bytes = withContext(Dispatchers.IO) {
+                    viewModel.downloadItemImageBytes(template.id)
+                }
+                if (bytes == null || bytes.isEmpty()) {
+                    Logger.log(
+                        TAG,
+                        "loadTemplatePhoto: на Диске тоже нет фото для id=${template.id}"
+                    )
+                    return@launch
+                }
+
+                // Сохраняем локально (файл будет доступен и в следующий раз)
+                val savedFile = withContext(Dispatchers.IO) {
+                    try {
+                        ImageUtils.saveImageLocally(this@AddItemActivity, template.id, bytes)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "loadTemplatePhoto: saveImageLocally error: ${e.message}", e)
+                        null
+                    }
+                }
+                if (savedFile != null) {
+                    showPhotoFromFile(savedFile)
+                    Logger.log(
+                        TAG,
+                        "loadTemplatePhoto: скачано и сохранено локально '${savedFile.absolutePath}' (${bytes.size} bytes)"
+                    )
+                } else {
+                    Logger.log(TAG, "loadTemplatePhoto: скачали, но сохранить локально не удалось")
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadTemplatePhoto error: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 v20.6.5: показать фото из файла через Coil.
+     * Coil 2.x: data(File) — поддерживается.
+     */
+    private fun showPhotoFromFile(file: File) {
+        try {
+            binding.ivManualPhoto.visibility = View.VISIBLE
+            coil.Coil.imageLoader(this).enqueue(
+                coil.request.ImageRequest.Builder(this)
+                    .data(file)
+                    .target(binding.ivManualPhoto)
+                    .build()
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "showPhotoFromFile error: ${e.message}", e)
+        }
     }
 
     private fun setupListeners() {
