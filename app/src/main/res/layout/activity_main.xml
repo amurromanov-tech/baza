@@ -92,10 +92,11 @@
                 android:contentDescription="Add item"
                 android:src="@drawable/ic_add_photo" />
 
+            <!-- 🆕 ЧЕКИ: «Сканировать QR чека» (иконка прежняя, от сканера чеков) -->
             <ImageButton
                 android:id="@+id/btnScanCheck"
                 style="@style/BottomNavButton"
-                android:contentDescription="Сканировать чек"
+                android:contentDescription="Сканировать QR чека"
                 android:src="@android:drawable/ic_menu_agenda" />
 
             <ImageButton
