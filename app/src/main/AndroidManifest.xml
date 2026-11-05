@@ -280,26 +280,11 @@
             tools:ignore="DiscouragedApi,LockedOrientationActivity" />
 
         <!-- ============================================================ -->
-        <!-- OCR ЧЕКОВ -->
-        <!-- ============================================================ -->
-
-        <activity
-            android:name=".ui.CheckScannerActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
-
-        <activity
-            android:name=".ui.CheckPreviewActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:windowSoftInputMode="adjustResize"
-            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
-
-        <!-- ============================================================ -->
         <!-- 🆕 ЧЕКИ ЧЕРЕЗ proverkacheka.com (QR → API)                  -->
-        <!-- ReceiptPreviewActivity: предпросмотр чека + добавление       -->
-        <!-- позиций в «🛒 Список покупок». Портретная ориентация.        -->
+        <!-- ReceiptPreviewActivity: предпросмотр чека + создание        -->
+        <!-- папки покупки с позициями. Портретная ориентация.           -->
+        <!-- Старые CheckScannerActivity / CheckPreviewActivity удалены  -->
+        <!-- (OCR Tesseract не пригодился).                              -->
         <!-- ============================================================ -->
         <activity
             android:name=".ui.ReceiptPreviewActivity"
