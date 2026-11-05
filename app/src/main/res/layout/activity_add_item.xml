@@ -259,19 +259,27 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <!-- 🆕 v20.2.0: название (manual) — микрофон -->
+            <!-- 🆕 C: название (manual) — автокомплит из истории + микрофон.
+                 MaterialAutoCompleteTextView внутри TextInputLayout
+                 ExposedDropdownMenu: выпадающий список совпадений
+                 появляется по мере ввода. -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilManualName"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Название *"
                 app:endIconMode="custom"
                 app:endIconDrawable="@drawable/ic_mic"
                 app:endIconContentDescription="Голосовой ввод">
-                <com.google.android.material.textfield.TextInputEditText
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/etManualName"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
+                    android:layout_height="wrap_content"
+                    android:inputType="text"
+                    android:completionThreshold="2"
+                    android:importantForAutofill="no" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
