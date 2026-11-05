@@ -17,6 +17,7 @@ import com.family.base.data.TokenStorage
 import com.family.base.databinding.ActivityReceiptPreviewBinding
 import com.family.base.ui.adapter.ReceiptItemsAdapter
 import com.family.base.util.Logger
+import com.family.base.util.PurchaseFolderHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,12 +31,12 @@ import java.util.Locale
  * Логика:
  *  - получает qrRaw в EXTRA_QR_RAW, отправляет в ReceiptRepository;
  *  - показывает шапку (магазин, адрес, дата, сумма) и список позиций;
- *  - кнопка «Добавить в Покупки» — создаёт ItemEntity для каждой позиции
- *    в корне системной папки «🛒 Список покупок» (родитель = SYSTEM_ID_SHOPPING_LIST);
+ *  - кнопка «Добавить в Покупки» — создаёт папку покупки
+ *    «Покупка DD.MM.YYYY, <магазин> #N» в системной «🛒 Покупки»
+ *    и кладёт туда все позиции чека (раз чек есть — значит уже куплено);
+ *  - после успеха возвращает RESULT_OK с navigate_to_folder_id,
+ *    чтобы MainActivity открыла созданную папку покупки;
  *  - кнопка «Отмена» — просто закрывает экран, ничего не сохраняя.
- *
- * Подтверждение — по решению пользователя: сначала показываем список,
- * сохраняем только после нажатия «Добавить в Покупки».
  */
 class ReceiptPreviewActivity : AppCompatActivity() {
 
@@ -141,7 +142,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ДОБАВЛЕНИЕ В ПОКУПКИ
+    // ДОБАВЛЕНИЕ В ПОКУПКИ (папка покупки + позиции)
     // ============================================================
 
     private fun onAddToShoppingClicked() {
@@ -152,30 +153,46 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         }
         if (isSaving) return
 
+        val merchantLine = receipt.retailPlace.ifBlank { "магазин не указан" }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Добавить в Покупки?")
-            .setMessage("Будет добавлено позиций: ${receipt.items.size}\nв «🛒 Список покупок».")
-            .setPositiveButton("Добавить") { _, _ -> addItemsToShopping(receipt) }
+            .setMessage(
+                "Чек от: $merchantLine\n" +
+                    "Позиций: ${receipt.items.size}\n\n" +
+                    "Будет создана папка покупки в «🛒 Покупки»."
+            )
+            .setPositiveButton("Добавить") { _, _ -> addItemsToPurchases(receipt) }
             .setNegativeButton("Отмена", null)
             .show()
     }
 
-    private fun addItemsToShopping(receipt: ReceiptRepository.ReceiptData) {
+    private fun addItemsToPurchases(receipt: ReceiptRepository.ReceiptData) {
         if (isSaving) return
         isSaving = true
-        showLoading(true, "Добавляю в Покупки…")
+        showLoading(true, "Создаю папку покупки…")
 
         lifecycleScope.launch {
             try {
-                val added = withContext(Dispatchers.IO) {
-                    var count = 0
+                val result = withContext(Dispatchers.IO) {
                     val now = System.currentTimeMillis()
                     val user = currentUser
 
+                    // 1. Создаём папку покупки в системной «🛒 Покупки»,
+                    //    с названием магазина (если есть).
+                    val purchaseFolder = PurchaseFolderHelper.createPurchaseFolder(
+                        db = db,
+                        parentId = FolderEntity.SYSTEM_ID_PURCHASES,
+                        date = now,
+                        changedBy = user,
+                        merchantName = receipt.retailPlace.ifBlank { null }
+                    ) ?: return@withContext null
+
+                    // 2. Кладём позиции чека внутрь этой папки.
+                    var count = 0
                     receipt.items.forEach { receiptItem ->
                         val newItem = ItemEntity(
                             name = receiptItem.name,
-                            parentId = FolderEntity.SYSTEM_ID_SHOPPING_LIST,
+                            parentId = purchaseFolder.id,
                             parentItemId = null,
                             quantity = receiptItem.quantity.toInt().coerceAtLeast(1),
                             price = receiptItem.priceKopecks / 100.0,
@@ -196,29 +213,49 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                         )
                         count++
                     }
-                    count
+
+                    Pair(purchaseFolder, count)
                 }
 
+                if (result == null) {
+                    showLoading(false)
+                    isSaving = false
+                    Toast.makeText(
+                        this@ReceiptPreviewActivity,
+                        "Не удалось создать папку покупки",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+
+                val (folder, count) = result
                 showLoading(false)
-                Logger.log(TAG, "addItemsToShopping: added $added items")
+                Logger.log(
+                    TAG,
+                    "addItemsToPurchases: '${folder.name}' (id=${folder.id}), позиций=$count"
+                )
                 Toast.makeText(
                     this@ReceiptPreviewActivity,
-                    "Добавлено в Покупки: $added",
+                    "Добавлено в «${folder.name}»: $count",
                     Toast.LENGTH_SHORT
                 ).show()
 
-                setResult(RESULT_OK)
+                // Возвращаем id созданной папки — MainActivity откроет её.
+                val resultIntent = Intent().apply {
+                    putExtra("navigate_to_folder_id", folder.id)
+                }
+                setResult(RESULT_OK, resultIntent)
                 finish()
 
             } catch (e: Exception) {
                 showLoading(false)
-                Logger.log(TAG, "addItemsToShopping error: ${e.message}", e)
+                isSaving = false
+                Logger.log(TAG, "addItemsToPurchases error: ${e.message}", e)
                 Toast.makeText(
                     this@ReceiptPreviewActivity,
                     "Ошибка: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
-                isSaving = false
             }
         }
     }
