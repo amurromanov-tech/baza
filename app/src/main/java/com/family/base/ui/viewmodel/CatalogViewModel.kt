@@ -28,6 +28,11 @@ import java.util.UUID
  *    deleteFolderSafely, detachAllChildrenAndDelete, detachAllFolderChildrenAndDelete.
  *  - НЕ заблокированы: writeOffItem, unarchiveItem — там markItemDeleted
  *    используется как внутренняя механика (списание/слияние), не удаление.
+ *
+ * 🆕 v20.6.7: createItem() сразу проставляет imageUrl = "images/<id>.jpg"
+ *  локально, если переданы imageBytes. Раньше imageUrl выставлялся только
+ *  после uploadItemImage (синка) — и в списке/карточке фото не было до синка.
+ *  Синк это не ломает: uploadItemImage пишет то же значение.
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -84,20 +89,33 @@ class CatalogViewModel(
     // ============================================================
 
     suspend fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
-        withContext(Dispatchers.IO) { db.itemDao().insertItem(item) }
-
-        imageBytes?.let { bytes ->
-            ImageUtils.saveImageLocally(appContext(), item.id, bytes)
+        // 🆕 v20.6.7: если есть байты и ещё нет imageUrl — проставляем локально,
+        // чтобы фото было видно в списке/карточке сразу, не дожидаясь синка.
+        val hasBytes = imageBytes != null && imageBytes.isNotEmpty()
+        val inserted: ItemEntity = if (hasBytes && item.imageUrl.isNullOrBlank()) {
+            item.copy(imageUrl = "images/${item.id}.jpg")
+        } else {
+            item
         }
 
-        OutboxLogger.itemChanged(db, item, OutboxEntity.ACTION_CREATE, currentUser)
+        withContext(Dispatchers.IO) { db.itemDao().insertItem(inserted) }
+
+        if (hasBytes) {
+            try {
+                ImageUtils.saveImageLocally(appContext(), inserted.id, imageBytes!!)
+            } catch (e: Exception) {
+                Logger.log(TAG, "createItem: saveImageLocally error: ${e.message}", e)
+            }
+        }
+
+        OutboxLogger.itemChanged(db, inserted, OutboxEntity.ACTION_CREATE, currentUser)
 
         writeHistory(
-            itemId = item.id,
-            itemName = item.name,
+            itemId = inserted.id,
+            itemName = inserted.name,
             action = "create",
             oldValue = null,
-            newValue = "${item.quantity} шт."
+            newValue = "${inserted.quantity} шт."
         )
 
         onContentsChanged()
