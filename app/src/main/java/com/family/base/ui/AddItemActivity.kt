@@ -356,7 +356,7 @@ class AddItemActivity : AppCompatActivity() {
                 binding.ivManualPhoto.visibility = View.VISIBLE
                 coil.Coil.imageLoader(this).enqueue(
                     coil.request.ImageRequest.Builder(this)
-                        .data(ImageUtils.getLocalImageFile(this, template.imageUrl))
+                      .data(ImageUtils.getLocalImageFileByUrl(this, template.imageUrl))  
                         .target(binding.ivManualPhoto)
                         .build()
                 )
