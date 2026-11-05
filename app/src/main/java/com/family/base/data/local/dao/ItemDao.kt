@@ -255,6 +255,46 @@ interface ItemDao {
     suspend fun getItemsByBarcodeRaw(barcode: String): List<ItemEntity>
 
     // ============================================================
+    // 🆕 ЧЕКИ: ПОИСК ПО НАЗВАНИЮ (для автоподстановки из истории)
+    // ============================================================
+
+    /**
+     * Точное совпадение по названию (case-insensitive).
+     * Для автоподстановки в ReceiptPreviewActivity:
+     * если найдено ровно одно — применяем шаблон без диалога.
+     * Архивные и активные — оба (архивные приоритетнее: там уже
+     * заполнены все поля).
+     */
+    @Query("""
+        SELECT * FROM items
+        WHERE isDeleted = 0
+          AND name = :name COLLATE NOCASE
+        ORDER BY
+          CASE WHEN isArchived = 1 THEN 1 ELSE 0 END,
+          updatedDate DESC
+        LIMIT :limit
+    """)
+    suspend fun findItemsByNameExact(name: String, limit: Int = 5): List<ItemEntity>
+
+    /**
+     * Поиск по вхождению подстроки в название (case-insensitive).
+     * Для автокомплита в AddItemActivity (вариант C):
+     * пользователь набрал «Хлеб» → находим «Хлеб Бородинский»,
+     * «Хлеб белый», «Хлеб с отрубями» и т.д.
+     * Архивные и активные — оба, архивные приоритетнее.
+     */
+    @Query("""
+        SELECT * FROM items
+        WHERE isDeleted = 0
+          AND name LIKE '%' || :query || '%' COLLATE NOCASE
+        ORDER BY
+          CASE WHEN isArchived = 1 THEN 1 ELSE 0 END,
+          updatedDate DESC
+        LIMIT :limit
+    """)
+    suspend fun findItemsByNameLike(query: String, limit: Int = 20): List<ItemEntity>
+
+    // ============================================================
     // АУДИТ БАЗЫ
     // ============================================================
 
