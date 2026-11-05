@@ -59,14 +59,26 @@
             </FrameLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- ===== ПРИЧИНА / ДАТА ===== -->
+        <!-- ===== ДАТА ПОКУПКИ ===== -->
         <TextView
-            android:id="@+id/tvReason"
+            android:id="@+id/tvPurchaseDate"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="14sp"
             android:textColor="?android:attr/textColorPrimary"
-            tools:text="Причина: 🧴 Израсходовано" />
+            android:visibility="gone"
+            tools:text="Дата покупки: 12.10.2026"
+            tools:visibility="visible" />
+
+        <!-- ===== ПРИЧИНА / ДАТА СПИСАНИЯ ===== -->
+        <TextView
+            android:id="@+id/tvReason"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textSize="14sp"
+            android:textColor="?android:attr/textColorPrimary"
+            tools:text="Причина: 🍽 Съедено" />
 
         <TextView
             android:id="@+id/tvArchivedDate"
@@ -75,7 +87,7 @@
             android:layout_marginTop="2dp"
             android:textSize="14sp"
             android:textColor="?android:attr/textColorPrimary"
-            tools:text="Дата: 15.10.2026" />
+            tools:text="Дата списания: 30.10.2026" />
 
         <TextView
             android:id="@+id/tvNote"
