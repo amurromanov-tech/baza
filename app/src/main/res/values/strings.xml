@@ -104,4 +104,25 @@
     <string name="video_save_ok">Видео сохранено: Movies/%1$s</string>
     <string name="video_save_error">Не удалось сохранить видео</string>
     <string name="video_save_permission_denied">Нет разрешения на запись в галерею</string>
+
+    <!-- ============================================================ -->
+    <!-- 🆕 ЧЕКИ: ИСТОРИЯ И АВТОПОДСТАНОВКА (A + B + C) -->
+    <!-- ============================================================ -->
+
+    <!-- Бейдж в ReceiptItemsAdapter (позиция чека) -->
+    <string name="receipt_match_badge_single">🔄 из истории</string>
+    <string name="receipt_match_badge_multiple">🔄 %1$d варианта</string>
+
+    <!-- Диалог выбора эталона (B) -->
+    <string name="receipt_match_dialog_title">«%1$s»</string>
+    <string name="receipt_match_dialog_message">Найдено в истории: %1$d. Выберите эталон:</string>
+    <string name="receipt_match_create_new">➕ Создать новый (без шаблона)</string>
+
+    <!-- Подсказка при подстановке (C) -->
+    <string name="receipt_match_applied">Поля заполнены из «%1$s»</string>
+
+    <!-- Диалог подтверждения «Добавить в Покупки» -->
+    <string name="receipt_add_dialog_title">Добавить в Покупки?</string>
+    <string name="receipt_add_dialog_message_with_matches">Чек от: %1$s\nПозиций: %2$d\nСовпадений в истории: %3$d\n\nДля позиций с совпадением поля будут заполнены автоматически. Если вариантов несколько — спрошу по очереди.\n\nБудет создана папка покупки в «🛒 Покупки».</string>
+    <string name="receipt_add_dialog_message_no_matches">Чек от: %1$s\nПозиций: %2$d\n\nБудет создана папка покупки в «🛒 Покупки».</string>
 </resources>
