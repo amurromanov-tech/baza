@@ -9,15 +9,37 @@
     android:paddingStart="4dp"
     android:paddingEnd="4dp">
 
-    <!-- Название товара -->
-    <TextView
-        android:id="@+id/tvName"
+    <!-- Название товара + бейдж «🔄 из истории» -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Название товара"
-        android:textColor="?android:attr/textColorPrimary"
-        android:textSize="15sp"
-        tools:text="Хлопья чили 30 гр" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Название товара"
+            android:textColor="?android:attr/textColorPrimary"
+            android:textSize="15sp"
+            tools:text="Хлопья чили 30 гр" />
+
+        <!-- 🆕 Бейдж: найден эталон в истории (скрыт, если совпадений нет) -->
+        <TextView
+            android:id="@+id/tvMatchBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="🔄 из истории"
+            android:textColor="?attr/colorAccent"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            tools:text="🔄 из истории"
+            tools:visibility="visible" />
+    </LinearLayout>
 
     <!-- Цена × количество = сумма -->
     <LinearLayout
