@@ -42,6 +42,8 @@ import java.util.Locale
  *    и кладёт туда все позиции чека. Существующие активные товары
  *    НЕ трогаем, quantity НЕ увеличиваем — всегда новые ItemEntity
  *    (перестраховка от «инфляции цены»);
+ *  - 🆕 v20.6.1: дата папки покупки, purchaseDate и addedDate берутся
+ *    из поля dateTime чека (а не «сейчас»). updatedDate — всё ещё now;
  *  - после успеха возвращает RESULT_OK с navigate_to_folder_id;
  *  - кнопка «Отмена» — закрывает экран, ничего не сохраняя.
  */
@@ -218,16 +220,20 @@ class ReceiptPreviewActivity : AppCompatActivity() {
 
         val merchantLine = receipt.retailPlace.ifBlank { "магазин не указан" }
         val withMatches = matchesByPosition.count { it.isNotEmpty() }
+        val receiptDateMillis = parseReceiptDateMillis(receipt.dateTime)
+        val receiptDateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+            .format(Date(receiptDateMillis))
 
         val message = buildString {
             append("Чек от: $merchantLine\n")
+            append("Дата чека: $receiptDateStr\n")
             append("Позиций: ${receipt.items.size}\n")
             if (withMatches > 0) {
                 append("Совпадений в истории: $withMatches\n")
                 append("\nДля позиций с совпадением поля будут заполнены автоматически. ")
                 append("Если вариантов несколько — спрошу по очереди.\n")
             }
-            append("\nБудет создана папка покупки в «🛒 Покупки».")
+            append("\nБудет создана папка «Покупка $receiptDateStr, $merchantLine» в «🛒 Покупки».")
         }
 
         AlertDialog.Builder(this)
@@ -251,6 +257,8 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         showLoading(true, "Обрабатываю позиции…")
 
         val now = System.currentTimeMillis()
+        // 🆕 Дата чека (для папки и purchaseDate/addedDate)
+        val receiptDateMillis = parseReceiptDateMillis(receipt.dateTime)
         val user = currentUser
 
         // Шаблоны, выбранные пользователем (или авто)
@@ -262,6 +270,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
             index = 0,
             templates = templates,
             now = now,
+            receiptDateMillis = receiptDateMillis,
             user = user
         )
     }
@@ -271,11 +280,12 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         index: Int,
         templates: MutableList<ItemEntity?>,
         now: Long,
+        receiptDateMillis: Long,
         user: String
     ) {
         if (index >= receipt.items.size) {
             // Все позиции обработаны — сохраняем
-            saveReceiptWithTemplates(receipt, templates, now, user)
+            saveReceiptWithTemplates(receipt, templates, now, receiptDateMillis, user)
             return
         }
 
@@ -286,7 +296,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
             positionMatches.isEmpty() -> {
                 // Нет совпадений — шаблон не нужен
                 templates.add(null)
-                processPosition(receipt, index + 1, templates, now, user)
+                processPosition(receipt, index + 1, templates, now, receiptDateMillis, user)
             }
             positionMatches.size == 1 -> {
                 // A: одно совпадение — применяем автоматически
@@ -295,11 +305,14 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                     TAG,
                     "processPosition[$index] '${receiptItem.name}': auto-template '${positionMatches.first().name}'"
                 )
-                processPosition(receipt, index + 1, templates, now, user)
+                processPosition(receipt, index + 1, templates, now, receiptDateMillis, user)
             }
             else -> {
                 // B: несколько — диалог выбора
-                showMatchDialog(receipt, index, receiptItem, positionMatches, templates, now, user)
+                showMatchDialog(
+                    receipt, index, receiptItem, positionMatches,
+                    templates, now, receiptDateMillis, user
+                )
             }
         }
     }
@@ -315,6 +328,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         matches: List<ItemEntity>,
         templates: MutableList<ItemEntity?>,
         now: Long,
+        receiptDateMillis: Long,
         user: String
     ) {
         showLoading(false)
@@ -335,7 +349,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                         (chosen?.let { "'${it.name}'" } ?: "new")
                 )
                 showLoading(true, "Обрабатываю позиции…")
-                processPosition(receipt, index + 1, templates, now, user)
+                processPosition(receipt, index + 1, templates, now, receiptDateMillis, user)
             }
             .setCancelable(false)
             .show()
@@ -344,11 +358,14 @@ class ReceiptPreviewActivity : AppCompatActivity() {
     /**
      * 🆕 Финальный шаг: создаём папку покупки, для каждой позиции —
      * новый ItemEntity (с применённым шаблоном, если был).
+     *
+     * v20.6.1: дата папки, purchaseDate и addedDate берутся из чека.
      */
     private fun saveReceiptWithTemplates(
         receipt: ReceiptRepository.ReceiptData,
         templates: List<ItemEntity?>,
         now: Long,
+        receiptDateMillis: Long,
         user: String
     ) {
         showLoading(true, "Создаю папку покупки…")
@@ -356,11 +373,11 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    // 1. Папка покупки
+                    // 1. Папка покупки — с датой из чека
                     val purchaseFolder = PurchaseFolderHelper.createPurchaseFolder(
                         db = db,
                         parentId = FolderEntity.SYSTEM_ID_PURCHASES,
-                        date = now,
+                        date = receiptDateMillis,
                         changedBy = user,
                         merchantName = receipt.retailPlace.ifBlank { null }
                     ) ?: return@withContext null
@@ -376,13 +393,15 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                             parentItemId = null,
                             quantity = receiptItem.quantity.toInt().coerceAtLeast(1),
                             price = receiptItem.priceKopecks / 100.0,
-                            addedDate = now,
+                            // 🆕 purchaseDate и addedDate — из чека
+                            addedDate = receiptDateMillis,
                             addedBy = user,
+                            // updatedDate — момент фактического добавления в базу
                             updatedDate = now,
                             updatedBy = user,
                             itemType = "other",
                             itemSubtype = "other_other",
-                            purchaseDate = now
+                            purchaseDate = receiptDateMillis
                         )
 
                         // A/B: применяем шаблон (если есть)
@@ -448,7 +467,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ФОРМАТИРОВАНИЕ
+    // ФОРМАТИРОВАНИЕ И ПАРСИНГ ДАТ
     // ============================================================
 
     private fun formatRubles(kopecks: Long): String {
@@ -466,6 +485,43 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         } catch (e: Exception) {
             raw
         }
+    }
+
+    /**
+     * 🆕 Парсит дату чека в миллисекунды.
+     *
+     * API обычно отдаёт "yyyy-MM-dd'T'HH:mm:ss" (например, "2026-11-04T14:12:00").
+     * На всякий случай пробуем несколько форматов. Если ничего не подошло —
+     * fallback на System.currentTimeMillis(), чтобы не уронить сценарий.
+     */
+    private fun parseReceiptDateMillis(raw: String): Long {
+        if (raw.isBlank()) return System.currentTimeMillis()
+
+        val candidates = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd HH:mm",
+            "yyyyMMdd'T'HHmm",
+            "yyyyMMdd'T'HHmmss"
+        )
+
+        for (pattern in candidates) {
+            try {
+                val fmt = SimpleDateFormat(pattern, Locale.getDefault())
+                fmt.isLenient = false
+                val parsed = fmt.parse(raw)
+                if (parsed != null) {
+                    Logger.log(TAG, "parseReceiptDateMillis: '$raw' → pattern='$pattern' → ${parsed.time}")
+                    return parsed.time
+                }
+            } catch (_: Exception) {
+                // пробуем следующий формат
+            }
+        }
+
+        Logger.log(TAG, "parseReceiptDateMillis: не удалось разобрать '$raw', fallback на now()")
+        return System.currentTimeMillis()
     }
 
     // ============================================================
