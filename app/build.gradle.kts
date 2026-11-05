@@ -12,8 +12,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 205
-        versionName = "20.6.0"
+        versionCode = 206
+        versionName = "20.6.1"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
@@ -127,9 +127,6 @@ dependencies {
 
     // ===== ML KIT (BARCODE) =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
-
-    // ===== OCR =====
-    implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
 
     // ===== 🆕 v20.5.14: ВИДЕО (ExoPlayer / Media3) =====
     // MP4, MKV, WebM, 3GP, MOV — играет.
