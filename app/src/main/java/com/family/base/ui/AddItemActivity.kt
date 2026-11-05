@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
@@ -268,7 +270,7 @@ class AddItemActivity : AppCompatActivity() {
         suggestionAdapter = adapter
         autoComplete.setAdapter(adapter)
 
-        // 🆕 v20.6.2: клик по подсказке — ставим в поле только name,
+        // 🆕 v20.6.4: клик по подсказке — ставим в поле только name,
         // скрываем dropdown, убираем фокус с клавиатуры и подставляем поля.
         // Без этого MaterialAutoCompleteTextView сам вызывает toString()
         // у ItemEntity и вставляет всю простыню полей data-класса.
@@ -298,7 +300,7 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         // debounce: при вводе текста — через 250 мс запрашиваем подсказки
-        autoComplete.addTextChangedListener(object : android.text.TextWatcher {
+        autoComplete.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 searchJob?.cancel()
@@ -329,7 +331,7 @@ class AddItemActivity : AppCompatActivity() {
                     }
                 }
             }
-            override fun afterTextChanged(s: android.widget.Editable?) {}
+            override fun afterTextChanged(s: Editable?) {}
         })
     }
 
