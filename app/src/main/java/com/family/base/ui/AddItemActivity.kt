@@ -24,8 +24,10 @@ import com.family.base.data.model.SubtypeCatalog
 import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityAddItemBinding
+import com.family.base.ui.adapter.ItemSuggestionAdapter
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.ImageUtils
+import com.family.base.util.ItemHistoryHelper
 import com.family.base.util.Logger
 import com.family.base.util.VoiceInputHelper
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -52,9 +54,6 @@ class AddItemActivity : AppCompatActivity() {
 
     /**
      * 🆕 B-5: id предмета-родителя, если создаём вложенный предмет.
-     * null — обычное создание (в папке parentFolderId).
-     * non-null — создание вложенного в предмет parentItemId.
-     * В этом случае parentFolderId будет взят из parentItem.parentId.
      */
     private var parentItemId: String? = null
 
@@ -62,6 +61,12 @@ class AddItemActivity : AppCompatActivity() {
     private var expiryDate: Long? = null
     private var purchaseDate: Long? = null
     private var barcode: String? = null
+
+    /**
+     * 🆕 C: выбранный из истории шаблон (для подстановки полей).
+     * null — пользователь ничего не выбрал (или набрал своё название).
+     */
+    private var selectedTemplate: ItemEntity? = null
 
     private var photoUri: Uri? = null
 
@@ -72,10 +77,19 @@ class AddItemActivity : AppCompatActivity() {
 
     /**
      * 🆕 v20.2.0: поле, в которое вставим распознанный голосом текст.
-     * Устанавливается при клике на иконку микрофона, сбрасывается
-     * после получения результата (или при отмене).
      */
     private var pendingVoiceField: EditText? = null
+
+    /**
+     * 🆕 C: адаптер подсказок для etManualName.
+     */
+    private var suggestionAdapter: ItemSuggestionAdapter? = null
+
+    /**
+     * 🆕 C: job для отложенного поиска (debounce 250 мс),
+     * чтобы не дёргать БД на каждый символ.
+     */
+    private var searchJob: kotlinx.coroutines.Job? = null
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -134,8 +148,6 @@ class AddItemActivity : AppCompatActivity() {
 
     /**
      * 🆕 v20.2.0: launcher для голосового ввода.
-     * Результат распознавания вставляем в pendingVoiceField
-     * (в позицию курсора, не заменяя существующий текст).
      */
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -175,7 +187,6 @@ class AddItemActivity : AppCompatActivity() {
         parentFolderId = intent.getStringExtra("parent_id")
         parentItemId = intent.getStringExtra("parent_item_id")
 
-        // 🆕 B-5: если создаём вложенный — берём parentId из родителя-предмета
         if (parentItemId != null) {
             lifecycleScope.launch {
                 try {
@@ -183,7 +194,6 @@ class AddItemActivity : AppCompatActivity() {
                         db.itemDao().getItemById(parentItemId!!)
                     }
                     if (parentItem != null) {
-                        // Родитель найден — берём его parentId в качестве папки
                         parentFolderId = parentItem.parentId
                         Logger.log(
                             TAG,
@@ -212,6 +222,9 @@ class AddItemActivity : AppCompatActivity() {
         updateSubtypesForAuto(currentAutoType)
         updateSubtypesForManual(currentManualType)
 
+        // 🆕 C: автокомплит названия из истории
+        setupNameAutocomplete()
+
         // 🆕 Дата покупки: по умолчанию = сегодня
         setDefaultPurchaseDate()
 
@@ -229,6 +242,135 @@ class AddItemActivity : AppCompatActivity() {
                 Toast.makeText(this, "QR-код распознан: $code", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // ============================================================
+    // 🆕 C: АВТОКОМПЛИТ НАЗВАНИЯ ИЗ ИСТОРИИ
+    // ============================================================
+
+    /**
+     * Настраивает autocomplete на etManualName:
+     *  - адаптер подсказок — ItemSuggestionAdapter (Filterable, ищет в БД);
+     *  - debounce 250 мс, чтобы не дёргать БД на каждый символ;
+     *  - по клику на подсказку — подставляем поля из шаблона.
+     */
+    private fun setupNameAutocomplete() {
+        val autoComplete = binding.etManualName as MaterialAutoCompleteTextView
+
+        val adapter = ItemSuggestionAdapter(
+            context = this,
+            scope = lifecycleScope,
+            db = db,
+            onSuggestionSelected = { template -> applyTemplateFromHistory(template) }
+        )
+        suggestionAdapter = adapter
+        autoComplete.setAdapter(adapter)
+
+        // debounce: при вводе текста — через 250 мс запрашиваем подсказки
+        autoComplete.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                searchJob?.cancel()
+                val query = s?.toString()?.trim().orEmpty()
+
+                // Если пользователь стёр текст или изменил его — сбрасываем
+                // выбранный шаблон (чтобы при сохранении не применить старый).
+                if (selectedTemplate != null && selectedTemplate?.name != query) {
+                    selectedTemplate = null
+                }
+
+                if (query.length < 2) {
+                    adapter.clearSuggestions()
+                    return
+                }
+
+                searchJob = lifecycleScope.launch {
+                    kotlinx.coroutines.delay(250)
+                    val suggestions = withContext(Dispatchers.IO) {
+                        ItemHistoryHelper.findMatches(db, query, barcode = null)
+                    }
+                    adapter.setSuggestions(suggestions)
+                    if (suggestions.isNotEmpty() && autoComplete.isFocused) {
+                        adapter.notifyDataSetChanged()
+                        if (!autoComplete.isPopupShowing) {
+                            autoComplete.showDropDown()
+                        }
+                    }
+                }
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+    }
+
+    /**
+     * 🆕 C: подстановка полей из выбранного шаблона.
+     * Правила (утверждены):
+     *  - itemType, itemSubtype — да (радио-кнопки и подтип переключаются);
+     *  - description — да (если у пользователя пусто);
+     *  - barcode — да (если у шаблона есть и у пользователя пусто);
+     *  - imageUrl — да (показываем превью, если у пользователя нет фото);
+     *  - expiryDate, manufacturedDate — НЕ подставляем;
+     *  - price — НЕ подставляем.
+     */
+    private fun applyTemplateFromHistory(template: ItemEntity) {
+        selectedTemplate = template
+        Logger.log(TAG, "applyTemplateFromHistory: '${template.name}' (id=${template.id})")
+
+        // Тип
+        val type = template.itemType ?: "thing"
+        currentManualType = type
+        when (type) {
+            "food" -> binding.rgType.check(R.id.rbFood)
+            "medicine" -> binding.rgType.check(R.id.rbMedicine)
+            "thing" -> binding.rgType.check(R.id.rbThing)
+            else -> binding.rgType.check(R.id.rbOther)
+        }
+        selectedManualSubtype = null
+        updateSubtypesForManual(type)
+
+        // Подтип — выбираем по key (если есть)
+        template.itemSubtype?.let { subtypeKey ->
+            val subtypes = SubtypeCatalog.getSubtypes(type)
+            val idx = subtypes.indexOfFirst { it.key == subtypeKey }
+            if (idx >= 0) {
+                selectedManualSubtype = subtypeKey
+                val view = binding.autoCompleteSubtypeManual
+                view.setText(subtypes[idx].displayName, false)
+            }
+        }
+
+        // Описание — только если пусто
+        if (binding.etManualDescription.text.isNullOrBlank() && !template.description.isNullOrBlank()) {
+            binding.etManualDescription.setText(template.description)
+        }
+
+        // Штрих-код — только если у пользователя пусто
+        if (barcode.isNullOrBlank() && !template.barcode.isNullOrBlank()) {
+            barcode = template.barcode
+        }
+
+        // Фото — только если у пользователя нет фото
+        if (imageBytes == null && !template.imageUrl.isNullOrBlank()) {
+            // Загружаем превью через Coil в ivManualPhoto
+            try {
+                binding.ivManualPhoto.visibility = View.VISIBLE
+                coil.Coil.imageLoader(this).enqueue(
+                    coil.request.ImageRequest.Builder(this)
+                        .data(ImageUtils.getLocalImageFile(this, template.imageUrl))
+                        .target(binding.ivManualPhoto)
+                        .build()
+                )
+                Logger.log(TAG, "applyTemplateFromHistory: показано фото '${template.imageUrl}'")
+            } catch (e: Exception) {
+                Logger.log(TAG, "applyTemplateFromHistory: не удалось загрузить фото: ${e.message}")
+            }
+        }
+
+        Toast.makeText(
+            this,
+            "Поля заполнены из «${template.name}»",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun setupListeners() {
@@ -299,8 +441,6 @@ class AddItemActivity : AppCompatActivity() {
 
     /**
      * 🆕 v20.2.0: запуск голосового ввода для конкретного поля.
-     * Запоминаем поле в pendingVoiceField, чтобы voiceLauncher
-     * вставил результат именно туда.
      */
     private fun startVoiceFor(field: EditText) {
         pendingVoiceField = field
@@ -556,8 +696,6 @@ class AddItemActivity : AppCompatActivity() {
             }
         }
 
-        // 🆕 v20.2.0: разрешение на микрофон получено — повторно запускаем
-        // распознавание для запомненного поля.
         if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 val field = pendingVoiceField
@@ -659,10 +797,8 @@ class AddItemActivity : AppCompatActivity() {
 
         val now = System.currentTimeMillis()
         val finalPurchaseDate = if (isAutoMode) {
-            // В авто-режиме дату покупки не спрашиваем — ставим = addedDate
             now
         } else {
-            // В manual — берём выбранную (по умолчанию = сегодня), либо now
             purchaseDate ?: now
         }
 
@@ -670,7 +806,7 @@ class AddItemActivity : AppCompatActivity() {
             TAG,
             "Save: type=$itemType, subtype=$itemSubtype, qty=$quantity, " +
                 "hasImage=${imageBytes != null}, parentFolderId=$parentFolderId, parentItemId=$parentItemId, " +
-                "purchaseDate=$finalPurchaseDate"
+                "purchaseDate=$finalPurchaseDate, template=${selectedTemplate?.name}"
         )
 
         val newItemId = UUID.randomUUID().toString()
@@ -679,7 +815,7 @@ class AddItemActivity : AppCompatActivity() {
             id = newItemId,
             name = name,
             parentId = parentFolderId,
-            parentItemId = parentItemId,   // 🆕 B-5
+            parentItemId = parentItemId,
             quantity = quantity,
             barcode = finalBarcode,
             description = description,
@@ -703,6 +839,8 @@ class AddItemActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        searchJob?.cancel()
+        suggestionAdapter?.clearSuggestions()
         Logger.log(TAG, "onDestroy called")
     }
 }
