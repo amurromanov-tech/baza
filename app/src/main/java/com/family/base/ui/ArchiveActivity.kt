@@ -279,8 +279,12 @@ class ArchiveActivity : AppCompatActivity() {
      * 🆕 v20.2.2: карточка предмета в архиве теперь с фото.
      *
      * Раньше был AlertDialog с простым текстом. Теперь — кастомный view
-     * (dialog_archive_detail.xml): фото сверху, под ним причина, дата,
-     * цена, количество, описание.
+     * (dialog_archive_detail.xml): фото сверху, под ним дата покупки,
+     * причина, дата списания, цена, количество, описание.
+     *
+     * 🆕 v20.6.6: добавлена «Дата покупки» (tvPurchaseDate),
+     * а «Дата» переименована в «Дата списания» (tvArchivedDate),
+     * чтобы отличать одно от другого.
      *
      * Фото грузим в три шага:
      *  1. локальный файл (ImageUtils.getLocalImageFile) — если есть, сразу показываем;
@@ -298,6 +302,7 @@ class ArchiveActivity : AppCompatActivity() {
         val ivPlaceholder = dialogView.findViewById<ImageView>(R.id.ivItemPhotoPlaceholder)
         val photoLoadingBar = dialogView.findViewById<ProgressBar>(R.id.photoLoadingBar)
 
+        val tvPurchaseDate = dialogView.findViewById<TextView>(R.id.tvPurchaseDate)
         val tvReason = dialogView.findViewById<TextView>(R.id.tvReason)
         val tvArchivedDate = dialogView.findViewById<TextView>(R.id.tvArchivedDate)
         val tvNote = dialogView.findViewById<TextView>(R.id.tvNote)
@@ -305,12 +310,22 @@ class ArchiveActivity : AppCompatActivity() {
         val tvQuantity = dialogView.findViewById<TextView>(R.id.tvQuantity)
         val tvDescription = dialogView.findViewById<TextView>(R.id.tvDescription)
 
-        // Заполняем текстовые поля
+        // 🆕 Дата покупки (из purchaseDate; если нет — скрываем)
+        val purchase = item.purchaseDate
+        if (purchase != null && purchase > 0L) {
+            tvPurchaseDate.visibility = View.VISIBLE
+            tvPurchaseDate.text = "Дата покупки: ${dateFormat.format(Date(purchase))}"
+        } else {
+            tvPurchaseDate.visibility = View.GONE
+        }
+
+        // Причина
         val reasonText = getReasonText(item.archivedReason)
         tvReason.text = "Причина: $reasonText"
 
+        // 🆕 Дата списания (было «Дата: …»)
         val dateText = item.archivedDate?.let { dateFormat.format(Date(it)) } ?: "—"
-        tvArchivedDate.text = "Дата: $dateText"
+        tvArchivedDate.text = "Дата списания: $dateText"
 
         if (!item.archivedNote.isNullOrEmpty()) {
             tvNote.visibility = View.VISIBLE
