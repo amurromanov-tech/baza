@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -16,6 +17,7 @@ import com.family.base.data.repository.ReceiptRepository
 import com.family.base.data.TokenStorage
 import com.family.base.databinding.ActivityReceiptPreviewBinding
 import com.family.base.ui.adapter.ReceiptItemsAdapter
+import com.family.base.util.ItemHistoryHelper
 import com.family.base.util.Logger
 import com.family.base.util.PurchaseFolderHelper
 import kotlinx.coroutines.Dispatchers
@@ -31,12 +33,17 @@ import java.util.Locale
  * Логика:
  *  - получает qrRaw в EXTRA_QR_RAW, отправляет в ReceiptRepository;
  *  - показывает шапку (магазин, адрес, дата, сумма) и список позиций;
+ *  - для каждой позиции ищет «эталон» в истории (ItemHistoryHelper.findMatches):
+ *      • 1 совпадение → автоподстановка полей (A);
+ *      • >1 совпадений → диалог выбора по очереди (B);
+ *      • 0 → создаём как раньше (пустые поля);
  *  - кнопка «Добавить в Покупки» — создаёт папку покупки
  *    «Покупка DD.MM.YYYY, <магазин> #N» в системной «🛒 Покупки»
- *    и кладёт туда все позиции чека (раз чек есть — значит уже куплено);
- *  - после успеха возвращает RESULT_OK с navigate_to_folder_id,
- *    чтобы MainActivity открыла созданную папку покупки;
- *  - кнопка «Отмена» — просто закрывает экран, ничего не сохраняя.
+ *    и кладёт туда все позиции чека. Существующие активные товары
+ *    НЕ трогаем, quantity НЕ увеличиваем — всегда новые ItemEntity
+ *    (перестраховка от «инфляции цены»);
+ *  - после успеха возвращает RESULT_OK с navigate_to_folder_id;
+ *  - кнопка «Отмена» — закрывает экран, ничего не сохраняя.
  */
 class ReceiptPreviewActivity : AppCompatActivity() {
 
@@ -51,6 +58,12 @@ class ReceiptPreviewActivity : AppCompatActivity() {
     private var receiptData: ReceiptRepository.ReceiptData? = null
     private var isLoading = false
     private var isSaving = false
+
+    /**
+     * 🆕 Для каждой позиции чека — список найденных эталонов.
+     * Индекс совпадает с индексом в receiptData.items.
+     */
+    private var matchesByPosition: List<List<ItemEntity>> = emptyList()
 
     companion object {
         const val EXTRA_QR_RAW = "extra_qr_raw"
@@ -113,7 +126,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                 is ReceiptRepository.Result.Success -> {
                     receiptData = result.receipt
                     showReceipt(result.receipt)
-                    showLoading(false)
+                    loadHistoryMatches(result.receipt)
                 }
                 is ReceiptRepository.Result.Error -> {
                     showLoading(false)
@@ -135,14 +148,64 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         binding.tvDateTime.text = formatDateTime(receipt.dateTime)
         binding.tvTotalSum.text = formatRubles(receipt.totalSumKopecks)
 
-        adapter.submitList(receipt.items)
+        // Показываем без бейджей — бейджи появятся после поиска истории
+        val uiList = receipt.items.map { ReceiptItemsAdapter.ReceiptPositionUi(item = it) }
+        adapter.submitList(uiList)
 
         binding.tvItemsCount.text = "Позиций: ${receipt.items.size}"
-        binding.btnAddToShopping.isEnabled = receipt.items.isNotEmpty()
+        binding.btnAddToShopping.isEnabled = false // включаем после поиска истории
+    }
+
+    /**
+     * 🆕 Поиск эталонов в истории для каждой позиции чека.
+     * После завершения — обновляем адаптер с бейджами и включаем кнопку.
+     */
+    private fun loadHistoryMatches(receipt: ReceiptRepository.ReceiptData) {
+        showLoading(true, "Ищу совпадения в истории…")
+
+        lifecycleScope.launch {
+            try {
+                val matches = withContext(Dispatchers.IO) {
+                    receipt.items.map { receiptItem ->
+                        ItemHistoryHelper.findMatches(
+                            db = db,
+                            name = receiptItem.name,
+                            barcode = null // в чеке штрих-кода нет, только имя
+                        )
+                    }
+                }
+
+                matchesByPosition = matches
+
+                val uiList = receipt.items.mapIndexed { index, receiptItem ->
+                    val positionMatches = matches.getOrNull(index).orEmpty()
+                    ReceiptItemsAdapter.ReceiptPositionUi(
+                        item = receiptItem,
+                        hasMatch = positionMatches.isNotEmpty(),
+                        matchCount = positionMatches.size
+                    )
+                }
+                adapter.submitList(uiList)
+
+                val withMatches = matches.count { it.isNotEmpty() }
+                Logger.log(
+                    TAG,
+                    "loadHistoryMatches: позиций=${receipt.items.size}, с совпадениями=$withMatches"
+                )
+
+                showLoading(false)
+                binding.btnAddToShopping.isEnabled = receipt.items.isNotEmpty()
+
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadHistoryMatches error: ${e.message}", e)
+                showLoading(false)
+                binding.btnAddToShopping.isEnabled = receipt.items.isNotEmpty()
+            }
+        }
     }
 
     // ============================================================
-    // ДОБАВЛЕНИЕ В ПОКУПКИ (папка покупки + позиции)
+    // ДОБАВЛЕНИЕ В ПОКУПКИ (A + B)
     // ============================================================
 
     private fun onAddToShoppingClicked() {
@@ -154,31 +217,146 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         if (isSaving) return
 
         val merchantLine = receipt.retailPlace.ifBlank { "магазин не указан" }
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val withMatches = matchesByPosition.count { it.isNotEmpty() }
+
+        val message = buildString {
+            append("Чек от: $merchantLine\n")
+            append("Позиций: ${receipt.items.size}\n")
+            if (withMatches > 0) {
+                append("Совпадений в истории: $withMatches\n")
+                append("\nДля позиций с совпадением поля будут заполнены автоматически. ")
+                append("Если вариантов несколько — спрошу по очереди.\n")
+            }
+            append("\nБудет создана папка покупки в «🛒 Покупки».")
+        }
+
+        AlertDialog.Builder(this)
             .setTitle("Добавить в Покупки?")
-            .setMessage(
-                "Чек от: $merchantLine\n" +
-                    "Позиций: ${receipt.items.size}\n\n" +
-                    "Будет создана папка покупки в «🛒 Покупки»."
-            )
-            .setPositiveButton("Добавить") { _, _ -> addItemsToPurchases(receipt) }
+            .setMessage(message)
+            .setPositiveButton("Добавить") { _, _ -> startProcessing(receipt) }
             .setNegativeButton("Отмена", null)
             .show()
     }
 
-    private fun addItemsToPurchases(receipt: ReceiptRepository.ReceiptData) {
-        if (isSaving) return
+    /**
+     * 🆕 Обработка позиций по очереди:
+     *  - 0 совпадений → создаём ItemEntity как есть;
+     *  - 1 совпадение → применяем шаблон (A);
+     *  - >1 → показываем диалог выбора (B), ждём ответа, идём к следующей.
+     *
+     * После обработки всех позиций — создаём папку покупки и сохраняем.
+     */
+    private fun startProcessing(receipt: ReceiptRepository.ReceiptData) {
         isSaving = true
+        showLoading(true, "Обрабатываю позиции…")
+
+        val now = System.currentTimeMillis()
+        val user = currentUser
+
+        // Шаблоны, выбранные пользователем (или авто)
+        val templates = mutableListOf<ItemEntity?>() // размер = items.size
+
+        // Рекурсивная обработка по индексу
+        processPosition(
+            receipt = receipt,
+            index = 0,
+            templates = templates,
+            now = now,
+            user = user
+        )
+    }
+
+    private fun processPosition(
+        receipt: ReceiptRepository.ReceiptData,
+        index: Int,
+        templates: MutableList<ItemEntity?>,
+        now: Long,
+        user: String
+    ) {
+        if (index >= receipt.items.size) {
+            // Все позиции обработаны — сохраняем
+            saveReceiptWithTemplates(receipt, templates, now, user)
+            return
+        }
+
+        val receiptItem = receipt.items[index]
+        val positionMatches = matchesByPosition.getOrNull(index).orEmpty()
+
+        when {
+            positionMatches.isEmpty() -> {
+                // Нет совпадений — шаблон не нужен
+                templates.add(null)
+                processPosition(receipt, index + 1, templates, now, user)
+            }
+            positionMatches.size == 1 -> {
+                // A: одно совпадение — применяем автоматически
+                templates.add(positionMatches.first())
+                Logger.log(
+                    TAG,
+                    "processPosition[$index] '${receiptItem.name}': auto-template '${positionMatches.first().name}'"
+                )
+                processPosition(receipt, index + 1, templates, now, user)
+            }
+            else -> {
+                // B: несколько — диалог выбора
+                showMatchDialog(receipt, index, receiptItem, positionMatches, templates, now, user)
+            }
+        }
+    }
+
+    /**
+     * 🆕 B: диалог выбора эталона для позиции.
+     * Показываем список «name (статус, дата)» + пункт «Создать новый».
+     */
+    private fun showMatchDialog(
+        receipt: ReceiptRepository.ReceiptData,
+        index: Int,
+        receiptItem: ReceiptRepository.ReceiptItem,
+        matches: List<ItemEntity>,
+        templates: MutableList<ItemEntity?>,
+        now: Long,
+        user: String
+    ) {
+        showLoading(false)
+
+        val labels = matches.map { ItemHistoryHelper.describe(it) }.toMutableList()
+        labels.add("➕ Создать новый (без шаблона)")
+
+        AlertDialog.Builder(this)
+            .setTitle("«${receiptItem.name}»")
+            .setMessage("Найдено в истории: ${matches.size}. Выберите эталон:")
+            .setItems(labels.toTypedArray()) { dialog, which ->
+                dialog.dismiss()
+                val chosen: ItemEntity? = if (which < matches.size) matches[which] else null
+                templates.add(chosen)
+                Logger.log(
+                    TAG,
+                    "processPosition[$index] '${receiptItem.name}': user chose " +
+                        (chosen?.let { "'${it.name}'" } ?: "new")
+                )
+                showLoading(true, "Обрабатываю позиции…")
+                processPosition(receipt, index + 1, templates, now, user)
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /**
+     * 🆕 Финальный шаг: создаём папку покупки, для каждой позиции —
+     * новый ItemEntity (с применённым шаблоном, если был).
+     */
+    private fun saveReceiptWithTemplates(
+        receipt: ReceiptRepository.ReceiptData,
+        templates: List<ItemEntity?>,
+        now: Long,
+        user: String
+    ) {
         showLoading(true, "Создаю папку покупки…")
 
         lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    val now = System.currentTimeMillis()
-                    val user = currentUser
-
-                    // 1. Создаём папку покупки в системной «🛒 Покупки»,
-                    //    с названием магазина (если есть).
+                    // 1. Папка покупки
                     val purchaseFolder = PurchaseFolderHelper.createPurchaseFolder(
                         db = db,
                         parentId = FolderEntity.SYSTEM_ID_PURCHASES,
@@ -187,10 +365,12 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                         merchantName = receipt.retailPlace.ifBlank { null }
                     ) ?: return@withContext null
 
-                    // 2. Кладём позиции чека внутрь этой папки.
+                    // 2. Позиции
                     var count = 0
-                    receipt.items.forEach { receiptItem ->
-                        val newItem = ItemEntity(
+                    receipt.items.forEachIndexed { index, receiptItem ->
+                        val template = templates.getOrNull(index)
+
+                        val baseItem = ItemEntity(
                             name = receiptItem.name,
                             parentId = purchaseFolder.id,
                             parentItemId = null,
@@ -204,10 +384,18 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                             itemSubtype = "other_other",
                             purchaseDate = now
                         )
-                        db.itemDao().insertItem(newItem)
+
+                        // A/B: применяем шаблон (если есть)
+                        val finalItem = if (template != null) {
+                            ItemHistoryHelper.applyTemplate(baseItem, template)
+                        } else {
+                            baseItem
+                        }
+
+                        db.itemDao().insertItem(finalItem)
                         OutboxLogger.itemChanged(
                             db = db,
-                            item = newItem,
+                            item = finalItem,
                             action = OutboxEntity.ACTION_CREATE,
                             changedBy = user
                         )
@@ -232,7 +420,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                 showLoading(false)
                 Logger.log(
                     TAG,
-                    "addItemsToPurchases: '${folder.name}' (id=${folder.id}), позиций=$count"
+                    "saveReceiptWithTemplates: '${folder.name}' (id=${folder.id}), позиций=$count"
                 )
                 Toast.makeText(
                     this@ReceiptPreviewActivity,
@@ -240,7 +428,6 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT
                 ).show()
 
-                // Возвращаем id созданной папки — MainActivity откроет её.
                 val resultIntent = Intent().apply {
                     putExtra("navigate_to_folder_id", folder.id)
                 }
@@ -250,7 +437,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 showLoading(false)
                 isSaving = false
-                Logger.log(TAG, "addItemsToPurchases error: ${e.message}", e)
+                Logger.log(TAG, "saveReceiptWithTemplates error: ${e.message}", e)
                 Toast.makeText(
                     this@ReceiptPreviewActivity,
                     "Ошибка: ${e.message}",
@@ -290,7 +477,9 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         if (show && text.isNotEmpty()) {
             binding.tvLoadingText.text = text
         }
-        binding.btnAddToShopping.isEnabled = !show && receiptData?.items?.isNotEmpty() == true
-        binding.btnCancel.isEnabled = !show
+        binding.btnAddToShopping.isEnabled = !show &&
+            !isSaving &&
+            receiptData?.items?.isNotEmpty() == true
+        binding.btnCancel.isEnabled = !show && !isSaving
     }
 }
