@@ -15,7 +15,7 @@ import java.util.*
  *   BAZA (корень)
  *     └── 🛒 Покупки (системная, id=system-folder-purchases)
  *          ├── Покупка 25.09.2026 #1
- *          ├── Покупка 25.09.2026 #2
+ *          ├── Покупка 25.09.2026, магазин "Анечка" #1
  *          └── Покупка 26.09.2026 #1
  *
  *     └── 🛒 Список покупок (системная, id=system-folder-shopping-list)
@@ -25,6 +25,11 @@ import java.util.*
  *
  * 🆕 v17.0.9: добавлено автоудаление пустых папок покупок
  * (при unmarkBought — см. deletePurchaseFolderIfEmpty).
+ *
+ * 🆕 v20.6.x: имя папки покупки может содержать название магазина:
+ *   «Покупка DD.MM.YYYY, <магазин> #N»
+ * Если магазин не указан — «Покупка DD.MM.YYYY #N».
+ * Используется при создании покупки из чека (ReceiptPreviewActivity).
  */
 object PurchaseFolderHelper {
 
@@ -41,9 +46,15 @@ object PurchaseFolderHelper {
 
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
-    // Регулярка для поиска существующих папок: "Покупка 25.09.2026 #N"
+    /**
+     * Регулярка для поиска существующих папок покупок.
+     * Матчит оба варианта:
+     *   «Покупка 25.09.2026 #N»
+     *   «Покупка 25.09.2026, <магазин> #N»
+     * Группа 1 — дата, группа 2 — магазин (может быть пустым), группа 3 — номер.
+     */
     private val PURCHASE_PATTERN = Regex(
-        """^Покупка\s+(\d{2}\.\d{2}\.\d{4})\s+#(\d+)$"""
+        """^Покупка\s+(\d{2}\.\d{2}\.\d{4})(?:,\s*(.+?))?\s+#(\d+)$"""
     )
 
     // ============================================================
@@ -121,25 +132,28 @@ object PurchaseFolderHelper {
     }
 
     // ============================================================
-    // 2. СОЗДАНИЕ ПАПКИ ПОКУПКИ «Покупка DD.MM.YYYY #N»
+    // 2. СОЗДАНИЕ ПАПКИ ПОКУПКИ «Покупка DD.MM.YYYY[, <магазин>] #N»
     // ============================================================
 
     /**
-     * Создаёт папку «Покупка DD.MM.YYYY #N» внутри родителя.
+     * Создаёт папку «Покупка DD.MM.YYYY[, <магазин>] #N» внутри родителя.
      * Родитель — как правило, `system-folder-purchases`.
      * Номер N подбирается как max+1 для этой даты.
+     *
+     * @param merchantName название магазина (из чека). Если null/пусто —
+     *                     имя без магазина: «Покупка DD.MM.YYYY #N».
      */
     suspend fun createPurchaseFolder(
         db: AppDatabase,
         parentId: String,
         date: Long = System.currentTimeMillis(),
-        changedBy: String = "user"
+        changedBy: String = "user",
+        merchantName: String? = null
     ): FolderEntity? {
         return try {
             val dateStr = dateFormat.format(Date(date))
             val number = getNextNumberForDate(db, parentId, dateStr)
-
-            val name = "$PURCHASE_DATE_PREFIX $dateStr #$number"
+            val name = buildPurchaseFolderName(dateStr, number, merchantName)
 
             val folder = FolderEntity(
                 name = name,
@@ -155,6 +169,24 @@ object PurchaseFolderHelper {
         } catch (e: Exception) {
             Logger.log(TAG, "createPurchaseFolder error: ${e.message}", e)
             null
+        }
+    }
+
+    /**
+     * Собирает имя папки покупки.
+     *   merchantName = null/blank → «Покупка DD.MM.YYYY #N»
+     *   merchantName = "магазин \"Анечка\"" → «Покупка DD.MM.YYYY, магазин "Анечка" #N»
+     */
+    private fun buildPurchaseFolderName(
+        dateStr: String,
+        number: Int,
+        merchantName: String?
+    ): String {
+        val merchant = merchantName?.trim().orEmpty()
+        return if (merchant.isEmpty()) {
+            "$PURCHASE_DATE_PREFIX $dateStr #$number"
+        } else {
+            "$PURCHASE_DATE_PREFIX $dateStr, $merchant #$number"
         }
     }
 
@@ -174,7 +206,7 @@ object PurchaseFolderHelper {
                 val match = PURCHASE_PATTERN.matchEntire(folder.name)
                 if (match != null) {
                     val folderDate = match.groupValues[1]
-                    val folderNum = match.groupValues[2].toIntOrNull() ?: 0
+                    val folderNum = match.groupValues[3].toIntOrNull() ?: 0
 
                     if (folderDate == dateStr && folderNum > maxNumber) {
                         maxNumber = folderNum
@@ -201,22 +233,21 @@ object PurchaseFolderHelper {
      *
      * Что делает:
      *  1. Находит/создаёт системную папку «🛒 Покупки».
-     *  2. Создаёт внутри неё папку «Покупка DD.MM.YYYY #N»
+     *  2. Создаёт внутри неё папку «Покупка DD.MM.YYYY[, <магазин>] #N»
      *     (номер — по сегодняшней дате).
      *  3. Перемещает предмет (itemId) в эту папку:
      *     parentId = <новая папка>, parentItemId = null.
      *  4. Пишет в outbox (ACTION_UPDATE на item).
      *
-     * 🆕 v16.0.15: возвращает FolderEntity созданной папки покупки —
-     * чтобы вызывающий мог открыть карточку предмета в edit-режиме.
-     *
+     * @param merchantName опционально — название магазина (для чеков).
      * @return FolderEntity — если предмет переехал, иначе null.
      */
     suspend fun moveItemToPurchases(
         db: AppDatabase,
         itemId: String,
         changedBy: String,
-        date: Long = System.currentTimeMillis()
+        date: Long = System.currentTimeMillis(),
+        merchantName: String? = null
     ): FolderEntity? {
         return try {
             val item = db.itemDao().getItemById(itemId)
@@ -235,7 +266,8 @@ object PurchaseFolderHelper {
                 db = db,
                 parentId = purchases.id,
                 date = date,
-                changedBy = changedBy
+                changedBy = changedBy,
+                merchantName = merchantName
             )
             if (purchaseFolder == null) {
                 Logger.log(TAG, "moveItemToPurchases: cannot create purchase folder")
@@ -274,7 +306,7 @@ object PurchaseFolderHelper {
      *
      * Условия удаления (все три):
      *  1. Папка лежит ВНУТРИ системной «🛒 Покупки» (parentId == SYSTEM_ID_PURCHASES)
-     *     и её имя матчится паттерну «Покупка DD.MM.YYYY #N».
+     *     и её имя матчится паттерну «Покупка DD.MM.YYYY[, <магазин>] #N».
      *  2. В папке НЕТ активных предметов (countItemsInFolderShallow == 0).
      *  3. В папке НЕТ подпапок (getSubfolderCountInFolder == 0).
      *
@@ -365,7 +397,7 @@ object PurchaseFolderHelper {
 
     /**
      * Проверяет, что папка — подпапка системной «🛒 Покупки»
-     * и её имя соответствует шаблону «Покупка DD.MM.YYYY #N».
+     * и её имя соответствует шаблону «Покупка DD.MM.YYYY[, <магазин>] #N».
      *
      * Защита от случайного удаления чужой папки.
      */
