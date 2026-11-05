@@ -149,6 +149,30 @@ object ImageUtils {
         return if (file.exists()) file else null
     }
 
+    /**
+     * 🆕 ЧЕКИ + ИСТОРИЯ (C): получить локальный файл по imageUrl
+     * из ItemEntity (там лежит имя файла, например "folder_<id>.jpg"
+     * или "<uuid>.jpg").
+     *
+     * В отличие от getLocalImageFile(context, imageId), этот метод:
+     *  - не добавляет ".jpg", если он уже есть в imageUrl;
+     *  - если файла нет — возвращает null.
+     *
+     * Пример:
+     *   imageUrl = "abc-123.jpg" → filesDir/images/abc-123.jpg
+     *   imageUrl = "abc-123"     → filesDir/images/abc-123.jpg
+     */
+    fun getLocalImageFileByUrl(context: Context, imageUrl: String?): File? {
+        if (imageUrl.isNullOrBlank()) return null
+        val fileName = if (imageUrl.endsWith(".jpg", ignoreCase = true)) {
+            imageUrl
+        } else {
+            "$imageUrl.jpg"
+        }
+        val file = File(File(context.filesDir, "images"), fileName)
+        return if (file.exists()) file else null
+    }
+
     // ===== УДАЛЕНИЕ ЛОКАЛЬНОГО ИЗОБРАЖЕНИЯ =====
     fun deleteLocalImage(context: Context, imageId: String): Boolean {
         val file = File(File(context.filesDir, "images"), "$imageId.jpg")
