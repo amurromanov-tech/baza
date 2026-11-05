@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.Toast
@@ -252,7 +253,8 @@ class AddItemActivity : AppCompatActivity() {
      * Настраивает autocomplete на etManualName:
      *  - адаптер подсказок — ItemSuggestionAdapter (Filterable, ищет в БД);
      *  - debounce 250 мс, чтобы не дёргать БД на каждый символ;
-     *  - по клику на подсказку — подставляем поля из шаблона.
+     *  - по клику на подсказку — ставим в поле ТОЛЬКО item.name
+     *    (не toString() объекта!) и подставляем поля из шаблона.
      */
     private fun setupNameAutocomplete() {
         val autoComplete = binding.etManualName as MaterialAutoCompleteTextView
@@ -265,6 +267,35 @@ class AddItemActivity : AppCompatActivity() {
         )
         suggestionAdapter = adapter
         autoComplete.setAdapter(adapter)
+
+        // 🆕 v20.6.2: клик по подсказке — ставим в поле только name,
+        // скрываем dropdown, убираем фокус с клавиатуры и подставляем поля.
+        // Без этого MaterialAutoCompleteTextView сам вызывает toString()
+        // у ItemEntity и вставляет всю простыню полей data-класса.
+        autoComplete.setOnItemClickListener { parent, _, position, _ ->
+            searchJob?.cancel()
+
+            val picked = parent.getItemAtPosition(position) as? ItemEntity
+            if (picked == null) {
+                Logger.log(TAG, "autocomplete: picked item is null at position=$position")
+                return@setOnItemClickListener
+            }
+
+            // Только название — никакого toString()
+            autoComplete.setText(picked.name, false)
+            autoComplete.setSelection(autoComplete.text?.length ?: 0)
+            autoComplete.dismissDropDown()
+            autoComplete.clearFocus()
+
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(autoComplete.windowToken, 0)
+
+            Logger.log(
+                TAG,
+                "autocomplete: picked '${picked.name}' (id=${picked.id}, archived=${picked.isArchived})"
+            )
+            applyTemplateFromHistory(picked)
+        }
 
         // debounce: при вводе текста — через 250 мс запрашиваем подсказки
         autoComplete.addTextChangedListener(object : android.text.TextWatcher {
@@ -298,7 +329,7 @@ class AddItemActivity : AppCompatActivity() {
                     }
                 }
             }
-            override fun afterTextChanged(s: android.text.Editable?) {}
+            override fun afterTextChanged(s: android.widget.Editable?) {}
         })
     }
 
@@ -356,7 +387,7 @@ class AddItemActivity : AppCompatActivity() {
                 binding.ivManualPhoto.visibility = View.VISIBLE
                 coil.Coil.imageLoader(this).enqueue(
                     coil.request.ImageRequest.Builder(this)
-                      .data(ImageUtils.getLocalImageFileByUrl(this, template.imageUrl))  
+                        .data(ImageUtils.getLocalImageFileByUrl(this, template.imageUrl))
                         .target(binding.ivManualPhoto)
                         .build()
                 )
@@ -365,6 +396,13 @@ class AddItemActivity : AppCompatActivity() {
                 Logger.log(TAG, "applyTemplateFromHistory: не удалось загрузить фото: ${e.message}")
             }
         }
+
+        // Гасим фокус с поля названия, чтобы dropdown не переоткрылся
+        // от последующего textChanged (там query == template.name — шаблон
+        // не сбросится, но и popup не должен выскакивать).
+        binding.etManualName.clearFocus()
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(binding.etManualName.windowToken, 0)
 
         Toast.makeText(
             this,
