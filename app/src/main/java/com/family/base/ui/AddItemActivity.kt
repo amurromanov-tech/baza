@@ -345,12 +345,9 @@ class AddItemActivity : AppCompatActivity() {
      *  - expiryDate, manufacturedDate — НЕ подставляем;
      *  - price — НЕ подставляем.
      *
-     * 🆕 v20.6.5: фото грузится каскадом:
-     *   1. локальный файл (filesDir/images/<name>.jpg) — если есть;
-     *   2. если локально нет — скачиваем с Яндекс.Диска через
-     *      viewModel.downloadItemImageBytes(template.id) (REST, OAuth),
-     *      сохраняем локально через ImageUtils.saveImageLocally и показываем;
-     *   3. если и на Диске нет — молча оставляем ivManualPhoto пустым + лог.
+     * 🆕 v20.6.6: фото грузится каскадом, и при успехе байты кладутся
+     * в imageBytes, чтобы новый ItemEntity получил свою копию файла
+     * (Вариант A: копирование фото в новый предмет).
      */
     private fun applyTemplateFromHistory(template: ItemEntity) {
         selectedTemplate = template
@@ -395,8 +392,6 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         // Гасим фокус с поля названия, чтобы dropdown не переоткрылся
-        // от последующего textChanged (там query == template.name — шаблон
-        // не сбросится, но и popup не должен выскакивать).
         binding.etManualName.clearFocus()
         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(binding.etManualName.windowToken, 0)
@@ -409,10 +404,10 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     /**
-     * 🆕 v20.6.5: каскадная загрузка фото шаблона.
-     *  1. Локальный файл (filesDir/images/...) → Coil.
+     * 🆕 v20.6.6: каскадная загрузка фото шаблона.
+     *  1. Локальный файл (filesDir/images/...) → Coil + читаем байты в imageBytes.
      *  2. Иначе — скачать с Яндекс.Диска по itemId через MainViewModel,
-     *     сохранить локально, показать Coil'ом.
+     *     сохранить локально, показать, положить байты в imageBytes.
      *  3. Иначе — ничего не показываем (лог).
      */
     private fun loadTemplatePhoto(template: ItemEntity) {
@@ -423,8 +418,20 @@ class AddItemActivity : AppCompatActivity() {
                     ImageUtils.getLocalImageFileByUrl(this@AddItemActivity, template.imageUrl)
                 }
                 if (localFile != null && localFile.exists()) {
+                    val bytes = withContext(Dispatchers.IO) {
+                        try { localFile.readBytes() } catch (e: Exception) {
+                            Logger.log(TAG, "loadTemplatePhoto: readBytes error: ${e.message}")
+                            null
+                        }
+                    }
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        imageBytes = bytes
+                    }
                     showPhotoFromFile(localFile)
-                    Logger.log(TAG, "loadTemplatePhoto: локальный файл '${localFile.absolutePath}'")
+                    Logger.log(
+                        TAG,
+                        "loadTemplatePhoto: локальный файл '${localFile.absolutePath}', bytes=${bytes?.size ?: 0}"
+                    )
                     return@launch
                 }
 
@@ -445,7 +452,11 @@ class AddItemActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Сохраняем локально (файл будет доступен и в следующий раз)
+                // Кладём байты в imageBytes — при сохранении у нового предмета
+                // будет своя копия фото (Вариант A).
+                imageBytes = bytes
+
+                // Сохраняем локально (кэш для следующих показов)
                 val savedFile = withContext(Dispatchers.IO) {
                     try {
                         ImageUtils.saveImageLocally(this@AddItemActivity, template.id, bytes)
