@@ -282,16 +282,7 @@
                     android:importantForAutofill="no" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Срок годности (дд.мм.гггг)">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etManualExpiry"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-            </com.google.android.material.textfield.TextInputLayout>
-
+            <!-- 🆕 v20.6.8: «Дата покупки» идёт перед «Срок годности» (логичнее) -->
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -303,6 +294,16 @@
                     android:focusable="false"
                     android:clickable="true"
                     android:cursorVisible="false" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Срок годности (дд.мм.гггг)">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etManualExpiry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
