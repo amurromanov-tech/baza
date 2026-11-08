@@ -44,6 +44,10 @@ import java.util.Locale
  *
  * 🆕 v20.4.5: добавлен подтип thing:
  *           - weapon         ⚔️ Оружие
+ *
+ * 🆕 v20.6.9: добавлены подтипы other:
+ *           - other_service  💆 Услуга (массаж, рукоделие и т.п.)
+ *           - other_fuel     ⛽ Топливо
  */
 object SubtypeCatalog {
 
@@ -148,9 +152,12 @@ object SubtypeCatalog {
     // 🗂 ДРУГОЕ
     // ============================================================
     private val OTHER = listOf(
-        Subtype("documents",   "📄 Документы"),
-        Subtype("money",       "💰 Деньги / Ценности"),
-        Subtype("other_other", "🗂 Прочее (другое)")
+        Subtype("documents",     "📄 Документы"),
+        Subtype("money",         "💰 Деньги / Ценности"),
+        // 🆕 v20.6.9
+        Subtype("other_service", "💆 Услуга"),
+        Subtype("other_fuel",    "⛽ Топливо"),
+        Subtype("other_other",   "🗂 Прочее (другое)")
     )
 
     /**
