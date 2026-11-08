@@ -1,5 +1,7 @@
 package com.family.base.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -297,6 +299,12 @@ class ItemDetailActivity : AppCompatActivity() {
             true
         }
 
+        // 🆕 v20.6.10: долгое нажатие на имя в «Основном» — копировать в буфер.
+        binding.tvNameView.setOnLongClickListener {
+            copyNameToClipboard()
+            true
+        }
+
         binding.btnSave.setOnClickListener { saveChanges() }
         binding.btnCancelEdit.setOnClickListener { finish() }
         binding.btnPlus.setOnClickListener { changeQuantity(+1) }
@@ -385,6 +393,33 @@ class ItemDetailActivity : AppCompatActivity() {
         binding.etPurchaseDate.setOnClickListener { editController.showPurchaseDatePickerDialog() }
 
         editController.setupSubtypeEditDropdown { key -> selectedEditSubtype = key }
+    }
+
+    /**
+     * 🆕 v20.6.10: копирование названия предмета в буфер обмена.
+     * Источник — currentItem?.name, fallback — текст из tvNameView.
+     * После копирования показываем Toast.
+     */
+    private fun copyNameToClipboard() {
+        val name = currentItem?.name?.takeIf { it.isNotBlank() }
+            ?: binding.tvNameView.text?.toString()?.trim().orEmpty()
+
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Название пустое", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(
+                ClipData.newPlainText("Название предмета", name)
+            )
+            Toast.makeText(this, "Название скопировано", Toast.LENGTH_SHORT).show()
+            Logger.log(TAG, "copyNameToClipboard: '$name'")
+        } catch (e: Exception) {
+            Logger.log(TAG, "copyNameToClipboard error: ${e.message}", e)
+            Toast.makeText(this, "Не удалось скопировать", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
