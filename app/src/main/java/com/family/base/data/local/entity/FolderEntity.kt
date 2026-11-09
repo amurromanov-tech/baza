@@ -21,6 +21,15 @@ import java.util.UUID
  * 🆕 v20.4.9 (галерея): добавлены константы SYSTEM_KEY_GALLERY
  * и SYSTEM_ID_GALLERY. Схема БД НЕ меняется — это просто строковые
  * константы, миграция Room не нужна.
+ *
+ * 🆕 v20.7.5 (миграция 20→21): добавлено поле iconSynced.
+ *
+ * Симметрично ItemEntity.imageSynced: локально сохранённая иконка
+ * (iconUrl) и «иконка реально залита на Яндекс.Диск» (iconSynced) —
+ * два разных факта. uploadUnsyncedFolderImages теперь смотрит
+ * на iconSynced, а не на iconUrl.isNullOrEmpty(), иначе только что
+ * созданная папка с локально проставленным iconUrl отсекалась бы
+ * фильтром и никогда не уезжала на Диск.
  */
 @Entity(
     tableName = "folders",
@@ -29,7 +38,9 @@ import java.util.UUID
         Index(
             value = ["deleteConfirmed", "deletedAt"],
             name = "index_folders_deleteConfirmed_deletedAt"
-        )
+        ),
+        // 🆕 v20.7.5: индекс под выборку «что ещё не залито на Диск»
+        Index(value = ["iconSynced"], name = "index_folders_iconSynced")
     ]
 )
 data class FolderEntity(
@@ -137,7 +148,25 @@ data class FolderEntity(
      * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0".
      */
     @ColumnInfo(defaultValue = "0")
-    val deleteConfirmed: Boolean = false
+    val deleteConfirmed: Boolean = false,
+
+    // ===== 🆕 v20.7.5 (миграция 20→21): ИКОНКА НА ДИСКЕ =====
+    /**
+     * Признак «файл иконки реально загружен на Яндекс.Диск».
+     *
+     * false — иконка есть только локально (или её вообще нет).
+     *         uploadUnsyncedFolderImages такие папки подхватит и зальёт,
+     *         если локальный файл folder_<id> существует.
+     * true  — uploadFolderImage успешно залил файл. Повторно не грузим.
+     *
+     * Симметрично ItemEntity.imageSynced. См. комментарий там.
+     *
+     * ⚠️ defaultValue = "0" обязателен: миграция добавляет колонку
+     * через ALTER TABLE folders ADD COLUMN iconSynced INTEGER NOT NULL DEFAULT 0,
+     * Room валидирует схему и требует именно defaultValue='0'.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val iconSynced: Boolean = false
 ) {
     companion object {
         // ===== «🏠 Домашние дела» =====
