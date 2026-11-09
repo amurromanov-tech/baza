@@ -21,7 +21,7 @@ import com.family.base.data.local.entity.*
         OutboxEntity::class,
         ProcessedChangelogEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -234,7 +234,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_processedAt ON processed_changelogs(processedAt)")
             }
         }
-                // ============================================================
+
+        // ============================================================
         // 🆕 v16 → v17: системные папки «Покупки» и «Список покупок»
         //
         // Задача: превратить уже существующую папку «🛒 Покупки»
@@ -419,6 +420,47 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_tasks_autoRemindEnabled_isDone_isDeleted " +
                         "ON tasks(autoRemindEnabled, isDone, isDeleted)"
                 )
+            }
+        }
+
+        // ============================================================
+        // 🆕 v20 → v21 (эта сессия, v20.7.5): ФОТО НА ДИСКЕ
+        //
+        // Задача: разделить «файл в кэше приложения» и «файл залит
+        // на Яндекс.Диск». До этой миграции оба факта кодировались
+        // одним imageUrl/iconUrl, из-за чего uploadUnsyncedImages
+        // с фильтром imageUrl.isNullOrEmpty() отсекал все новые фото:
+        // CatalogViewModel.createItem проставлял imageUrl локально
+        // ещё до синка → на Диск фото не уходило никогда.
+        //
+        // Что делаем:
+        //   items.imageSynced   INTEGER NOT NULL DEFAULT 0
+        //   folders.iconSynced  INTEGER NOT NULL DEFAULT 0
+        // + индексы index_items_imageSynced, index_folders_iconSynced.
+        //
+        // ⚠️ DEFAULT 0 для ВСЕХ существующих записей — намеренно.
+        // После обновления первый синк перезальёт на Диск всё, у чего
+        // есть локальный файл фото. Это безопасно:
+        //   - getUploadUrl(overwrite=true);
+        //   - uploadItemImage/uploadFolderImage идемпотентны.
+        // Зато так гарантированно чинится и repair-кейс
+        // «imageUrl есть, а на Диске 404» — перезалив восстановит файл.
+        //
+        // ⚠️ Правило №34: схема @Entity должна точно совпадать
+        // с этой миграцией:
+        //   - в ItemEntity: @ColumnInfo(defaultValue = "0") val imageSynced
+        //   - в FolderEntity: @ColumnInfo(defaultValue = "0") val iconSynced
+        //   - индексы объявлены в @Entity(indices=...).
+        // ============================================================
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // items.imageSynced
+                db.execSQL("ALTER TABLE items ADD COLUMN imageSynced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_items_imageSynced ON items(imageSynced)")
+
+                // folders.iconSynced
+                db.execSQL("ALTER TABLE folders ADD COLUMN iconSynced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_iconSynced ON folders(iconSynced)")
             }
         }
 
@@ -1372,7 +1414,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-               private val MIGRATION_14_16 = object : Migration(14, 16) {
+        private val MIGRATION_14_16 = object : Migration(14, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 MIGRATION_14_15.migrate(db)
                 migrateTo16(db)
@@ -1834,6 +1876,144 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_19_20_DIRECT = MIGRATION_19_20
 
+        // ============================================================
+        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 20 (сразу в 21, эта сессия v20.7.5)
+        //
+        // Для каждой старой версии X: сначала существующая цепочка
+        // до 20, потом MIGRATION_20_21. Это страховка на случай,
+        // если на устройстве осталась очень старая БД.
+        //
+        // Практически основным будет MIGRATION_20_21 (переход с
+        // текущей v20 на v21). Остальные цепочки — для совместимости.
+        // ============================================================
+        private val MIGRATION_20_21_DIRECT = MIGRATION_20_21
+
+        private val MIGRATION_2_21 = object : Migration(2, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_3_21 = object : Migration(3, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_4_21 = object : Migration(4, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_5_21 = object : Migration(5, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_6_21 = object : Migration(6, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_7_21 = object : Migration(7, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_8_21 = object : Migration(8, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_9_21 = object : Migration(9, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_10_21 = object : Migration(10, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_11_21 = object : Migration(11, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_12_21 = object : Migration(12, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_13_21 = object : Migration(13, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_14_21 = object : Migration(14, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_15_21 = object : Migration(15, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_15_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_16_21 = object : Migration(16, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_16_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_17_21 = object : Migration(17, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_17_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_18_21 = object : Migration(18, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_18_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
+        private val MIGRATION_19_21 = object : Migration(19, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_19_20.migrate(db)
+                MIGRATION_20_21.migrate(db)
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -1983,7 +2163,30 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_14_20,
                         MIGRATION_15_20,
                         MIGRATION_16_20,
-                        MIGRATION_17_20
+                        MIGRATION_17_20,
+
+                        // 🆕 v20 → v21 (v20.7.5): imageSynced + iconSynced
+                        MIGRATION_20_21_DIRECT,
+
+                        // 🆕 Цепочки с пропуском 20 (сразу в 21)
+                        MIGRATION_2_21,
+                        MIGRATION_3_21,
+                        MIGRATION_4_21,
+                        MIGRATION_5_21,
+                        MIGRATION_6_21,
+                        MIGRATION_7_21,
+                        MIGRATION_8_21,
+                        MIGRATION_9_21,
+                        MIGRATION_10_21,
+                        MIGRATION_11_21,
+                        MIGRATION_12_21,
+                        MIGRATION_13_21,
+                        MIGRATION_14_21,
+                        MIGRATION_15_21,
+                        MIGRATION_16_21,
+                        MIGRATION_17_21,
+                        MIGRATION_18_21,
+                        MIGRATION_19_21
                     )
                     .build()
                     .also { INSTANCE = it }
