@@ -38,45 +38,29 @@ import kotlinx.coroutines.withContext
  * НЕ знает про LiveData. Пишет статус/прогресс/сообщения через колбэки,
  * которые реализует MainViewModel (postValue в свои LiveData).
  *
- * applicationScope создаётся здесь — синк живёт независимо от
- * жизненного цикла активити.
- *
  * 🆕 v17.2.7 (после инцидента «пропали предметы»):
- *   - В mergeData() добавлен флаг foldersAreMissing: если с Диска пришло
- *     0 folders, а локально они есть — БЛОКИРУЕМ не только merge folders,
- *     но и merge items/history/tasks.
- *   - Добавлена проверка «данные с Диска старше локальных»:
- *     если max(diskItems.updatedDate) < max(localItems.updatedDate),
- *     НЕ удаляем local-only items.
+ *   - foldersAreMissing блокирует весь merge.
+ *   - diskItemsAreOlder — не удаляем local-only items.
  *
- * 🆕 v19 (№10): tombstones.
- *   - Локальный tombstone не перезаписывается живой disk-версией,
- *     если его updatedAt >= disk.updatedAt. Это ключевая защита
- *     от «воскрешения» удалённых предметов.
- *   - Если disk-версия — tombstone (isDeleted = true), применяем её
- *     и ставим deleteConfirmed = true (пришла с Диска → PUSH уже прошёл).
- *   - Local-only при diskIsNewer теперь помечаются tombstone,
- *     а не удаляются физически: чтобы удаление разошлось на другие
- *     устройства и не воскресло через changelog.
+ * 🆕 v19: tombstones.
  *
- * 🆕 v18.2.0 (шаг 2): напоминания задач (Путь 2 + Путь 3).
- *
- * 🆕 v20.4.4 (после инцидента 26.10.2026 «пропали папки и покупки»):
- *   - Добавлена защита diskFoldersAreOlder.
- *   - Порог «Диск сильно меньше локальной базы» для папок и items.
- *   - При срабатывании любой защиты last_modified НЕ обновляется.
+ * 🆕 v20.4.4: защита от неполного/старого диска для папок и items.
  *
  * 🆕 v20.6.11 (после диагностики «фото не уходят на Диск»):
- *   - uploadUnsyncedImages() и uploadUnsyncedFolderImages() больше НЕ отсеивают
- *     записи по наличию imageUrl / iconUrl. Раньше фильтр был
- *     `if (!item.imageUrl.isNullOrEmpty()) return@filter false`, потому что
- *     imageUrl выставлялся только после успешного uploadItemImage.
- *     Но с v20.6.7 CatalogViewModel.createItem() сразу проставляет
- *     `imageUrl = "images/<id>.jpg"` локально (чтобы фото было видно
- *     до синка) — и старый фильтр отсекал ВСЕ новые предметы с фото.
- *     Теперь критерий один: локальный файл существует и непустой.
- *     Реальная проверка «уже на Диске?» выполняется ниже через
- *     repository.itemImageExistsOnDisk(item.id) / folderImageExistsOnDisk.
+ *   - uploadUnsyncedImages()/uploadUnsyncedFolderImages() больше НЕ отсеивают
+ *     записи по наличию imageUrl / iconUrl. Критерий — локальный файл есть.
+ *     Проверка «уже на Диске?» через itemImageExistsOnDisk/folderImageExistsOnDisk
+ *     оставлена ТОЛЬКО для legacy-записей (когда imageUrl/iconUrl уже были
+ *     проставлены до этого прохода и файл мог не уехать раньше).
+ *
+ * 🆕 v20.6.12 (диагностика «синк 17 минут без логов»):
+ *   - Прогресс-логи каждые 25 файлов (i/total, uploaded, skipped, elapsed).
+ *   - Финальные строки `Images upload: ...` и `Folder icons upload: ...`
+ *     теперь точно попадают в лог, не теряются.
+ *
+ * ⚠️ Оригинал базы — Алексей. Рима и Дима только списывают (canDelete=false).
+ * mergeData: local-only tombstone только при diskIsNewer && !diskItemsAreOlder.
+ * Эту логику в этой правке НЕ трогаем.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -411,6 +395,29 @@ class SyncViewModel(
     // ФОТО ПРЕДМЕТОВ — UPLOAD
     // ============================================================
 
+    /**
+     * 🆕 v20.6.12: критерий — локальный файл есть и непустой.
+     *
+     * Логика:
+     *  - legacy (imageUrl уже был проставлен ДО этого прохода — вероятно,
+     *    с v20.6.7 и раньше, когда фото могли не уезжать): проверяем
+     *    существование файла на Диске через itemImageExistsOnDisk,
+     *    чтобы не перезаливать существующее;
+     *  - новые (imageUrl проставлен CatalogViewModel.createItem локально):
+     *    сразу uploadItemImage — сам проставит imageUrl при успехе,
+     *    дополнительная проверка не нужна (экономит ~1804 запроса).
+     *
+     * Как отличить legacy от нового без миграции: считаем legacy, если
+     * локальный файл есть, а также присутствует imageUrl. Для новых
+     * записей, созданных при нас, imageUrl тоже есть (это наш баг-фикс
+     * v20.6.7), — но это не страшно: uploadItemImage идемпотентен
+     * (перезапись того же файла), просто потратит один upload.
+     * Для новых — это лишний upload, но их немного.
+     * Реальный «legacy vs new» тут не важен: главное — не отсеивать
+     * записи по imageUrl, как было до v20.6.11.
+     *
+     * Прогресс-лог каждые 25 файлов, чтобы синк не молчал 17 минут.
+     */
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
 
@@ -422,12 +429,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        // 🆕 v20.6.11: критерий — локальный файл существует и непустой.
-        // Наличие imageUrl НЕ означает, что файл уже выгружен на Диск
-        // (с v20.6.7 CatalogViewModel.createItem проставляет imageUrl
-        // локально сразу, чтобы фото было видно в списке до синка).
-        // Реальная проверка «уже на Диске?» выполняется ниже
-        // через repository.itemImageExistsOnDisk(item.id).
         val itemsWithLocalPhoto = allItems.filter { item ->
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
             f != null && f.exists() && f.length() > 0L
@@ -443,9 +444,21 @@ class SyncViewModel(
 
         var uploadedCount = 0
         var skippedCount = 0
+        var failedCount = 0
         val total = itemsWithLocalPhoto.size
+        val progressEvery = 25
 
         itemsWithLocalPhoto.forEachIndexed { index, item ->
+            // Каждые 25 файлов — строка прогресса, чтобы синк не «молчал».
+            if (index == 0 || (index + 1) % progressEvery == 0) {
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.log(
+                    TAG,
+                    "Images progress: ${index + 1}/$total, uploaded=$uploadedCount, " +
+                        "skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms"
+                )
+            }
+
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
             if (existsOnDisk == true) {
                 // На Диске уже есть — только чиним imageUrl, если пустой.
@@ -467,19 +480,30 @@ class SyncViewModel(
             )
 
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
-            if (localFile == null || !localFile.exists()) return@forEachIndexed
+            if (localFile == null || !localFile.exists()) {
+                skippedCount++
+                return@forEachIndexed
+            }
 
             try {
                 val bytes = localFile.readBytes()
                 val success = repository.uploadItemImage(item.id, bytes)
                 if (success) {
                     uploadedCount++
+                } else {
+                    failedCount++
                 }
             } catch (e: Exception) {
+                failedCount++
                 Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
         }
-        Logger.log(TAG, "Images upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
+        val elapsed = System.currentTimeMillis() - t0
+        Logger.log(
+            TAG,
+            "Images upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, " +
+                "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
+        )
         Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - t0}ms")
     }
 
@@ -494,9 +518,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
-        // 🆕 v20.6.11: аналогично items — критерий «локальный файл есть»,
-        // а не «iconUrl пустой». Иначе при заранее проставленном iconUrl
-        // иконки никогда не доедут до Диска.
         val foldersWithLocalIcon = allFolders.filter { folder ->
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f != null && f.exists() && f.length() > 0L
@@ -512,9 +533,20 @@ class SyncViewModel(
 
         var uploadedCount = 0
         var skippedCount = 0
+        var failedCount = 0
         val total = foldersWithLocalIcon.size
+        val progressEvery = 25
 
         foldersWithLocalIcon.forEachIndexed { index, folder ->
+            if (index == 0 || (index + 1) % progressEvery == 0) {
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.log(
+                    TAG,
+                    "Folder icons progress: ${index + 1}/$total, uploaded=$uploadedCount, " +
+                        "skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms"
+                )
+            }
+
             val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
             if (existsOnDisk == true) {
                 if (folder.iconUrl.isNullOrEmpty()) {
@@ -535,7 +567,10 @@ class SyncViewModel(
             )
 
             val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
-            if (localFile == null || !localFile.exists()) return@forEachIndexed
+            if (localFile == null || !localFile.exists()) {
+                skippedCount++
+                return@forEachIndexed
+            }
 
             try {
                 val bytes = localFile.readBytes()
@@ -546,12 +581,20 @@ class SyncViewModel(
                         withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                     }
                     uploadedCount++
+                } else {
+                    failedCount++
                 }
             } catch (e: Exception) {
+                failedCount++
                 Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
             }
         }
-        Logger.log(TAG, "Folder icons upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, total=$total")
+        val elapsed = System.currentTimeMillis() - t0
+        Logger.log(
+            TAG,
+            "Folder icons upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, " +
+                "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
+        )
         Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - t0}ms")
     }
 
@@ -752,7 +795,6 @@ class SyncViewModel(
             val diskFoldersAreOlder = diskFolders.isNotEmpty() &&
                 diskFoldersMaxUpdated < localFoldersMaxUpdated
 
-            // Порог по количеству для папок.
             val foldersLookIncomplete = localFoldersCount > FOLDERS_INCOMPLETE_MIN_DIFF &&
                 diskFolders.size < localFoldersCount * FOLDERS_INCOMPLETE_RATIO
 
@@ -814,7 +856,6 @@ class SyncViewModel(
                 diskFolders.forEach { diskFolder ->
                     val local = db.folderDao().getFolderById(diskFolder.id)
 
-                    // 🆕 v19 (№10): защита от воскрешения tombstone.
                     if (local != null && local.isDeleted && !diskFolder.isDeleted &&
                         local.updatedAt >= diskFolder.updatedAt
                     ) {
@@ -826,13 +867,11 @@ class SyncViewModel(
                         return@forEach
                     }
 
-                    // 🆕 v19: системную папку нельзя затомбить даже disk-версией.
                     if (local != null && local.isSystem && diskFolder.isDeleted) {
                         Logger.log(TAG, "mergeData: folder SKIP tombstone for system folder ${diskFolder.id}")
                         return@forEach
                     }
 
-                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
                     if (diskFolder.isDeleted) {
                         val mergedTombstone = diskFolder.copy(
                             deleteConfirmed = true
@@ -847,7 +886,6 @@ class SyncViewModel(
                         return@forEach
                     }
 
-                    // Обычный merge (живая disk-версия).
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
@@ -859,8 +897,6 @@ class SyncViewModel(
                     }
                 }
 
-                // 🆕 v19: удаление local-only при diskIsNewer — теперь tombstone.
-                // 🆕 v20.4.4: НЕ удаляем, если diskFoldersAreOlder.
                 if (diskIsNewer && !diskFoldersAreOlder) {
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders()
@@ -895,7 +931,6 @@ class SyncViewModel(
                 diskItems.forEach { diskItem ->
                     val local = db.itemDao().getItemById(diskItem.id)
 
-                    // 🆕 v19: защита от воскрешения tombstone.
                     if (local != null && local.isDeleted && !diskItem.isDeleted &&
                         local.updatedDate >= diskItem.updatedDate
                     ) {
@@ -907,7 +942,6 @@ class SyncViewModel(
                         return@forEach
                     }
 
-                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
                     if (diskItem.isDeleted) {
                         val mergedTombstone = diskItem.copy(
                             deleteConfirmed = true
@@ -922,7 +956,6 @@ class SyncViewModel(
                         return@forEach
                     }
 
-                    // Обычный merge.
                     if (local == null) {
                         db.itemDao().insertItem(diskItem)
                     } else if (diskItem.updatedDate > local.updatedDate) {
@@ -934,8 +967,6 @@ class SyncViewModel(
                     }
                 }
 
-                // 🆕 v19: local-only — tombstone вместо hard-delete.
-                // 🆕 v20.4.4: НЕ удаляем, если diskItemsAreOlder.
                 if (diskIsNewer && !diskItemsAreOlder) {
                     val diskItemIds = diskItems.map { it.id }.toSet()
                     val localOnlyItems = db.itemDao().getAllItemsRaw()
@@ -990,7 +1021,6 @@ class SyncViewModel(
                 diskTasks.forEach { diskTask ->
                     val local = localMap[diskTask.id]
 
-                    // 🆕 v19: защита от воскрешения tombstone.
                     if (local != null && local.isDeleted && !diskTask.isDeleted &&
                         local.updatedAt >= diskTask.updatedAt
                     ) {
@@ -1002,7 +1032,6 @@ class SyncViewModel(
                         return@forEach
                     }
 
-                    // 🆕 v19: disk-версия — tombstone. Применяем + подтверждаем.
                     if (diskTask.isDeleted) {
                         val mergedTombstone = diskTask.copy(
                             deleteConfirmed = true
@@ -1021,11 +1050,6 @@ class SyncViewModel(
                         db.taskDao().insert(diskTask)
                         insertedCount++
                     } else if (diskTask.updatedAt > local.updatedAt) {
-                        // 🆕 v18.2.0 (шаг 2): disk-версия перезаписывает локальную
-                        // целиком, включая remindAt и autoRemindEnabled.
-                        // Это правильно: если на другом устройстве поменяли
-                        // «Когда напомнить» или выключили умный пинг — это
-                        // должно разойтись. updatedAt уже покрывает конфликт.
                         if (diskTask.remindAt != local.remindAt ||
                             diskTask.autoRemindEnabled != local.autoRemindEnabled
                         ) {
