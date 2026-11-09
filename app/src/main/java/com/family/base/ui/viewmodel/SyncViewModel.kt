@@ -26,37 +26,27 @@ import kotlinx.coroutines.withContext
 /**
  * Делегат MainViewModel: вся синхронизация с Яндекс.Диском.
  *
- * Отвечает за:
- *  - syncWithDisk() — оркестрация полного цикла синка;
- *  - push через changelog (SyncManager);
- *  - pull через JSON-ы (items/folders/history/tasks);
- *  - mergeData() — слияние локального и облачного;
- *  - фото: upload/download (items и folders);
- *  - forceSync();
- *  - ensureValidToken() + isInternetAvailable().
+ * 🆕 v20.6.12: прогресс-логи, финальные строки, критерий «локальный файл есть».
  *
- * НЕ знает про LiveData. Пишет статус/прогресс/сообщения через колбэки,
- * которые реализует MainViewModel (postValue в свои LiveData).
+ * 🆕 v20.6.13 (после диагностики «синк висит 1 час на 1805 фото»):
+ *   - uploadUnsyncedImages больше НЕ проверяет itemImageExistsOnDisk для всех
+ *     предметов. Критерий простой: если imageUrl ПУСТОЙ — кандидат
+ *     (проверяем существование на Диске, потом грузим). Если imageUrl УЖЕ
+ *     стоит — значит когда-то uploadItemImage вернул true, файл на Диске
+ *     должен быть, повторно не проверяем и не грузим.
+ *     Это сокращает число HTTP-запросов с ~1805 до ~0–5 за синк.
+ *   - uploadUnsyncedFolderImages — аналогично: критерий «iconUrl пустой».
+ *   - syncImages (download) — не тронут: «imageUrl есть + локального файла
+ *     нет» → качаем. Это и есть восстановление редких кейсов, когда
+ *     локальный файл потерян, а на Диске он есть.
  *
  * 🆕 v17.2.7 (после инцидента «пропали предметы»):
  *   - foldersAreMissing блокирует весь merge.
  *   - diskItemsAreOlder — не удаляем local-only items.
  *
  * 🆕 v19: tombstones.
- *
  * 🆕 v20.4.4: защита от неполного/старого диска для папок и items.
- *
- * 🆕 v20.6.11 (после диагностики «фото не уходят на Диск»):
- *   - uploadUnsyncedImages()/uploadUnsyncedFolderImages() больше НЕ отсеивают
- *     записи по наличию imageUrl / iconUrl. Критерий — локальный файл есть.
- *     Проверка «уже на Диске?» через itemImageExistsOnDisk/folderImageExistsOnDisk
- *     оставлена ТОЛЬКО для legacy-записей (когда imageUrl/iconUrl уже были
- *     проставлены до этого прохода и файл мог не уехать раньше).
- *
- * 🆕 v20.6.12 (диагностика «синк 17 минут без логов»):
- *   - Прогресс-логи каждые 25 файлов (i/total, uploaded, skipped, elapsed).
- *   - Финальные строки `Images upload: ...` и `Folder icons upload: ...`
- *     теперь точно попадают в лог, не теряются.
+ * 🆕 v18.2.0: mergeData → remindAt/autoRemindEnabled.
  *
  * ⚠️ Оригинал базы — Алексей. Рима и Дима только списывают (canDelete=false).
  * mergeData: local-only tombstone только при diskIsNewer && !diskItemsAreOlder.
@@ -396,27 +386,18 @@ class SyncViewModel(
     // ============================================================
 
     /**
-     * 🆕 v20.6.12: критерий — локальный файл есть и непустой.
+     * 🆕 v20.6.13: критерий «нужно ли грузить» — `imageUrl` пустой.
      *
      * Логика:
-     *  - legacy (imageUrl уже был проставлен ДО этого прохода — вероятно,
-     *    с v20.6.7 и раньше, когда фото могли не уезжать): проверяем
-     *    существование файла на Диске через itemImageExistsOnDisk,
-     *    чтобы не перезаливать существующее;
-     *  - новые (imageUrl проставлен CatalogViewModel.createItem локально):
-     *    сразу uploadItemImage — сам проставит imageUrl при успехе,
-     *    дополнительная проверка не нужна (экономит ~1804 запроса).
+     *  - если imageUrl пустой и локальный файл есть → проверяем
+     *    itemImageExistsOnDisk (на случай, если файл уже на Диске,
+     *    просто imageUrl не проставлен), потом uploadItemImage;
+     *  - если imageUrl уже стоит → файл на Диске должен быть
+     *    (uploadItemImage раньше вернул true), повторно не проверяем
+     *    и не грузим. Это экономит ~1800 HTTP-запросов за синк.
      *
-     * Как отличить legacy от нового без миграции: считаем legacy, если
-     * локальный файл есть, а также присутствует imageUrl. Для новых
-     * записей, созданных при нас, imageUrl тоже есть (это наш баг-фикс
-     * v20.6.7), — но это не страшно: uploadItemImage идемпотентен
-     * (перезапись того же файла), просто потратит один upload.
-     * Для новых — это лишний upload, но их немного.
-     * Реальный «legacy vs new» тут не важен: главное — не отсеивать
-     * записи по imageUrl, как было до v20.6.11.
-     *
-     * Прогресс-лог каждые 25 файлов, чтобы синк не молчал 17 минут.
+     * Редкий кейс «imageUrl стоит, а файла на Диске нет» — лечится
+     * отдельной задачей (repair), в этом синке не догоняется.
      */
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
@@ -429,18 +410,21 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
+        // 🆕 v20.6.13: только предметы без imageUrl и с локальным файлом.
+        // ImageUrl уже стоит → файл на Диске считается выгруженным.
         val itemsWithLocalPhoto = allItems.filter { item ->
+            if (!item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
             f != null && f.exists() && f.length() > 0L
         }
 
         if (itemsWithLocalPhoto.isEmpty()) {
-            Logger.log(TAG, "No local photos to check for upload")
+            Logger.log(TAG, "No new local photos to upload (all have imageUrl)")
             Logger.log(TAG, "TIMING: uploadUnsyncedImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} local photos against disk")
+        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} new local photos against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -449,7 +433,6 @@ class SyncViewModel(
         val progressEvery = 25
 
         itemsWithLocalPhoto.forEachIndexed { index, item ->
-            // Каждые 25 файлов — строка прогресса, чтобы синк не «молчал».
             if (index == 0 || (index + 1) % progressEvery == 0) {
                 val elapsed = System.currentTimeMillis() - t0
                 Logger.log(
@@ -461,11 +444,9 @@ class SyncViewModel(
 
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
             if (existsOnDisk == true) {
-                // На Диске уже есть — только чиним imageUrl, если пустой.
-                if (item.imageUrl.isNullOrEmpty()) {
-                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                }
+                // На Диске уже есть — проставляем imageUrl.
+                val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -518,18 +499,20 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
+        // 🆕 v20.6.13: только папки без iconUrl и с локальным файлом.
         val foldersWithLocalIcon = allFolders.filter { folder ->
+            if (!folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f != null && f.exists() && f.length() > 0L
         }
 
         if (foldersWithLocalIcon.isEmpty()) {
-            Logger.log(TAG, "No local folder icons to check for upload")
+            Logger.log(TAG, "No new local folder icons to upload (all have iconUrl)")
             Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} local folder icons against disk")
+        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} new local folder icons against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -549,10 +532,8 @@ class SyncViewModel(
 
             val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
             if (existsOnDisk == true) {
-                if (folder.iconUrl.isNullOrEmpty()) {
-                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                }
+                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -576,10 +557,8 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadFolderImage(folder.id, bytes)
                 if (success) {
-                    if (folder.iconUrl.isNullOrEmpty()) {
-                        val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                        withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                    }
+                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                     uploadedCount++
                 } else {
                     failedCount++
@@ -743,11 +722,6 @@ class SyncViewModel(
     // MERGE
     // ============================================================
 
-    /**
-     * 🆕 v20.4.4: пороги «Диск подозрительно мал».
-     *  - FOLDERS: disk < local * 0.7 И разница > 20 → блок.
-     *  - ITEMS:   disk < local * 0.7 И разница > 50 → блок.
-     */
     private companion object {
         const val FOLDERS_INCOMPLETE_RATIO = 0.7
         const val FOLDERS_INCOMPLETE_MIN_DIFF = 20
@@ -773,9 +747,6 @@ class SyncViewModel(
             val localLastModified = syncInfoDao.getLastModified()
             val diskIsNewer = diskLastModified > localLastModified && diskLastModified > 0L
 
-            // ================================================================
-            // 🆕 v17.2.7: ФЛАГ «folders отсутствуют на Диске»
-            // ================================================================
             val foldersAreMissing = diskFolders.isEmpty() && localFoldersCount > 0
 
             if (foldersAreMissing) {
@@ -787,9 +758,6 @@ class SyncViewModel(
                 return@withContext
             }
 
-            // ================================================================
-            // 🆕 v20.4.4: ЗАЩИТА ОТ НЕПОЛНОГО/СТАРОГО ДИСКА ДЛЯ ПАПОК
-            // ================================================================
             val diskFoldersMaxUpdated = diskFolders.maxOfOrNull { it.updatedAt } ?: 0L
             val localFoldersMaxUpdated = db.folderDao().getAllFolders().maxOfOrNull { it.updatedAt } ?: 0L
             val diskFoldersAreOlder = diskFolders.isNotEmpty() &&
@@ -818,9 +786,6 @@ class SyncViewModel(
                 return@withContext
             }
 
-            // ================================================================
-            // 🆕 v17.2.7 / v20.4.4: ЗАЩИТА ОТ СТАРОГО/НЕПОЛНОГО items.json
-            // ================================================================
             val diskItemsMaxUpdated = diskItems.maxOfOrNull { it.updatedDate } ?: 0L
             val localItemsMaxUpdated = db.itemDao().getAllItemsRaw().maxOfOrNull { it.updatedDate } ?: 0L
             val diskItemsAreOlder = diskItems.isNotEmpty() &&
@@ -849,7 +814,6 @@ class SyncViewModel(
                 return@withContext
             }
 
-            // ---------- ПАПКИ ----------
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP folders merge")
             } else {
@@ -924,7 +888,6 @@ class SyncViewModel(
                 }
             }
 
-            // ---------- ПРЕДМЕТЫ ----------
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP items merge")
             } else {
@@ -989,7 +952,6 @@ class SyncViewModel(
                 }
             }
 
-            // ---------- ИСТОРИЯ ----------
             if (historyError && diskHistory.isEmpty()) {
                 Logger.log(TAG, "mergeData: history download error — SKIP history merge")
             } else if (diskHistory.isEmpty()) {
@@ -1005,7 +967,6 @@ class SyncViewModel(
                 }
             }
 
-            // ---------- ЗАДАЧИ ----------
             if (tasksError && diskTasks.isEmpty()) {
                 Logger.log(TAG, "mergeData: tasks download error — SKIP tasks merge")
             } else if (diskTasks.isEmpty()) {
