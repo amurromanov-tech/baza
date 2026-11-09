@@ -26,20 +26,31 @@ import kotlinx.coroutines.withContext
 /**
  * Делегат MainViewModel: вся синхронизация с Яндекс.Диском.
  *
- * 🆕 v20.6.14 (после диагностики «синк висит на 1805 фото»):
- *   - uploadUnsyncedImages/uploadUnsyncedFolderImages больше не молотят
- *     всю базу, если пропала сеть: первый же null от itemImageExistsOnDisk /
- *     folderImageExistsOnDisk / uploadItemImage → abort цикла и выход.
- *     Раньше при DNS-фейле цикл всё равно бежал по всем 1805 и писал
- *     failed=1769 за 31 секунду — это трата времени впустую.
- *   - При abort пишем лог `network error at i/total, aborting`.
- *   - `failed` теперь только для реальных ошибок сервера, а не для пропажи сети.
+ * 🆕 v20.7.5 (миграция 20→21) — ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+ *   - uploadUnsyncedImages / uploadUnsyncedFolderImages теперь фильтруют
+ *     по imageSynced == false / iconSynced == false, а НЕ по
+ *     imageUrl.isNullOrEmpty() / iconUrl.isNullOrEmpty().
  *
- * 🆕 v20.6.13: фильтр по imageUrl/iconUrl — грузим только те, у кого пусто
- * (иначе ~1805 запросов itemImageExistsOnDisk и синк висит час).
+ *     Причина: CatalogViewModel.createItem (v20.6.7) проставляет imageUrl
+ *     локально ещё до синка. Старый фильтр imageUrl.isNullOrEmpty() отсекал
+ *     все новые фото → на Диск они не уходили НИКОГДА (баг v20.6.13–20.7.4,
+ *     виден в логе: 19 добавленных за вечер фото — ушло 1).
  *
+ *     Теперь флаг imageSynced ставится в true ТОЛЬКО в
+ *     CatalogRepository.uploadItemImage после успешного ответа Диска.
+ *     Всё, что false и имеет локальный файл — грузим.
+ *
+ *   - DNS-abort сохранён: если сеть пропала (itemImageExistsOnDisk вернул
+ *     null / upload упал при isNetworkAvailable()==false) — break цикла,
+ *     не молотим остальные. failed — только реальные ошибки сервера.
+ *
+ *   - mergeData: при merge с Диска подтягиваем imageSynced / iconSynced
+ *     из disk-версии, если она новее. Это защищает от перезалива фото,
+ *     которые уже лежат на Диске (например, залитые с другого устройства).
+ *
+ * 🆕 v20.6.14: DNS-abort в uploadUnsyncedImages/uploadUnsyncedFolderImages.
+ * 🆕 v20.6.13: фильтр по imageUrl/iconUrl — но он и был багом.
  * 🆕 v20.6.12: прогресс-логи каждые 25 файлов и финальные строки.
- *
  * 🆕 v17.2.7: foldersAreMissing блокирует весь merge, diskItemsAreOlder.
  * 🆕 v19: tombstones.
  * 🆕 v20.4.4: защита от неполного/старого диска.
@@ -381,14 +392,26 @@ class SyncViewModel(
     // ============================================================
 
     /**
-     * 🆕 v20.6.14: если сеть пропала (itemImageExistsOnDisk вернул null
-     * или uploadItemImage вернул false при isNetworkAvailable()==false),
-     * прерываем цикл целиком, а не молотим все 1805 записей впустую.
+     * 🆕 v20.7.5 (миграция 20→21) — ГЛАВНЫЙ ФИКС.
      *
-     * Раньше при DNS-фейле цикл проходил по всем 1805 и писал failed=1769
-     * за 31 секунду — трата времени. Теперь abort после первого null.
+     * Фильтр «что грузить»: imageSynced == false И есть локальный файл.
+     * imageUrl НЕ смотрим вообще — он проставляется локально в createItem
+     * ещё до синка, из-за чего старый фильтр imageUrl.isNullOrEmpty()
+     * отсекал все новые фото (баг v20.6.13–20.7.4).
      *
-     * @return Pair<uploaded, skipped> для лога, либо null, если abort.
+     * После успешной заливки CatalogRepository.uploadItemImage сам
+     * ставит imageSynced = true — повторно грузить не будем.
+     *
+     * DNS-abort: если itemImageExistsOnDisk вернул null (сеть/DNS)
+     * или upload упал при isNetworkAvailable()==false — break цикла.
+     * failed — только реальные ошибки сервера.
+     *
+     * itemImageExistsOnDisk больше НЕ вызываем: imageSynced — единая
+     * точка правды. Если на Диске файла нет, а флаг true (repair-кейс) —
+     * это не в зоне ответственности uploadUnsyncedImages, для него
+     * будет отдельный repair в будущем (см. хвосты в бэкапе).
+     * Зато больше нет ~1805 запросов itemImageExistsOnDisk и синк
+     * секунды, как и было в v20.6.13.
      */
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
@@ -401,19 +424,20 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
+        // 🆕 v20.7.5: фильтр по imageSynced (а не по imageUrl!).
         val itemsWithLocalPhoto = allItems.filter { item ->
-            if (!item.imageUrl.isNullOrEmpty()) return@filter false
+            if (item.imageSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
             f != null && f.exists() && f.length() > 0L
         }
 
         if (itemsWithLocalPhoto.isEmpty()) {
-            Logger.log(TAG, "No new local photos to upload (all have imageUrl)")
+            Logger.log(TAG, "No unsynced local photos to upload (all imageSynced=true or no local file)")
             Logger.log(TAG, "TIMING: uploadUnsyncedImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} new local photos against disk")
+        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} unsynced photos (imageSynced=false)")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -431,24 +455,6 @@ class SyncViewModel(
                     "Images progress: ${index + 1}/$total, uploaded=$uploadedCount, " +
                         "skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms"
                 )
-            }
-
-            val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
-            if (existsOnDisk == null) {
-                // 🆕 v20.6.14: сеть/DNS пропала — abort, не молотим остальные.
-                val elapsed = System.currentTimeMillis() - t0
-                Logger.log(
-                    TAG,
-                    "uploadUnsyncedImages: network error at ${index + 1}/$total, aborting " +
-                        "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
-                )
-                break
-            }
-            if (existsOnDisk == true) {
-                val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
-                skippedCount++
-                continue
             }
 
             onSyncProgressChanged(
@@ -470,6 +476,7 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadItemImage(item.id, bytes)
                 if (success) {
+                    // uploadItemImage сам проставил imageSynced = true.
                     uploadedCount++
                 } else {
                     if (!repository.isNetworkAvailable()) {
@@ -501,12 +508,21 @@ class SyncViewModel(
         val elapsed = System.currentTimeMillis() - t0
         Logger.log(
             TAG,
-            "Images upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, " +
+            "Images upload: uploaded=$uploadedCount, skipped=$skippedCount, " +
                 "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
         )
         Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - t0}ms")
     }
 
+    /**
+     * 🆕 v20.7.5 (миграция 20→21): фильтр по iconSynced (а не по iconUrl).
+     * Симметрично uploadUnsyncedImages. iconUrl проставляется локально
+     * в CatalogViewModel.createFolder (и при сохранении иконки), поэтому
+     * фильтр iconUrl.isNullOrEmpty() отсекал новые иконки.
+     *
+     * После успешной заливки CatalogRepository.uploadFolderImage сам
+     * ставит iconSynced = true.
+     */
     private suspend fun uploadUnsyncedFolderImages() {
         val t0 = System.currentTimeMillis()
 
@@ -518,19 +534,20 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
+        // 🆕 v20.7.5: фильтр по iconSynced (а не по iconUrl!).
         val foldersWithLocalIcon = allFolders.filter { folder ->
-            if (!folder.iconUrl.isNullOrEmpty()) return@filter false
+            if (folder.iconSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f != null && f.exists() && f.length() > 0L
         }
 
         if (foldersWithLocalIcon.isEmpty()) {
-            Logger.log(TAG, "No new local folder icons to upload (all have iconUrl)")
+            Logger.log(TAG, "No unsynced local folder icons to upload (all iconSynced=true or no local file)")
             Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} new local folder icons against disk")
+        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} unsynced folder icons (iconSynced=false)")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -548,24 +565,6 @@ class SyncViewModel(
                     "Folder icons progress: ${index + 1}/$total, uploaded=$uploadedCount, " +
                         "skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms"
                 )
-            }
-
-            val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
-            if (existsOnDisk == null) {
-                // 🆕 v20.6.14: сеть/DNS пропала — abort.
-                val elapsed = System.currentTimeMillis() - t0
-                Logger.log(
-                    TAG,
-                    "uploadUnsyncedFolderImages: network error at ${index + 1}/$total, aborting " +
-                        "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
-                )
-                break
-            }
-            if (existsOnDisk == true) {
-                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                skippedCount++
-                continue
             }
 
             onSyncProgressChanged(
@@ -587,8 +586,7 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadFolderImage(folder.id, bytes)
                 if (success) {
-                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                    // uploadFolderImage сам проставил iconSynced = true.
                     uploadedCount++
                 } else {
                     if (!repository.isNetworkAvailable()) {
@@ -619,7 +617,7 @@ class SyncViewModel(
         val elapsed = System.currentTimeMillis() - t0
         Logger.log(
             TAG,
-            "Folder icons upload: uploaded=$uploadedCount, skipped(exists on disk)=$skippedCount, " +
+            "Folder icons upload: uploaded=$uploadedCount, skipped=$skippedCount, " +
                 "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
         )
         Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - t0}ms")
@@ -715,8 +713,13 @@ class SyncViewModel(
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     if (bytes != null) {
                         ImageUtils.saveImageLocally(appContext, "folder_${folder.id}", bytes)
-                        if (folder.iconUrl.isNullOrEmpty()) {
-                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                        // 🆕 v20.7.5: скачали с Диска — значит, файл на Диске
+                        // есть. Ставим iconSynced = true, чтобы не перезаливать.
+                        if (folder.iconUrl.isNullOrEmpty() || !folder.iconSynced) {
+                            val updated = folder.copy(
+                                iconUrl = folder.iconUrl ?: "folder_${folder.id}.jpg",
+                                iconSynced = true
+                            )
                             withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                         }
                         downloadedCount++
@@ -901,8 +904,14 @@ class SyncViewModel(
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
+                        // 🆕 v20.7.5: iconSynced берём из disk-версии, если она новее.
+                        // Если с Диска пришло iconSynced=true — значит, иконка
+                        // уже залита (с другого устройства), повторно не грузим.
+                        // Если с Диска iconSynced=false — тоже берём, чтобы
+                        // uploadUnsyncedFolderImages подхватил, если есть файл локально.
                         val merged = diskFolder.copy(
                             iconUrl = diskFolder.iconUrl ?: local.iconUrl,
+                            iconSynced = diskFolder.iconSynced,
                             parentItemId = diskFolder.parentItemId ?: local.parentItemId
                         )
                         db.folderDao().updateFolder(merged)
@@ -970,8 +979,14 @@ class SyncViewModel(
                     if (local == null) {
                         db.itemDao().insertItem(diskItem)
                     } else if (diskItem.updatedDate > local.updatedDate) {
+                        // 🆕 v20.7.5: imageSynced берём из disk-версии, если она новее.
+                        // С Диска пришло imageSynced=true — фото уже залито
+                        // (с другого устройства), не грузим повторно.
+                        // imageSynced=false — не залито, uploadUnsyncedImages
+                        // подхватит, если локальный файл есть.
                         val merged = diskItem.copy(
                             imageUrl = diskItem.imageUrl ?: local.imageUrl,
+                            imageSynced = diskItem.imageSynced,
                             parentItemId = diskItem.parentItemId ?: local.parentItemId
                         )
                         db.itemDao().updateItem(merged)
