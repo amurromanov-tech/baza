@@ -60,29 +60,23 @@ import kotlinx.coroutines.withContext
  *     устройства и не воскресло через changelog.
  *
  * 🆕 v18.2.0 (шаг 2): напоминания задач (Путь 2 + Путь 3).
- *   - TaskEntity получил remindAt и autoRemindEnabled.
- *   - mergeData → блок TASKS: disk-версия перезаписывает локальную
- *     целиком (включая remindAt/autoRemindEnabled) по общему правилу
- *     updatedAt — это правильно: если на другом устройстве поменяли
- *     «Когда напомнить» или выключили умный пинг, это должно разойтись.
- *   - Отдельной «защиты remindAt» не добавляем: updatedAt уже покрывает
- *     конфликт. Если хочется поменять remindAt на устройстве A, а B
- *     ещё не получил — updatedAt у A станет новее, и B применит его.
- *     Если B поменяет позже — его updatedAt будет ещё новее.
  *
  * 🆕 v20.4.4 (после инцидента 26.10.2026 «пропали папки и покупки»):
- *   - Добавлена защита diskFoldersAreOlder — сравнение max(updatedAt)
- *     для папок (раньше была только для items).
- *   - Добавлен порог «Диск сильно меньше локальной базы» для папок
- *     и items: если diskFolders.size < localFoldersCount * 0.7
- *     (и разница > 20) или diskItems.size < localItemsCount * 0.7
- *     (и разница > 50) — БЛОКИРУЕМ весь merge. Это спасает от
- *     заливки старой базы (14-я версия) другим пользователем.
- *   - Усилен diskItemsAreOlder: срабатывает и по max(updatedAt),
- *     и по количеству.
- *   - При срабатывании любой защиты last_modified НЕ обновляется,
- *     чтобы при следующем синке попробовать снова (и чтобы не
- *     «залипнуть» на неполных данных).
+ *   - Добавлена защита diskFoldersAreOlder.
+ *   - Порог «Диск сильно меньше локальной базы» для папок и items.
+ *   - При срабатывании любой защиты last_modified НЕ обновляется.
+ *
+ * 🆕 v20.6.11 (после диагностики «фото не уходят на Диск»):
+ *   - uploadUnsyncedImages() и uploadUnsyncedFolderImages() больше НЕ отсеивают
+ *     записи по наличию imageUrl / iconUrl. Раньше фильтр был
+ *     `if (!item.imageUrl.isNullOrEmpty()) return@filter false`, потому что
+ *     imageUrl выставлялся только после успешного uploadItemImage.
+ *     Но с v20.6.7 CatalogViewModel.createItem() сразу проставляет
+ *     `imageUrl = "images/<id>.jpg"` локально (чтобы фото было видно
+ *     до синка) — и старый фильтр отсекал ВСЕ новые предметы с фото.
+ *     Теперь критерий один: локальный файл существует и непустой.
+ *     Реальная проверка «уже на Диске?» выполняется ниже через
+ *     repository.itemImageExistsOnDisk(item.id) / folderImageExistsOnDisk.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -428,19 +422,24 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
+        // 🆕 v20.6.11: критерий — локальный файл существует и непустой.
+        // Наличие imageUrl НЕ означает, что файл уже выгружен на Диск
+        // (с v20.6.7 CatalogViewModel.createItem проставляет imageUrl
+        // локально сразу, чтобы фото было видно в списке до синка).
+        // Реальная проверка «уже на Диске?» выполняется ниже
+        // через repository.itemImageExistsOnDisk(item.id).
         val itemsWithLocalPhoto = allItems.filter { item ->
-            if (!item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
             f != null && f.exists() && f.length() > 0L
         }
 
         if (itemsWithLocalPhoto.isEmpty()) {
-            Logger.log(TAG, "No new local photos to upload (all have imageUrl)")
+            Logger.log(TAG, "No local photos to check for upload")
             Logger.log(TAG, "TIMING: uploadUnsyncedImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} new local photos against disk")
+        Logger.log(TAG, "Checking ${itemsWithLocalPhoto.size} local photos against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -449,8 +448,11 @@ class SyncViewModel(
         itemsWithLocalPhoto.forEachIndexed { index, item ->
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
             if (existsOnDisk == true) {
-                val updated = item.copy(imageUrl = "images/${item.id}.jpg")
-                withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                // На Диске уже есть — только чиним imageUrl, если пустой.
+                if (item.imageUrl.isNullOrEmpty()) {
+                    val updated = item.copy(imageUrl = "images/${item.id}.jpg")
+                    withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
+                }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -492,19 +494,21 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
+        // 🆕 v20.6.11: аналогично items — критерий «локальный файл есть»,
+        // а не «iconUrl пустой». Иначе при заранее проставленном iconUrl
+        // иконки никогда не доедут до Диска.
         val foldersWithLocalIcon = allFolders.filter { folder ->
-            if (!folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             f != null && f.exists() && f.length() > 0L
         }
 
         if (foldersWithLocalIcon.isEmpty()) {
-            Logger.log(TAG, "No new local folder icons to upload (all have iconUrl)")
+            Logger.log(TAG, "No local folder icons to check for upload")
             Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages (empty) took ${System.currentTimeMillis() - t0}ms")
             return
         }
 
-        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} new local folder icons against disk")
+        Logger.log(TAG, "Checking ${foldersWithLocalIcon.size} local folder icons against disk")
 
         var uploadedCount = 0
         var skippedCount = 0
@@ -513,8 +517,10 @@ class SyncViewModel(
         foldersWithLocalIcon.forEachIndexed { index, folder ->
             val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
             if (existsOnDisk == true) {
-                val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                if (folder.iconUrl.isNullOrEmpty()) {
+                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                }
                 skippedCount++
                 return@forEachIndexed
             }
@@ -535,8 +541,10 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadFolderImage(folder.id, bytes)
                 if (success) {
-                    val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                    withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                    if (folder.iconUrl.isNullOrEmpty()) {
+                        val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                        withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                    }
                     uploadedCount++
                 }
             } catch (e: Exception) {
