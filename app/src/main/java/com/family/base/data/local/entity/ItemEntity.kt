@@ -17,6 +17,23 @@ import java.util.UUID
  * Без @Entity(indices=...) Room ожидал indices=[], а в БД они есть —
  * валидация схемы падала с "Migration didn't properly handle: items".
  * Теперь ожидаемые и фактические индексы совпадают.
+ *
+ * 🆕 v20.7.5 (миграция 20→21): добавлено поле imageSynced.
+ *
+ * Почему: локально проставленный imageUrl («файл лежит в кэше
+ * приложения») и «файл реально загружен на Яндекс.Диск» — это
+ * ДВА РАЗНЫХ факта. До v20.7.5 оба кодировались одним imageUrl,
+ * из-за чего uploadUnsyncedImages с фильтром imageUrl.isNullOrEmpty()
+ * отсекал все новые фото: CatalogViewModel.createItem проставлял
+ * imageUrl локально ещё до синка → на Диск фото не уходило никогда.
+ *
+ * Теперь:
+ *   - imageUrl      — путь/имя файла (для UI, Coil);
+ *   - imageSynced   — true, только если uploadItemImage успешно
+ *                     залил файл на Диск.
+ *
+ * uploadUnsyncedImages с v20.7.5 грузит всё, где imageSynced = false
+ * и есть локальный файл. После успешной заливки флаг ставится true.
  */
 @Entity(
     tableName = "items",
@@ -25,7 +42,9 @@ import java.util.UUID
         Index(
             value = ["deleteConfirmed", "deletedAt"],
             name = "index_items_deleteConfirmed_deletedAt"
-        )
+        ),
+        // 🆕 v20.7.5: индекс под выборку «что ещё не залито на Диск»
+        Index(value = ["imageSynced"], name = "index_items_imageSynced")
     ]
 )
 data class ItemEntity(
@@ -164,7 +183,35 @@ data class ItemEntity(
      * 🆕 v18.1.1 (fix миграции 18→19): defaultValue = "0".
      */
     @ColumnInfo(defaultValue = "0")
-    val deleteConfirmed: Boolean = false
+    val deleteConfirmed: Boolean = false,
+
+    // ===== 🆕 v20.7.5 (миграция 20→21): ФОТО НА ДИСКЕ =====
+    /**
+     * Признак «файл фото реально загружен на Яндекс.Диск».
+     *
+     * false — файл есть только локально (или его вообще нет).
+     *         uploadUnsyncedImages такие предметы подхватит и зальёт,
+     *         если локальный файл существует.
+     * true  — uploadItemImage успешно залил файл. Повторно не грузим.
+     *
+     * Разделение imageUrl и imageSynced решает баг v20.6.13–20.7.4:
+     * createItem проставлял imageUrl локально → uploadUnsyncedImages
+     * с фильтром imageUrl.isNullOrEmpty() отсекал новые фото →
+     * на Диск они не уходили никогда.
+     *
+     * Миграция 20→21 ставит DEFAULT 0 для всех записей — значит
+     * первый синк после обновления перезальёт всё, у чего есть
+     * локальный файл (включая давно залитое). Это безопасно:
+     * getUploadUrl(overwrite=true) и uploadItemImage идемпотентны.
+     * Зато так гарантированно чинится и repair-кейс «imageUrl есть,
+     * а на Диске 404» — перезалив восстановит файл.
+     *
+     * ⚠️ defaultValue = "0" обязателен: миграция добавляет колонку
+     * через ALTER TABLE items ADD COLUMN imageSynced INTEGER NOT NULL DEFAULT 0,
+     * Room валидирует схему и требует именно defaultValue='0'.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val imageSynced: Boolean = false
 ) {
     fun computeExpiryFields() {
         expiryDate?.let { exp ->
