@@ -26,31 +26,26 @@ import kotlinx.coroutines.withContext
 /**
  * Делегат MainViewModel: вся синхронизация с Яндекс.Диском.
  *
- * 🆕 v20.6.12: прогресс-логи, финальные строки, критерий «локальный файл есть».
+ * 🆕 v20.6.14 (после диагностики «синк висит на 1805 фото»):
+ *   - uploadUnsyncedImages/uploadUnsyncedFolderImages больше не молотят
+ *     всю базу, если пропала сеть: первый же null от itemImageExistsOnDisk /
+ *     folderImageExistsOnDisk / uploadItemImage → abort цикла и выход.
+ *     Раньше при DNS-фейле цикл всё равно бежал по всем 1805 и писал
+ *     failed=1769 за 31 секунду — это трата времени впустую.
+ *   - При abort пишем лог `network error at i/total, aborting`.
+ *   - `failed` теперь только для реальных ошибок сервера, а не для пропажи сети.
  *
- * 🆕 v20.6.13 (после диагностики «синк висит 1 час на 1805 фото»):
- *   - uploadUnsyncedImages больше НЕ проверяет itemImageExistsOnDisk для всех
- *     предметов. Критерий простой: если imageUrl ПУСТОЙ — кандидат
- *     (проверяем существование на Диске, потом грузим). Если imageUrl УЖЕ
- *     стоит — значит когда-то uploadItemImage вернул true, файл на Диске
- *     должен быть, повторно не проверяем и не грузим.
- *     Это сокращает число HTTP-запросов с ~1805 до ~0–5 за синк.
- *   - uploadUnsyncedFolderImages — аналогично: критерий «iconUrl пустой».
- *   - syncImages (download) — не тронут: «imageUrl есть + локального файла
- *     нет» → качаем. Это и есть восстановление редких кейсов, когда
- *     локальный файл потерян, а на Диске он есть.
+ * 🆕 v20.6.13: фильтр по imageUrl/iconUrl — грузим только те, у кого пусто
+ * (иначе ~1805 запросов itemImageExistsOnDisk и синк висит час).
  *
- * 🆕 v17.2.7 (после инцидента «пропали предметы»):
- *   - foldersAreMissing блокирует весь merge.
- *   - diskItemsAreOlder — не удаляем local-only items.
+ * 🆕 v20.6.12: прогресс-логи каждые 25 файлов и финальные строки.
  *
+ * 🆕 v17.2.7: foldersAreMissing блокирует весь merge, diskItemsAreOlder.
  * 🆕 v19: tombstones.
- * 🆕 v20.4.4: защита от неполного/старого диска для папок и items.
+ * 🆕 v20.4.4: защита от неполного/старого диска.
  * 🆕 v18.2.0: mergeData → remindAt/autoRemindEnabled.
  *
  * ⚠️ Оригинал базы — Алексей. Рима и Дима только списывают (canDelete=false).
- * mergeData: local-only tombstone только при diskIsNewer && !diskItemsAreOlder.
- * Эту логику в этой правке НЕ трогаем.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -386,18 +381,14 @@ class SyncViewModel(
     // ============================================================
 
     /**
-     * 🆕 v20.6.13: критерий «нужно ли грузить» — `imageUrl` пустой.
+     * 🆕 v20.6.14: если сеть пропала (itemImageExistsOnDisk вернул null
+     * или uploadItemImage вернул false при isNetworkAvailable()==false),
+     * прерываем цикл целиком, а не молотим все 1805 записей впустую.
      *
-     * Логика:
-     *  - если imageUrl пустой и локальный файл есть → проверяем
-     *    itemImageExistsOnDisk (на случай, если файл уже на Диске,
-     *    просто imageUrl не проставлен), потом uploadItemImage;
-     *  - если imageUrl уже стоит → файл на Диске должен быть
-     *    (uploadItemImage раньше вернул true), повторно не проверяем
-     *    и не грузим. Это экономит ~1800 HTTP-запросов за синк.
+     * Раньше при DNS-фейле цикл проходил по всем 1805 и писал failed=1769
+     * за 31 секунду — трата времени. Теперь abort после первого null.
      *
-     * Редкий кейс «imageUrl стоит, а файла на Диске нет» — лечится
-     * отдельной задачей (repair), в этом синке не догоняется.
+     * @return Pair<uploaded, skipped> для лога, либо null, если abort.
      */
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
@@ -410,8 +401,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        // 🆕 v20.6.13: только предметы без imageUrl и с локальным файлом.
-        // ImageUrl уже стоит → файл на Диске считается выгруженным.
         val itemsWithLocalPhoto = allItems.filter { item ->
             if (!item.imageUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -432,7 +421,9 @@ class SyncViewModel(
         val total = itemsWithLocalPhoto.size
         val progressEvery = 25
 
-        itemsWithLocalPhoto.forEachIndexed { index, item ->
+        for (index in itemsWithLocalPhoto.indices) {
+            val item = itemsWithLocalPhoto[index]
+
             if (index == 0 || (index + 1) % progressEvery == 0) {
                 val elapsed = System.currentTimeMillis() - t0
                 Logger.log(
@@ -443,12 +434,21 @@ class SyncViewModel(
             }
 
             val existsOnDisk = repository.itemImageExistsOnDisk(item.id)
+            if (existsOnDisk == null) {
+                // 🆕 v20.6.14: сеть/DNS пропала — abort, не молотим остальные.
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.log(
+                    TAG,
+                    "uploadUnsyncedImages: network error at ${index + 1}/$total, aborting " +
+                        "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
+                )
+                break
+            }
             if (existsOnDisk == true) {
-                // На Диске уже есть — проставляем imageUrl.
                 val updated = item.copy(imageUrl = "images/${item.id}.jpg")
                 withContext(Dispatchers.IO) { db.itemDao().updateItem(updated) }
                 skippedCount++
-                return@forEachIndexed
+                continue
             }
 
             onSyncProgressChanged(
@@ -463,7 +463,7 @@ class SyncViewModel(
             val localFile = ImageUtils.getLocalImageFile(appContext, item.id)
             if (localFile == null || !localFile.exists()) {
                 skippedCount++
-                return@forEachIndexed
+                continue
             }
 
             try {
@@ -472,9 +472,28 @@ class SyncViewModel(
                 if (success) {
                     uploadedCount++
                 } else {
+                    if (!repository.isNetworkAvailable()) {
+                        // 🆕 v20.6.14: upload упал из-за сети — abort.
+                        val elapsed = System.currentTimeMillis() - t0
+                        Logger.log(
+                            TAG,
+                            "uploadUnsyncedImages: network error on upload at ${index + 1}/$total, aborting " +
+                                "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
+                        )
+                        break
+                    }
                     failedCount++
                 }
             } catch (e: Exception) {
+                if (!repository.isNetworkAvailable()) {
+                    val elapsed = System.currentTimeMillis() - t0
+                    Logger.log(
+                        TAG,
+                        "uploadUnsyncedImages: network error on upload at ${index + 1}/$total, aborting " +
+                            "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms): ${e.message}"
+                    )
+                    break
+                }
                 failedCount++
                 Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
@@ -499,7 +518,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
-        // 🆕 v20.6.13: только папки без iconUrl и с локальным файлом.
         val foldersWithLocalIcon = allFolders.filter { folder ->
             if (!folder.iconUrl.isNullOrEmpty()) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
@@ -520,7 +538,9 @@ class SyncViewModel(
         val total = foldersWithLocalIcon.size
         val progressEvery = 25
 
-        foldersWithLocalIcon.forEachIndexed { index, folder ->
+        for (index in foldersWithLocalIcon.indices) {
+            val folder = foldersWithLocalIcon[index]
+
             if (index == 0 || (index + 1) % progressEvery == 0) {
                 val elapsed = System.currentTimeMillis() - t0
                 Logger.log(
@@ -531,11 +551,21 @@ class SyncViewModel(
             }
 
             val existsOnDisk = repository.folderImageExistsOnDisk(folder.id)
+            if (existsOnDisk == null) {
+                // 🆕 v20.6.14: сеть/DNS пропала — abort.
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.log(
+                    TAG,
+                    "uploadUnsyncedFolderImages: network error at ${index + 1}/$total, aborting " +
+                        "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
+                )
+                break
+            }
             if (existsOnDisk == true) {
                 val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
                 withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                 skippedCount++
-                return@forEachIndexed
+                continue
             }
 
             onSyncProgressChanged(
@@ -550,7 +580,7 @@ class SyncViewModel(
             val localFile = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
             if (localFile == null || !localFile.exists()) {
                 skippedCount++
-                return@forEachIndexed
+                continue
             }
 
             try {
@@ -561,9 +591,27 @@ class SyncViewModel(
                     withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
                     uploadedCount++
                 } else {
+                    if (!repository.isNetworkAvailable()) {
+                        val elapsed = System.currentTimeMillis() - t0
+                        Logger.log(
+                            TAG,
+                            "uploadUnsyncedFolderImages: network error on upload at ${index + 1}/$total, aborting " +
+                                "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms)"
+                        )
+                        break
+                    }
                     failedCount++
                 }
             } catch (e: Exception) {
+                if (!repository.isNetworkAvailable()) {
+                    val elapsed = System.currentTimeMillis() - t0
+                    Logger.log(
+                        TAG,
+                        "uploadUnsyncedFolderImages: network error on upload at ${index + 1}/$total, aborting " +
+                            "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms): ${e.message}"
+                    )
+                    break
+                }
                 failedCount++
                 Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
             }
