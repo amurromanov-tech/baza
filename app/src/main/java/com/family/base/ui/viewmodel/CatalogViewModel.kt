@@ -33,6 +33,13 @@ import java.util.UUID
  *  локально, если переданы imageBytes. Раньше imageUrl выставлялся только
  *  после uploadItemImage (синка) — и в списке/карточке фото не было до синка.
  *  Синк это не ломает: uploadItemImage пишет то же значение.
+ *
+ * 🆕 v20.7.5 (миграция 20→21): createItem/createFolder теперь явно
+ *  выставляют imageSynced = false / iconSynced = false при локальном
+ *  сохранении фото/иконки. Это разделяет «файл в кэше» (imageUrl)
+ *  и «файл залит на Диск» (imageSynced). uploadUnsyncedImages будет
+ *  фильтровать по imageSynced, поэтому новые фото больше не будут
+ *  отсекаться фильтром imageUrl.isNullOrEmpty() (баг v20.6.13–20.7.4).
  */
 class CatalogViewModel(
     private val db: AppDatabase,
@@ -91,10 +98,18 @@ class CatalogViewModel(
     suspend fun createItem(item: ItemEntity, imageBytes: ByteArray? = null) {
         // 🆕 v20.6.7: если есть байты и ещё нет imageUrl — проставляем локально,
         // чтобы фото было видно в списке/карточке сразу, не дожидаясь синка.
+        // 🆕 v20.7.5: imageSynced принудительно false — файл на Диске ещё не залит.
         val hasBytes = imageBytes != null && imageBytes.isNotEmpty()
-        val inserted: ItemEntity = if (hasBytes && item.imageUrl.isNullOrBlank()) {
-            item.copy(imageUrl = "images/${item.id}.jpg")
+        val inserted: ItemEntity = if (hasBytes) {
+            // imageUrl нужен для UI (Coil). Если уже стоит — не трогаем,
+            // но imageSynced всё равно false: файл на Диске не подтверждён.
+            val url = if (item.imageUrl.isNullOrBlank()) "images/${item.id}.jpg" else item.imageUrl
+            item.copy(imageUrl = url, imageSynced = false)
         } else {
+            // Байтов нет — imageUrl/imageSynced оставляем как пришло.
+            // Если предмет пришёл с imageUrl (например, скопирован из шаблона
+            // с imageBytes — они уже сохранены отдельно), imageSynced уже false
+            // в копии выше. Если imageUrl = null — тоже imageSynced = false.
             item
         }
 
@@ -127,7 +142,18 @@ class CatalogViewModel(
         Logger.log(TAG, "createItemsBatch: ${items.size} items, folderId=$folderId")
 
         return try {
-            val prepared = items.map { it.copy(parentId = folderId, parentItemId = null) }
+            // 🆕 v20.7.5: партия из чека/импорта — imageSynced по умолчанию
+            // false (в ItemEntity defaultValue = false). Если у позиции есть
+            // imageUrl (из шаблона), но нет локального файла и нет заливки —
+            // uploadUnsyncedImages не тронет (нет локального файла),
+            // а syncImages (download) попробует скачать. Это безопасно.
+            val prepared = items.map {
+                it.copy(
+                    parentId = folderId,
+                    parentItemId = null,
+                    imageSynced = false
+                )
+            }
 
             withContext(Dispatchers.IO) {
                 db.itemDao().insertItems(prepared)
@@ -754,6 +780,9 @@ class CatalogViewModel(
             } else {
                 val newId = UUID.randomUUID().toString()
 
+                // 🆕 v20.7.5: копия для архива — imageSynced = false,
+                // потому что файл фото будет скопирован локально ниже,
+                // но на Диск ещё не залит. uploadUnsyncedImages подхватит.
                 val archivedPart = item.copy(
                     id = newId,
                     quantity = count,
@@ -763,6 +792,7 @@ class CatalogViewModel(
                     archivedNote = note,
                     originalId = itemId,
                     imageUrl = null,
+                    imageSynced = false,
                     addedDate = now,
                     updatedDate = now,
                     updatedBy = currentUser
@@ -779,7 +809,17 @@ class CatalogViewModel(
                     if (localFile != null && localFile.exists()) {
                         val bytes = localFile.readBytes()
                         ImageUtils.saveImageLocally(appContext(), newId, bytes)
-                        Logger.log(TAG, "writeOffItem: photo copied to $newId")
+                        // 🆕 v20.7.5: после копирования файла проставляем
+                        // imageUrl, чтобы UI показал фото. imageSynced = false
+                        // (уже так), uploadUnsyncedImages зальёт на Диск.
+                        val archivedWithUrl = archivedPart.copy(
+                            imageUrl = "images/$newId.jpg",
+                            imageSynced = false
+                        )
+                        withContext(Dispatchers.IO) {
+                            db.itemDao().updateItem(archivedWithUrl)
+                        }
+                        Logger.log(TAG, "writeOffItem: photo copied to $newId (imageSynced=false)")
                     }
                 } catch (e: Exception) {
                     Logger.log(TAG, "writeOffItem: failed to copy photo: ${e.message}")
@@ -937,11 +977,20 @@ class CatalogViewModel(
             val now = System.currentTimeMillis()
             val newId = UUID.randomUUID().toString()
 
+            // 🆕 v20.7.5: новая копия — imageSynced = false по умолчанию
+            // (если файл фото будет скопирован ниже — он не залит на Диск).
+            // Если у исходного imageSynced = true и фото НЕ копируется
+            // (нет локального файла) — оставляем false: на Диске оно
+            // есть, но с другим id; uploadUnsyncedImages не тронет
+            // (нет локального файла для newId), syncImages не тронет
+            // (imageUrl = null → фильтр отсеивает).
             val copy = item.copy(
                 id = newId,
                 quantity = count,
                 parentId = resolvedParentId,
                 parentItemId = newParentItemId,
+                imageUrl = null,
+                imageSynced = false,
                 addedDate = now,
                 updatedDate = now,
                 updatedBy = currentUser
@@ -958,6 +1007,15 @@ class CatalogViewModel(
                 if (localFile != null && localFile.exists()) {
                     val bytes = localFile.readBytes()
                     ImageUtils.saveImageLocally(ctx, newId, bytes)
+                    // 🆕 v20.7.5: после копирования файла проставляем imageUrl,
+                    // imageSynced оставляем false — uploadUnsyncedImages зальёт.
+                    val copyWithUrl = copy.copy(
+                        imageUrl = "images/$newId.jpg",
+                        imageSynced = false
+                    )
+                    withContext(Dispatchers.IO) {
+                        db.itemDao().updateItem(copyWithUrl)
+                    }
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "splitAndMoveItem: failed to copy photo: ${e.message}")
@@ -1031,9 +1089,12 @@ class CatalogViewModel(
         try {
             val item = db.itemDao().getItemById(itemId)
             if (item != null) {
+                // 🆕 v20.7.5: копия — imageSynced = false (файл фото
+                // будет скопирован локально ниже, но на Диск ещё не залит).
                 val copy = item.copy(
                     id = UUID.randomUUID().toString(),
                     name = "${item.name} (копия)",
+                    imageSynced = false,
                     addedDate = System.currentTimeMillis(),
                     updatedDate = System.currentTimeMillis()
                 )
@@ -1044,6 +1105,15 @@ class CatalogViewModel(
                 if (localFile != null && localFile.exists()) {
                     val bytes = localFile.readBytes()
                     ImageUtils.saveImageLocally(ctx, copy.id, bytes)
+                    // 🆕 v20.7.5: после копирования файла проставляем imageUrl,
+                    // imageSynced оставляем false — uploadUnsyncedImages зальёт.
+                    val copyWithUrl = copy.copy(
+                        imageUrl = "images/${copy.id}.jpg",
+                        imageSynced = false
+                    )
+                    withContext(Dispatchers.IO) {
+                        db.itemDao().updateItem(copyWithUrl)
+                    }
                 }
 
                 OutboxLogger.itemChanged(db, copy, OutboxEntity.ACTION_CREATE, currentUser)
@@ -1069,12 +1139,16 @@ class CatalogViewModel(
 
     suspend fun createFolder(name: String) {
         val parentId = currentFolderIdProvider()
+        // 🆕 v20.7.5: iconSynced = false по умолчанию (иконки ещё нет).
+        // Если пользователь потом поставит иконку — uploadUnsyncedFolderImages
+        // подхватит её (фильтр по iconSynced, а не iconUrl).
         val folder = FolderEntity(
             name = name,
             parentId = parentId,
             parentItemId = null,
             createdBy = currentUser,
-            path = name
+            path = name,
+            iconSynced = false
         )
 
         withContext(Dispatchers.IO) { db.folderDao().insertFolder(folder) }
