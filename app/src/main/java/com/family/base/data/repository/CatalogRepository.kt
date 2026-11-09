@@ -24,6 +24,18 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.UnknownHostException
 
+/**
+ * 🆕 v20.7.5 (миграция 20→21):
+ *  - uploadItemImage: при успешной заливке ставит imageSynced = true
+ *    (не только imageUrl, как раньше). Теперь uploadUnsyncedImages
+ *    не будет повторно грузить этот предмет — фильтр по imageSynced.
+ *  - uploadFolderImage: при успешной заливке ставит iconSynced = true.
+ *    Раньше вызывающий код (SyncViewModel) сам писал iconUrl после
+ *    upload, теперь флаг ставится внутри репозитория — единая точка
+ *    правды, не зависит от вызывающего кода.
+ *  - itemImageExistsOnDisk / folderImageExistsOnDisk оставлены как есть
+ *    (пригодятся для диагностики «файла на Диске нет, а флаг true»).
+ */
 class CatalogRepository(private val db: AppDatabase) {
 
     private val gson = Gson()
@@ -640,6 +652,14 @@ class CatalogRepository(private val db: AppDatabase) {
     // ФОТО ПАПОК
     // ============================================================
 
+    /**
+     * 🆕 v20.7.5 (миграция 20→21):
+     *  При успешной заливке иконки на Диск ставим iconSynced = true
+     *  в FolderEntity. Раньше это делал вызывающий код (SyncViewModel)
+     *  через updateFolder — теперь единая точка правды здесь.
+     *
+     *  Возвращает true только если файл реально улетел на Диск.
+     */
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -659,6 +679,15 @@ class CatalogRepository(private val db: AppDatabase) {
                 val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
+                    // 🆕 v20.7.5: успешная заливка — ставим iconSynced = true.
+                    // iconUrl тоже ставим (для UI), если ещё не стоит.
+                    val folder = db.folderDao().getFolderById(folderId)
+                    folder?.let {
+                        val url = it.iconUrl ?: "folder_${folderId}.jpg"
+                        val updated = it.copy(iconUrl = url, iconSynced = true)
+                        db.folderDao().updateFolder(updated)
+                    }
+                    Logger.log(TAG, "uploadFolderImage: OK $folderId (iconSynced=true)")
                     return@withContext true
                 } else {
                     Logger.log(TAG, "Folder image upload failed: code=${uploadResponse.code()}")
@@ -948,6 +977,17 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
+    /**
+     * 🆕 v20.7.5 (миграция 20→21):
+     *  При успешной заливке фото на Диск ставим imageSynced = true
+     *  в ItemEntity. Раньше здесь писался только imageUrl, а флага не было —
+     *  из-за чего повторный синк не мог отличить «уже на Диске» от
+     *  «локально проставлено, но не залито». Теперь это единая точка
+     *  правды: imageSynced = true выставляется ТОЛЬКО здесь, после
+     *  успешного ответа Диска.
+     *
+     *  Возвращает true только если файл реально улетел на Диск.
+     */
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -967,11 +1007,15 @@ class CatalogRepository(private val db: AppDatabase) {
                 val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
+                    // 🆕 v20.7.5: успешная заливка — ставим imageSynced = true.
+                    // imageUrl тоже ставим (для UI), если ещё не стоит.
                     val item = db.itemDao().getItemById(itemId)
                     item?.let {
-                        val updated = it.copy(imageUrl = "images/$itemId.jpg")
+                        val url = it.imageUrl ?: "images/$itemId.jpg"
+                        val updated = it.copy(imageUrl = url, imageSynced = true)
                         db.itemDao().updateItem(updated)
                     }
+                    Logger.log(TAG, "uploadItemImage: OK $itemId (imageSynced=true)")
                     return@withContext true
                 } else {
                     Logger.log(TAG, "Image upload failed: code=${uploadResponse.code()}")
