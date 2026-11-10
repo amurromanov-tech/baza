@@ -8,7 +8,6 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.SettingsEntity
 import com.family.base.data.local.entity.TaskEntity
-import com.family.base.data.local.entity.SyncInfoEntity
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +16,6 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 
 /**
@@ -32,10 +30,11 @@ import java.util.zip.ZipInputStream
  *   5. Очистка images/, восстановление фото из ZIP.
  *   6. Сброс last_modified → следующий синк подтянет дельту с Диска.
  *
- * ⚠️ Импорт НЕ трогает:
- *   - галерею (её нет в бэкапе);
- *   - OAuth-токен (пользователь перелогинивается);
- *   - users.json на Диске (это не локальные данные).
+ * 🆕 v21.0.1 (fix Android 11+):
+ *  - Перед pre-backup проверяем hasStoragePermission() (из FullBackupManager).
+ *    Без MANAGE_EXTERNAL_STORAGE pre-backup не сможет записать ZIP в Download/
+ *    — сразу возвращаем RestoreResult с понятной ошибкой, а не падаем
+ *    на середине процесса.
  */
 class FullBackupRestoreManager(private val context: Context) {
 
@@ -95,10 +94,6 @@ class FullBackupRestoreManager(private val context: Context) {
     // ВАЛИДАЦИЯ (без распаковки на диск)
     // ============================================================
 
-    /**
-     * Быстрая проверка ZIP: manifest есть, формат совместим,
-     * схема не новее текущей.
-     */
     suspend fun validate(zipFile: File): ValidationResult = withContext(Dispatchers.IO) {
         try {
             if (!zipFile.exists()) {
@@ -155,16 +150,6 @@ class FullBackupRestoreManager(private val context: Context) {
     // ВОССТАНОВЛЕНИЕ
     // ============================================================
 
-    /**
-     * Полное восстановление.
-     *
-     * @param zipFile          ZIP с бэкапом.
-     * @param db               база данных.
-     * @param currentUserName  кто запустил (для pre-restore backup).
-     * @param appVersionName   versionName приложения.
-     * @param appVersionCode   versionCode приложения.
-     * @param onProgress       callback (0..100, текст).
-     */
     suspend fun restore(
         zipFile: File,
         db: AppDatabase,
@@ -174,6 +159,16 @@ class FullBackupRestoreManager(private val context: Context) {
         onProgress: (percent: Int, text: String) -> Unit
     ): RestoreResult = withContext(Dispatchers.IO) {
         try {
+            // 🆕 v21.0.1: ранняя проверка разрешения — до валидации
+            // и до pre-backup. Без MANAGE_EXTERNAL_STORAGE pre-backup
+            // не сможет записать ZIP в Download/.
+            if (!FullBackupManager.hasStoragePermission()) {
+                return@withContext RestoreResult(
+                    false, null, null,
+                    "Нет разрешения на запись в Download/. Разрешите доступ к файлам и повторите."
+                )
+            }
+
             onProgress(0, "Проверка архива…")
             val validation = validate(zipFile)
             if (!validation.valid) {
@@ -194,6 +189,12 @@ class FullBackupRestoreManager(private val context: Context) {
                     checkCancel = { false }
                 )
                 if (res.success) res.file else null
+            } catch (e: SecurityException) {
+                Logger.log(TAG, "pre-restore backup SecurityException: ${e.message}", e)
+                return@withContext RestoreResult(
+                    false, manifest, null,
+                    "Не удалось создать резервную копию текущих данных: ${e.message}"
+                )
             } catch (e: Exception) {
                 Logger.log(TAG, "pre-restore backup failed: ${e.message}", e)
                 null
@@ -258,20 +259,18 @@ class FullBackupRestoreManager(private val context: Context) {
 
             // 4. Восстановление сущностей
             onProgress(60, "Восстановление предметов и папок…")
-            // Папки первыми — на них ссылаются предметы (parentId).
             snapshot.folders.forEach { db.folderDao().insertFolder(it) }
             snapshot.items.forEach { db.itemDao().insertItem(it) }
             snapshot.tasks.forEach { db.taskDao().insert(it) }
             snapshot.history.forEach { db.historyDao().insertEntry(it) }
             snapshot.settings?.let { db.settingsDao().insertOrUpdateSettings(it) }
 
-            // outbox — восстановим только pending, чтобы не запушить дубли
             onProgress(70, "Восстановление очереди синхронизации…")
             if (snapshot.outbox.isNotEmpty()) {
                 db.outboxDao().insertAll(snapshot.outbox.filter { !it.isSynced })
             }
 
-            // 5. Фото: очистить текущие и положить из архива
+            // 5. Фото
             onProgress(80, "Восстановление фотографий…")
             val imagesDir = File(context.filesDir, IMAGES_DIR)
             if (imagesDir.exists()) {
@@ -292,7 +291,7 @@ class FullBackupRestoreManager(private val context: Context) {
             }
             Logger.log(TAG, "restore: copied $copied images to ${imagesDir.absolutePath}")
 
-            // 6. Сброс last_modified — следующий синк подтянет дельту с Диска
+            // 6. Сброс last_modified
             onProgress(90, "Сброс состояния синхронизации…")
             try {
                 db.syncInfoDao().setLastModified(0L)
@@ -300,10 +299,9 @@ class FullBackupRestoreManager(private val context: Context) {
                 Logger.log(TAG, "restore: reset last_modified failed: ${e.message}")
             }
 
-            // 7. Уборка
             tempDir.deleteRecursively()
 
-            onProgress(100, "Готово: восстановлено items=${snapshot.items.size}, folders=${snapshot.folders.size}")
+            onProgress(100, "Готово: items=${snapshot.items.size}, folders=${snapshot.folders.size}")
             Logger.log(TAG, "restore: OK, pre-backup = ${preRestoreBackup?.absolutePath}")
 
             return@withContext RestoreResult(true, manifest, preRestoreBackup, null)
@@ -318,15 +316,11 @@ class FullBackupRestoreManager(private val context: Context) {
     // ============================================================
 
     private suspend fun clearAllData(db: AppDatabase) {
-        // Порядок важен: сначала зависимые, потом основные.
-        // Но у нас нет FK — можно в любом порядке.
         db.itemDao().getAllItemsRaw().forEach { db.itemDao().deleteItem(it) }
         db.folderDao().getAllFolders().forEach { db.folderDao().deleteFolder(it) }
         db.taskDao().deleteAll()
         db.historyDao().getAllEntries().forEach { db.historyDao().deleteEntry(it) }
         db.outboxDao().clear()
-        // settings: перезапишем через insertOrUpdateSettings ниже — не чистим.
-        // sync_info: перезапишем setLastModified(0) ниже — не чистим.
         Logger.log(TAG, "clearAllData: items, folders, tasks, history, outbox cleared")
     }
 }
