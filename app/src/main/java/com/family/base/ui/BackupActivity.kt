@@ -3,7 +3,10 @@ package com.family.base.ui
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -33,10 +36,12 @@ import java.io.File
  * Два режима, передаются через EXTRA_MODE:
  *   - MODE_FULL_EXPORT — сразу открыть диалог экспорта полного бэкапа.
  *   - MODE_FULL_IMPORT — сразу открыть диалог импорта (ACTION_OPEN_DOCUMENT).
- *   - по умолчанию (нет extra) — обычный экран, как раньше.
  *
- * Кнопки полного бэкапа в этом экране тоже есть (см. activity_backup.xml),
- * но они видны только Алексею.
+ * 🆕 v21.0.1 (fix Android 11+): ensureStoragePermission() —
+ * перед экспортом/импортом проверяет Environment.isExternalStorageManager().
+ * Если разрешения нет — открывает Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
+ * и показывает Toast. После возврата пользователь жмёт кнопку снова.
+ * На Android 10 и ниже проверка всегда проходит.
  */
 class BackupActivity : AppCompatActivity() {
 
@@ -45,8 +50,11 @@ class BackupActivity : AppCompatActivity() {
     private lateinit var viewModel: MainViewModel
     private val TAG = "BackupActivity"
 
-    // 🆕 v21.0.1: диалог прогресса (создаём один раз, переиспользуем)
+    // 🆕 v21.0.1: диалог прогресса
     private var progressDialog: AlertDialog? = null
+    private var progressBarRef: ProgressBar? = null
+    private var progressPercentRef: TextView? = null
+    private var progressTitleRef: TextView? = null
 
     // 🆕 v21.0.1: launcher для выбора ZIP при импорте
     private val importZipLauncher = registerForActivityResult(
@@ -55,6 +63,20 @@ class BackupActivity : AppCompatActivity() {
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.data?.let { uri -> handleImportZip(uri) }
         }
+    }
+
+    // 🆕 v21.0.1: launcher для открытия настроек разрешения.
+    // Результат не важен — пользователь вернётся и нажмёт кнопку снова.
+    private val storagePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val granted = FullBackupManager.hasStoragePermission()
+        Toast.makeText(
+            this,
+            if (granted) "✅ Разрешение получено, повторите действие"
+            else "⚠️ Разрешение не выдано",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     companion object {
@@ -92,7 +114,6 @@ class BackupActivity : AppCompatActivity() {
             exportBackup(local = true)
         }
 
-        // «Экспорт в облако» — только для мастера (Алексей).
         val currentUser = tokenStorage.getCurrentUser()
         val isMaster = AppUser.canDelete(currentUser)
         binding.btnExportCloud.isEnabled = isMaster
@@ -114,11 +135,8 @@ class BackupActivity : AppCompatActivity() {
             showImportDialog(local = false)
         }
 
-        // 🆕 v21.0.1: полный бэкап (ZIP с фото) — только для Алексея
         applyFullBackupPermissions()
 
-        // 🆕 v21.0.1: если открыты по кнопке из SettingsActivity —
-        // сразу показываем нужный диалог.
         val mode = intent.getStringExtra(EXTRA_MODE)
         when (mode) {
             MODE_FULL_EXPORT -> {
@@ -163,7 +181,49 @@ class BackupActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ОБЫЧНЫЙ ЭКСПОРТ (JSON, как раньше)
+    // 🆕 v21.0.1: ПРОВЕРКА РАЗРЕШЕНИЯ НА ЗАПИСЬ В Download/
+    // ============================================================
+
+    /**
+     * Гарантирует, что есть MANAGE_EXTERNAL_STORAGE (Android 11+).
+     *
+     * Если разрешения нет — открывает настройки и возвращает false.
+     * Пользователь возвращается и нажимает кнопку снова.
+     * На Android 10 и ниже возвращает true (requestLegacyExternalStorage).
+     */
+    private fun ensureStoragePermission(): Boolean {
+        if (FullBackupManager.hasStoragePermission()) return true
+
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Нужен доступ к файлам")
+            .setMessage(
+                "Для сохранения полного бэкапа в Download/BAZA/full_backup/ " +
+                    "приложению нужно разрешение «Доступ ко всем файлам».\n\n" +
+                    "Открыть настройки и выдать разрешение?"
+            )
+            .setPositiveButton("Открыть настройки") { _, _ ->
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    storagePermissionLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "ensureStoragePermission: cannot open settings: ${e.message}", e)
+                    Toast.makeText(
+                        this,
+                        "Не удалось открыть настройки. Откройте вручную: Настройки → Приложения → БАЗА → Разрешения → Все файлы",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+
+        return false
+    }
+
+    // ============================================================
+    // ОБЫЧНЫЙ ЭКСПОРТ (JSON)
     // ============================================================
     private fun exportBackup(local: Boolean) {
         lifecycleScope.launch {
@@ -200,18 +260,14 @@ class BackupActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ОБЫЧНЫЙ ИМПОРТ (JSON, как раньше)
+    // ОБЫЧНЫЙ ИМПОРТ (JSON)
     // ============================================================
     private fun showImportDialog(local: Boolean) {
         AlertDialog.Builder(this)
             .setTitle("Восстановление данных")
             .setMessage("ВНИМАНИЕ! Все текущие данные будут заменены данными из бэкапа. Продолжить?")
             .setPositiveButton("Да") { _, _ ->
-                if (local) {
-                    showLocalBackupPicker()
-                } else {
-                    importFromCloud()
-                }
+                if (local) showLocalBackupPicker() else importFromCloud()
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -287,12 +343,14 @@ class BackupActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v21.0.1: ПОЛНЫЙ БЭКАП (ZIP с фото)
+    // 🆕 v21.0.1: ПОЛНЫЙ БЭКАП
     // ============================================================
 
     private fun startFullExport() {
-        val currentUser = tokenStorage.getCurrentUser() ?: "unknown"
+        // 🆕 v21.0.1: сначала разрешение на запись в Download/
+        if (!ensureStoragePermission()) return
 
+        val currentUser = tokenStorage.getCurrentUser() ?: "unknown"
         showProgressDialog("Подготовка полного бэкапа…")
 
         lifecycleScope.launch {
@@ -305,9 +363,7 @@ class BackupActivity : AppCompatActivity() {
                     userName = currentUser,
                     appVersionName = BuildConfig.VERSION_NAME,
                     appVersionCode = BuildConfig.VERSION_CODE,
-                    onProgress = { percent, text ->
-                        updateProgress(percent, text)
-                    },
+                    onProgress = { percent, text -> updateProgress(percent, text) },
                     checkCancel = { false }
                 )
 
@@ -347,7 +403,9 @@ class BackupActivity : AppCompatActivity() {
     }
 
     private fun startFullImport() {
-        // 1) Диалог-предупреждение
+        // 🆕 v21.0.1: сначала разрешение на запись в Download/ (для pre-backup).
+        if (!ensureStoragePermission()) return
+
         AlertDialog.Builder(this)
             .setTitle("⚠️ Восстановление из полного бэкапа")
             .setMessage(
@@ -358,7 +416,7 @@ class BackupActivity : AppCompatActivity() {
                     "• историю\n" +
                     "• настройки\n" +
                     "• фотографии\n\n" +
-                    "Перед импортом автоматически будет создан бэкап текущего состояния (в Download/BAZA/full_backup/).\n\n" +
+                    "Перед импортом автоматически будет создан бэкап текущего состояния.\n\n" +
                     "Продолжить?"
             )
             .setPositiveButton("Выбрать файл…") { _, _ -> openZipPicker() }
@@ -370,7 +428,6 @@ class BackupActivity : AppCompatActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/zip"
-            // fallback: некоторые файловые менеджеры отдают generic mime
             putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip", "application/octet-stream", "*/*"))
         }
         importZipLauncher.launch(intent)
@@ -378,8 +435,6 @@ class BackupActivity : AppCompatActivity() {
 
     private fun handleImportZip(uri: Uri) {
         val currentUser = tokenStorage.getCurrentUser() ?: "unknown"
-
-        // Копируем ZIP во временный файл, т.к. FullBackupRestoreManager ждёт File
         showProgressDialog("Чтение ZIP…")
 
         lifecycleScope.launch {
@@ -400,14 +455,11 @@ class BackupActivity : AppCompatActivity() {
                     currentUserName = currentUser,
                     appVersionName = BuildConfig.VERSION_NAME,
                     appVersionCode = BuildConfig.VERSION_CODE,
-                    onProgress = { percent, text ->
-                        updateProgress(percent, text)
-                    }
+                    onProgress = { percent, text -> updateProgress(percent, text) }
                 )
 
                 hideProgressDialog()
 
-                // Удаляем временный ZIP
                 try { tempFile.delete() } catch (_: Exception) {}
 
                 if (result.success) {
@@ -429,7 +481,7 @@ class BackupActivity : AppCompatActivity() {
                         }
                         .setCancelable(false)
                         .show()
-                    Logger.log(TAG, "Restore completed successfully, pre-backup=${result.preRestoreBackup?.absolutePath}")
+                    Logger.log(TAG, "Restore completed, pre-backup=${result.preRestoreBackup?.absolutePath}")
                 } else {
                     Toast.makeText(
                         this@BackupActivity,
@@ -447,7 +499,7 @@ class BackupActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 v21.0.1: ДИАЛОГ ПРОГРЕССА
+    // 🆕 v21.0.1: ДИАЛОГ ПРОГРЕССА (через поля, а не tags)
     // ============================================================
 
     private fun showProgressDialog(title: String) {
@@ -459,25 +511,24 @@ class BackupActivity : AppCompatActivity() {
             setPadding(padding, padding, padding, padding)
         }
 
-        val tvTitle = TextView(this).apply {
-            text = title
-            textSize = 14f
-        }
+        val tvTitle = TextView(this).apply { text = title; textSize = 14f }
         container.addView(tvTitle)
 
-        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+        val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
-            setPadding(0, (16 * resources.displayMetrics.density).toInt(), 0, 0)
         }
-        container.addView(progressBar)
+        container.addView(pb)
 
         val tvPercent = TextView(this).apply {
             text = "0%"
             textSize = 12f
-            setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
         }
         container.addView(tvPercent)
+
+        progressTitleRef = tvTitle
+        progressBarRef = pb
+        progressPercentRef = tvPercent
 
         progressDialog = AlertDialog.Builder(this)
             .setTitle("Полный бэкап")
@@ -486,34 +537,21 @@ class BackupActivity : AppCompatActivity() {
             .setNegativeButton("Отмена", null)
             .create()
 
-        progressDialog?.setOnShowListener {
-            // Сохраняем ссылки для updateProgress
-            progressDialog?.findViewById<ProgressBar>(android.R.id.progress) // no-op
-            progressDialog?.setOnDismissListener(null)
-        }
-
         progressDialog?.show()
-
-        // Сохраняем ссылки в теги, чтобы updateProgress их нашёл
-        progressDialog?.window?.decorView?.let { decor ->
-            decor.tag = mapOf("bar" to progressBar, "percent" to tvPercent, "title" to tvTitle)
-        }
     }
 
     private fun updateProgress(percent: Int, text: String) {
-        val dialog = progressDialog ?: return
-        val decor = dialog.window?.decorView ?: return
-        @Suppress("UNCHECKED_CAST")
-        val views = decor.tag as? Map<String, View> ?: return
-
-        (views["bar"] as? ProgressBar)?.progress = percent
-        (views["percent"] as? TextView)?.text = "$percent%"
-        (views["title"] as? TextView)?.text = text
+        progressBarRef?.progress = percent
+        progressPercentRef?.text = "$percent%"
+        progressTitleRef?.text = text
     }
 
     private fun hideProgressDialog() {
         progressDialog?.dismiss()
         progressDialog = null
+        progressBarRef = null
+        progressPercentRef = null
+        progressTitleRef = null
     }
 
     override fun onDestroy() {
