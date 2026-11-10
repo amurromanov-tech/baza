@@ -12,7 +12,7 @@
         android:padding="16dp">
 
         <!-- ============================================================ -->
-        <!-- ВЕРХНЯЯ ПАНЕЛЬ: НАЗАД + ЗАГОЛОВОК -->
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
         <!-- ============================================================ -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -38,121 +38,120 @@
         </LinearLayout>
 
         <!-- ============================================================ -->
-        <!-- ЭКСПОРТ -->
+        <!-- БЛОК 1: ОБЫЧНЫЙ БЭКАП (JSON) — как раньше -->
         <!-- ============================================================ -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ЭКСПОРТ"
-            android:textSize="12sp"
+            android:text="Обычный бэкап (JSON)"
+            android:textSize="14sp"
             android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="8dp"
+            android:textColor="?android:attr/textColorPrimary"
             android:layout_marginBottom="8dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnExportLocal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="📤 Экспорт локально" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Сохраняет копию данных в папку Download/BAZA/backup"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
+            android:text="📤 Экспорт локальный"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnExportCloud"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="☁️ Экспорт в облако" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Загружает копию данных на Яндекс.Диск в папку BAZA/backup"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="24dp" />
-
-        <!-- ============================================================ -->
-        <!-- ИМПОРТ -->
-        <!-- ============================================================ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ИМПОРТ"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/darker_gray"
+            android:text="☁️ Экспорт в облако"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnImportLocal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="📥 Импорт из локального" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Восстанавливает данные из выбранного файла бэкапа"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
+            android:text="📥 Импорт из локального (JSON)"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="8dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnImportCloud"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="☁️ Импорт из облака" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Восстанавливает данные из последнего бэкапа в облаке"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
+            android:text="☁️ Импорт из облака"
+            android:backgroundTint="#EFEBE6"
+            android:textColor="#424242"
+            app:cornerRadius="12dp"
             android:layout_marginBottom="24dp" />
 
         <!-- ============================================================ -->
-        <!-- ПРЕДУПРЕЖДЕНИЕ -->
+        <!-- РАЗДЕЛИТЕЛЬ -->
         <!-- ============================================================ -->
-        <androidx.cardview.widget.CardView
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?android:attr/listDivider"
+            android:layout_marginBottom="16dp" />
+
+        <!-- ============================================================ -->
+        <!-- 🆕 v21.0.1: БЛОК 2: ПОЛНЫЙ БЭКАП (ZIP с фото) -->
+        <!-- Виден только Алексею.                                     -->
+        <!-- ============================================================ -->
+        <LinearLayout
+            android:id="@+id/llFullBackupBlock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="2dp"
-            app:cardBackgroundColor="#FFF3E0">
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#FFF3E0"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp">
 
-            <LinearLayout
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
+                android:text="⚠️ Полный бэкап (с фото)"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#E65100"
+                android:layout_marginBottom="8dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="⚠️ Внимание"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#E65100" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="ZIP-архив: предметы, папки, задачи, история, настройки и все фотографии. Галерея и логи не включаются. Доступно только Алексею."
+                android:textSize="12sp"
+                android:textColor="#5D4037"
+                android:layout_marginBottom="12dp" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="При импорте все текущие данные будут заменены данными из бэкапа. Это действие нельзя отменить."
-                    android:textSize="13sp"
-                    android:textColor="#424242"
-                    android:layout_marginTop="4dp" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFullBackupExport"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="💾 Полный бэкап (с фото)"
+                android:backgroundTint="#FFB74D"
+                android:textColor="#000000"
+                app:cornerRadius="12dp"
+                android:layout_marginBottom="8dp" />
 
-        <!-- Отступ снизу -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFullBackupImport"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="📥 Восстановить из полного бэкапа"
+                android:backgroundTint="#EF9A9A"
+                android:textColor="#000000"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+
+        <!-- ============================================================ -->
+        <!-- НИЖНИЙ ОТСТУП -->
+        <!-- ============================================================ -->
         <View
             android:layout_width="match_parent"
             android:layout_height="16dp" />
