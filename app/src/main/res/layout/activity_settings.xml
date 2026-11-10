@@ -125,62 +125,6 @@
             android:layout_marginBottom="16dp" />
 
         <!-- ============================================================ -->
-        <!-- 🆕 v21.0.1: «ВНИМАНИЕ» + ПОЛНЫЙ БЭКАП (ТОЛЬКО ДЛЯ АЛЕКСЕЯ) -->
-        <!-- ============================================================ -->
-        <!-- Блок виден всем, но кнопки внутри — только Алексею.        -->
-        <!-- Для Римы/Димы блок целиком скрывается в SettingsActivity   -->
-        <!-- (visibility = GONE на llAdminWarningBlock).                -->
-        <LinearLayout
-            android:id="@+id/llAdminWarningBlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
-            android:visibility="gone"
-            android:background="#FFF3E0"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="⚠️ Внимание"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="#E65100"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Полный бэкап включает ВСЕ предметы, папки, задачи, историю и фотографии. Импорт полностью перезаписывает локальные данные. Доступно только Алексею."
-                android:textSize="13sp"
-                android:textColor="#5D4037"
-                android:layout_marginBottom="12dp" />
-
-            <!-- 🆕 Кнопка 1: Полный бэкап -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFullBackupExport"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="💾 Полный бэкап (с фото)"
-                android:backgroundTint="#FFB74D"
-                android:textColor="#000000"
-                app:cornerRadius="12dp"
-                android:layout_marginBottom="8dp" />
-
-            <!-- 🆕 Кнопка 2: Восстановить из полного бэкапа -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFullBackupImport"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="📥 Восстановить из полного бэкапа"
-                android:backgroundTint="#EF9A9A"
-                android:textColor="#000000"
-                app:cornerRadius="12dp" />
-        </LinearLayout>
-
-        <!-- ============================================================ -->
         <!-- НИЖНИЙ ОТСТУП -->
         <!-- ============================================================ -->
         <View
