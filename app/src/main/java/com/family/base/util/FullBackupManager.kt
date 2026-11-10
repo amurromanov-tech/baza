@@ -1,6 +1,7 @@
 package com.family.base.util
 
 import android.content.Context
+import android.os.Build
 import android.os.Environment
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
@@ -42,12 +43,12 @@ import java.util.zip.ZipOutputStream
  *    получать заново — при импорте будет перелогин).
  * ⚠️ processed_changelogs НЕ включается — это кэш «какие входящие
  *    пакеты уже обработаны». После restore last_modified сбрасывается,
- *    и синк заново подтянет дельту с Диска. Включение кэша может
- *    привести к пропуску чужих изменений на новом устройстве.
- * ⚠️ outbox включается ТОЛЬКО pending (isSynced = 0). Синхронизированные
- *    записи не нужны — они уже на Диске, повторный push создаст дубли.
+ *    и синк заново подтянет дельту с Диска.
+ * ⚠️ outbox включается ТОЛЬКО pending (isSynced = 0).
  *
- * Импорт делает FullBackupRestoreManager (отдельный файл).
+ * 🆕 v21.0.1 (fix Android 11+): hasStoragePermission() и getFullBackupDir()
+ * проверяют Environment.isExternalStorageManager(). На Android 11+
+ * без MANAGE_EXTERNAL_STORAGE кидаем SecurityException.
  */
 class FullBackupManager(private val context: Context) {
 
@@ -56,10 +57,6 @@ class FullBackupManager(private val context: Context) {
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
 
     companion object {
-        /**
-         * Версия формата бэкапа. При изменении схемы БД — поднимать,
-         * а в FullBackupRestoreManager добавлять обработку.
-         */
         const val BACKUP_FORMAT_VERSION = 1
         const val SCHEMA_VERSION = 21   // = AppDatabase version
 
@@ -68,10 +65,37 @@ class FullBackupManager(private val context: Context) {
         const val CHECKSUMS_NAME = "checksums.txt"
         const val IMAGES_DIR = "images"
 
+        /**
+         * 🆕 v21.0.1: проверка MANAGE_EXTERNAL_STORAGE.
+         * На Android 11+ (API 30+) без него нельзя писать в Download/.
+         * На Android 10 и ниже — true (requestLegacyExternalStorage).
+         */
+        fun hasStoragePermission(): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                return try {
+                    Environment.isExternalStorageManager()
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            return true
+        }
+
         fun getFullBackupDir(): File {
+            if (!hasStoragePermission()) {
+                throw SecurityException(
+                    "Нет разрешения на запись в Download/. " +
+                        "Разрешите доступ к файлам в настройках приложения."
+                )
+            }
             val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val backupDir = File(downloadDir, "BAZA/full_backup")
-            if (!backupDir.exists()) backupDir.mkdirs()
+            if (!backupDir.exists() && !backupDir.mkdirs()) {
+                throw SecurityException(
+                    "Не удалось создать папку ${backupDir.absolutePath}. " +
+                        "Проверьте разрешение на запись."
+                )
+            }
             return backupDir
         }
 
@@ -124,16 +148,6 @@ class FullBackupManager(private val context: Context) {
     // ЭКСПОРТ
     // ============================================================
 
-    /**
-     * Создаёт ZIP-архив с БД и фото.
-     *
-     * @param db              база данных.
-     * @param userName        имя пользователя (для manifest, "кто сделал").
-     * @param appVersionName  versionName приложения.
-     * @param appVersionCode  versionCode приложения.
-     * @param onProgress      callback прогресса (0..100) и текста.
-     * @param checkCancel     возвращает true, если пользователь нажал «Отмена».
-     */
     suspend fun exportFullBackup(
         db: AppDatabase,
         userName: String,
@@ -143,16 +157,23 @@ class FullBackupManager(private val context: Context) {
         checkCancel: () -> Boolean = { false }
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
+            // 🆕 v21.0.1: ранняя проверка разрешения — до чтения базы.
+            if (!hasStoragePermission()) {
+                return@withContext ExportResult(
+                    false, null, null,
+                    "Нет разрешения на запись в Download/. Разрешите доступ к файлам."
+                )
+            }
+
             onProgress(0, "Чтение базы…")
 
-            // 1. Снимок БД
             val snapshot = DatabaseSnapshot(
                 items = db.itemDao().getAllItemsRaw(),
                 folders = db.folderDao().getAllFolders(),
                 tasks = db.taskDao().getAllForSync(),
                 history = db.historyDao().getAllEntries(),
                 settings = db.settingsDao().getSettings(),
-                outbox = db.outboxDao().getPending()   // ⚠️ только несинхронизированные
+                outbox = db.outboxDao().getPending()
             )
 
             if (checkCancel()) return@withContext ExportResult(false, null, null, "Отменено пользователем")
@@ -164,9 +185,8 @@ class FullBackupManager(private val context: Context) {
                     "outboxPending=${snapshot.outbox.size}"
             )
 
-            // 2. Подготовить файлы
             val timestamp = dateFormat.format(Date())
-            val backupDir = getFullBackupDir()
+            val backupDir = getFullBackupDir()   // может бросить SecurityException
             val fileName = "baza_full_backup_$timestamp.zip"
             val zipFile = File(backupDir, fileName)
 
@@ -177,12 +197,10 @@ class FullBackupManager(private val context: Context) {
 
             if (checkCancel()) return@withContext ExportResult(false, null, null, "Отменено пользователем")
 
-            // 3. Сериализация JSON
             onProgress(5, "Подготовка JSON…")
             val databaseJson = gson.toJson(snapshot)
             val dbBytes = databaseJson.toByteArray(Charsets.UTF_8)
 
-            // 4. Собираем checksums
             onProgress(10, "Подсчёт контрольных сумм…")
             val checksums = mutableMapOf<String, String>()
             checksums[DATABASE_NAME] = sha256(dbBytes)
@@ -194,25 +212,21 @@ class FullBackupManager(private val context: Context) {
                 checksums["$IMAGES_DIR/${img.name}"] = sha256File(img)
                 processedImages++
                 if (processedImages % 50 == 0) {
-                    val p = 10 + (processedImages.toDouble() / totalImages * 20).toInt()  // 10..30
+                    val p = 10 + (processedImages.toDouble() / totalImages * 20).toInt()
                     onProgress(p.coerceIn(10, 30), "Контрольные суммы фото: $processedImages/$totalImages")
                 }
             }
 
-            // 5. Manifest
             onProgress(32, "Подготовка manifest…")
             val tempZip = File(backupDir, "$fileName.part")
             var manifest: ManifestData? = null
 
-            // 6. Упаковка ZIP
             onProgress(35, "Упаковка архива…")
             ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zip ->
-                // 6.1 database.json
                 zip.putNextEntry(ZipEntry(DATABASE_NAME))
                 zip.write(dbBytes)
                 zip.closeEntry()
 
-                // 6.2 images/*.jpg
                 var written = 0
                 for (img in imageFiles) {
                     if (checkCancel()) {
@@ -227,12 +241,11 @@ class FullBackupManager(private val context: Context) {
                     zip.closeEntry()
                     written++
                     if (written % 25 == 0 || written == totalImages) {
-                        val p = 35 + (written.toDouble() / totalImages * 55).toInt()  // 35..90
+                        val p = 35 + (written.toDouble() / totalImages * 55).toInt()
                         onProgress(p.coerceIn(35, 90), "Упаковка фото: $written/$totalImages")
                     }
                 }
 
-                // 6.3 checksums.txt
                 zip.putNextEntry(ZipEntry(CHECKSUMS_NAME))
                 val checksumsText = buildString {
                     for ((path, hash) in checksums) {
@@ -242,7 +255,6 @@ class FullBackupManager(private val context: Context) {
                 zip.write(checksumsText.toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
 
-                // 6.4 manifest.json (последним, т.к. размер архива до этого неизвестен)
                 onProgress(92, "Запись manifest…")
                 val approximateSize = tempZip.length()
                 manifest = ManifestData(
@@ -265,7 +277,6 @@ class FullBackupManager(private val context: Context) {
                 zip.closeEntry()
             }
 
-            // 7. Переименовать .part → .zip (атомарность)
             if (tempZip.exists()) {
                 if (zipFile.exists()) zipFile.delete()
                 if (!tempZip.renameTo(zipFile)) {
@@ -280,6 +291,9 @@ class FullBackupManager(private val context: Context) {
             Logger.log(TAG, "exportFullBackup: OK → ${zipFile.absolutePath} (${formatFileSize(zipFile.length())})")
 
             return@withContext ExportResult(true, zipFile, manifest, null)
+        } catch (e: SecurityException) {
+            Logger.log(TAG, "exportFullBackup SecurityException: ${e.message}", e)
+            return@withContext ExportResult(false, null, null, e.message ?: "Нет разрешения на запись")
         } catch (e: Exception) {
             Logger.log(TAG, "exportFullBackup error: ${e.message}", e)
             return@withContext ExportResult(false, null, null, e.message ?: "Неизвестная ошибка")
@@ -291,11 +305,16 @@ class FullBackupManager(private val context: Context) {
     // ============================================================
 
     fun getFullBackups(): List<File> {
-        return getFullBackupDir()
-            .listFiles()
-            ?.filter { it.name.startsWith("baza_full_backup_") && it.name.endsWith(".zip") }
-            ?.sortedByDescending { it.lastModified() }
-            ?: emptyList()
+        return try {
+            getFullBackupDir()
+                .listFiles()
+                ?.filter { it.name.startsWith("baza_full_backup_") && it.name.endsWith(".zip") }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+        } catch (e: SecurityException) {
+            Logger.log(TAG, "getFullBackups: ${e.message}")
+            emptyList()
+        }
     }
 
     fun deleteBackup(file: File): Boolean {
