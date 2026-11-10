@@ -7,7 +7,6 @@ import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
-import com.family.base.data.local.entity.ProcessedChangelogEntity
 import com.family.base.data.local.entity.SettingsEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.google.gson.Gson
@@ -31,8 +30,7 @@ import java.util.zip.ZipOutputStream
  *
  * Что внутри архива:
  *   manifest.json     — версия схемы, дата, пользователь, кол-во записей, размер
- *   database.json     — items / folders / tasks / history / settings /
- *                       outbox / processed_changelogs / sync_info
+ *   database.json     — items / folders / tasks / history / settings / outbox (только pending)
  *   images/<id>.jpg   — фото предметов
  *   images/folder_<id>.jpg — иконки папок
  *   checksums.txt     — SHA-256 каждого файла (для валидации при импорте)
@@ -42,6 +40,12 @@ import java.util.zip.ZipOutputStream
  * ⚠️ Кэш НЕ включается.
  * ⚠️ OAuth-токен НЕ включается (после краша его всё равно надо
  *    получать заново — при импорте будет перелогин).
+ * ⚠️ processed_changelogs НЕ включается — это кэш «какие входящие
+ *    пакеты уже обработаны». После restore last_modified сбрасывается,
+ *    и синк заново подтянет дельту с Диска. Включение кэша может
+ *    привести к пропуску чужих изменений на новом устройстве.
+ * ⚠️ outbox включается ТОЛЬКО pending (isSynced = 0). Синхронизированные
+ *    записи не нужны — они уже на Диске, повторный push создаст дубли.
  *
  * Импорт делает FullBackupRestoreManager (отдельный файл).
  */
@@ -51,11 +55,11 @@ class FullBackupManager(private val context: Context) {
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
 
-    /**
-     * Версия формата бэкапа. При изменении схемы БД — поднимать,
-     * а в FullBackupRestoreManager добавлять обработку.
-     */
     companion object {
+        /**
+         * Версия формата бэкапа. При изменении схемы БД — поднимать,
+         * а в FullBackupRestoreManager добавлять обработку.
+         */
         const val BACKUP_FORMAT_VERSION = 1
         const val SCHEMA_VERSION = 21   // = AppDatabase version
 
@@ -106,8 +110,7 @@ class FullBackupManager(private val context: Context) {
         val tasks: List<TaskEntity>,
         val history: List<HistoryEntry>,
         val settings: SettingsEntity?,
-        val outbox: List<OutboxEntity>,
-        val processedChangelogs: List<ProcessedChangelogEntity>
+        val outbox: List<OutboxEntity>   // только pending (isSynced = 0)
     )
 
     data class ExportResult(
@@ -124,10 +127,12 @@ class FullBackupManager(private val context: Context) {
     /**
      * Создаёт ZIP-архив с БД и фото.
      *
-     * @param db       база данных.
-     * @param userName имя пользователя (для manifest, "кто сделал").
-     * @param onProgress callback прогресса (0..100) и текста.
-     * @param checkCancel возвращает true, если пользователь нажал «Отмена».
+     * @param db              база данных.
+     * @param userName        имя пользователя (для manifest, "кто сделал").
+     * @param appVersionName  versionName приложения.
+     * @param appVersionCode  versionCode приложения.
+     * @param onProgress      callback прогресса (0..100) и текста.
+     * @param checkCancel     возвращает true, если пользователь нажал «Отмена».
      */
     suspend fun exportFullBackup(
         db: AppDatabase,
@@ -147,8 +152,7 @@ class FullBackupManager(private val context: Context) {
                 tasks = db.taskDao().getAllForSync(),
                 history = db.historyDao().getAllEntries(),
                 settings = db.settingsDao().getSettings(),
-                outbox = db.outboxDao().getAllForSync(),
-                processedChangelogs = db.processedChangelogDao().getAllForSync()
+                outbox = db.outboxDao().getPending()   // ⚠️ только несинхронизированные
             )
 
             if (checkCancel()) return@withContext ExportResult(false, null, null, "Отменено пользователем")
@@ -157,7 +161,7 @@ class FullBackupManager(private val context: Context) {
                 TAG,
                 "exportFullBackup: snapshot items=${snapshot.items.size}, folders=${snapshot.folders.size}, " +
                     "tasks=${snapshot.tasks.size}, history=${snapshot.history.size}, " +
-                    "outbox=${snapshot.outbox.size}, processed=${snapshot.processedChangelogs.size}"
+                    "outboxPending=${snapshot.outbox.size}"
             )
 
             // 2. Подготовить файлы
