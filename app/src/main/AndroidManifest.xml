@@ -15,6 +15,14 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 🆕 v21.0.1: полный бэкап (ZIP с фото) в Download/BAZA/full_backup/.
+         На Android 11+ (API 30+) без этого разрешения запись в общий Download/
+         невозможна. Запрашивается в рантайме через
+         Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION.
+         Только для админа (Алексей) — см. BackupActivity.ensureStoragePermission(). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <!-- Восстановление напоминаний после перезагрузки -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
