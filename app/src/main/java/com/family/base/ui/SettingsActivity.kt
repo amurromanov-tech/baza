@@ -2,14 +2,28 @@ package com.family.base.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.family.base.AppUser
 import com.family.base.BaseApplication
 import com.family.base.data.TokenStorage
 import com.family.base.databinding.ActivitySettingsBinding
 import com.family.base.ui.viewmodel.MainViewModel
 import com.family.base.util.Logger
 
+/**
+ * 🆕 v21.0.1: блок «⚠️ Внимание» с кнопками полного бэкапа
+ *  виден ТОЛЬКО Алексею (AppUser.canDelete == true).
+ *
+ *  Для Римы и Димы блок целиком скрывается (visibility = GONE).
+ *  Это страховка на уровне UI: даже если они как-то узнают
+ *  про кнопки, нажать не смогут. Плюс в FullBackupManager есть
+ *  защита на уровне кода (проверка имени пользователя).
+ *
+ *  Логика простая: currentUser == "Алексей" → показать, иначе → скрыть.
+ *  Используем AppUser.canDelete(currentUser) как единый источник правды.
+ */
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
@@ -40,9 +54,22 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         observeSyncResult()
+        applyUserPermissions()
         setupListeners()
 
         Logger.log(TAG, "=== SettingsActivity onCreate FINISHED ===")
+    }
+
+    /**
+     * 🆕 v21.0.1: скрывает блок «⚠️ Внимание» с кнопками полного бэкапа
+     * для всех, кроме Алексея. Это UI-страховка; код-страховка
+     * дополнительно проверяет AppUser.canDelete перед выполнением.
+     */
+    private fun applyUserPermissions() {
+        val currentUser = tokenStorage.getCurrentUser()
+        val isAdmin = AppUser.canDelete(currentUser)
+        binding.llAdminWarningBlock.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        Logger.log(TAG, "Admin block visible=$isAdmin (user=$currentUser)")
     }
 
     private fun observeSyncResult() {
@@ -93,6 +120,39 @@ class SettingsActivity : AppCompatActivity() {
             Logger.log(TAG, "About clicked")
             startActivity(Intent(this, AboutActivity::class.java))
         }
+
+        // 🆕 v21.0.1: полный бэкап (только для Алексея).
+        // Дополнительно проверяем права — на случай, если кто-то
+        // через Accessibility/ADB попробует нажать скрытую кнопку.
+        binding.btnFullBackupExport.setOnClickListener {
+            Logger.log(TAG, "Full backup export clicked")
+            if (!isAdminNow()) {
+                Toast.makeText(this, "Только Алексей может делать полный бэкап", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            startActivity(Intent(this, BackupActivity::class.java).apply {
+                putExtra(BackupActivity.EXTRA_MODE, BackupActivity.MODE_FULL_EXPORT)
+            })
+        }
+
+        binding.btnFullBackupImport.setOnClickListener {
+            Logger.log(TAG, "Full backup import clicked")
+            if (!isAdminNow()) {
+                Toast.makeText(this, "Только Алексей может восстанавливать из бэкапа", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            startActivity(Intent(this, BackupActivity::class.java).apply {
+                putExtra(BackupActivity.EXTRA_MODE, BackupActivity.MODE_FULL_IMPORT)
+            })
+        }
+    }
+
+    /**
+     * 🆕 v21.0.1: повторная проверка прав в момент клика
+     * (защита от смены пользователя без пересоздания Activity).
+     */
+    private fun isAdminNow(): Boolean {
+        return AppUser.canDelete(tokenStorage.getCurrentUser())
     }
 
     private fun shareFolderLink() {
