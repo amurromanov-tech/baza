@@ -139,6 +139,13 @@
             android:screenOrientation="portrait"
             tools:ignore="DiscouragedApi,LockedOrientationActivity" />
 
+        <!-- 🆕 v21.0.8: ZXing-сканер QR/DataMatrix/PDF417 (Честный ЗНАК) -->
+        <activity
+            android:name=".ui.QrScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
+
         <!-- ============================================================ -->
         <!-- ЭКРАНЫ ДОБАВЛЕНИЯ И РЕДАКТИРОВАНИЯ -->
         <!-- ============================================================ -->
