@@ -35,6 +35,9 @@ import com.family.base.util.ItemHistoryHelper
 import com.family.base.util.Logger
 import com.family.base.util.VoiceInputHelper
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -157,29 +160,68 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     /**
-     * 🆕 v21.0.8: launcher для ZXing-сканера QR/DataMatrix/PDF417.
-     * Запускает QrScannerActivity и сразу шлёт код в Честный Знак.
+     * 🆕 v21.0.10: Google Code Scanner (PDF417/DataMatrix/QR).
+     * Системный сканер Play Services, умеет авто-зум.
+     * Заменяет QrScannerActivity (ZXing) по кнопке «Сканер QR/DataMatrix».
+     *
+     * Важно: при локальной установке (не из Play Store) первый вызов может
+     * выдать CODE_SCANNER_UNAVAILABLE — модуль сканера докачивается
+     * Play Services при первом использовании. В этом случае просим
+     * повторить через несколько секунд.
      */
-    private val qrScannerLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val scannedValue = result.data?.getStringExtra("barcode")
-            if (!scannedValue.isNullOrEmpty()) {
-                Logger.log(TAG, "Scanned value (qr mode): $scannedValue")
+    private fun startGoogleCodeScanner() {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(
+                Barcode.FORMAT_PDF417,
+                Barcode.FORMAT_DATA_MATRIX,
+                Barcode.FORMAT_QR_CODE,
+                Barcode.FORMAT_AZTEC
+            )
+            .enableAutoZoom()
+            .build()
 
-                // Переключаемся в авто-режим, чтобы было видно результат
-                binding.modeSelection.visibility = View.GONE
-                binding.autoModeLayout.visibility = View.VISIBLE
-                binding.manualModeLayout.visibility = View.GONE
+        val scanner = GmsBarcodeScanning.getClient(this, options)
 
-                barcode = scannedValue
-                binding.etAutoBarcode.setText(scannedValue)
+        scanner.startScan()
+            .addOnSuccessListener { barcodeResult ->
+                val rawValue = barcodeResult.rawValue
+                if (!rawValue.isNullOrEmpty()) {
+                    Logger.log(TAG, "GoogleCodeScanner: format=${barcodeResult.format}, raw=$rawValue")
 
-                // В QR-режиме всегда идём в Честный Знак
-                lookupChestnyZnak(scannedValue)
+                    // Переключаемся в авто-режим, чтобы было видно результат
+                    binding.modeSelection.visibility = View.GONE
+                    binding.autoModeLayout.visibility = View.VISIBLE
+                    binding.manualModeLayout.visibility = View.GONE
+
+                    barcode = rawValue
+                    binding.etAutoBarcode.setText(rawValue)
+
+                    // В QR-режиме всегда идём в Честный Знак
+                    lookupChestnyZnak(rawValue)
+                } else {
+                    Toast.makeText(this, "Код не распознан", Toast.LENGTH_SHORT).show()
+                }
             }
-        }
+            .addOnCanceledListener {
+                Logger.log(TAG, "GoogleCodeScanner: cancelled by user")
+            }
+            .addOnFailureListener { e ->
+                Logger.log(TAG, "GoogleCodeScanner error: ${e.message}", e)
+                val msg = e.message ?: ""
+                if (msg.contains("CODE_SCANNER_UNAVAILABLE", ignoreCase = true)) {
+                    Toast.makeText(
+                        this,
+                        "Сканер Google ещё не готов. Подождите 5–10 секунд и попробуйте снова.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Ошибка сканера: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
     }
 
     /**
@@ -683,10 +725,10 @@ class AddItemActivity : AppCompatActivity() {
             binding.manualModeLayout.visibility = View.GONE
         }
 
-        // 🆕 v21.0.8: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
-        // запускает ZXing-сканер QrScannerActivity.
+        // 🆕 v21.0.10: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
+        // запускает Google Code Scanner (системный сканер Play Services).
         binding.btnQrMode.setOnClickListener {
-            qrScannerLauncher.launch(Intent(this, QrScannerActivity::class.java))
+            startGoogleCodeScanner()
         }
 
         binding.btnCancel.setOnClickListener { finish() }
