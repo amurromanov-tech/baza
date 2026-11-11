@@ -43,6 +43,13 @@ import java.util.Locale
  *  - pending-new-photo (выбрано новое фото, но ещё не сохранено);
  *  - permission на камеру.
  *
+ * 🆕 v21.0.3 (фикс): если фото выбрано/снято ВНЕ режима редактирования
+ * (через долгое нажатие на фото/иконку → меню действий), оно сохраняется
+ * СРАЗУ: файл на диск + imageUrl + imageSynced=false в БД. Раньше байты
+ * лежали в newImageBytes и терялись при выходе из карточки — «Сохранить»
+ * в этом сценарии нет. В режиме редактирования поведение прежнее:
+ * ждём кнопку «Сохранить» (savePendingPhoto + editController.saveChanges).
+ *
  * НЕ управляет режимами view/edit — этим занимается ItemViewController.
  * НЕ сохраняет сам предмет — этим занимается ItemEditController.
  */
@@ -100,7 +107,14 @@ class ItemPhotoController(
             binding.photoOverlay.visibility = View.VISIBLE
             binding.btnAddPhoto.visibility = View.GONE
             onPhotoChanged()
-            Toast.makeText(activity, "Фото выбрано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
+
+            // 🆕 v21.0.3: вне режима редактирования — сохраняем сразу,
+            // иначе байты потеряются при выходе (кнопки «Сохранить» тут нет).
+            if (!isEditModeProvider()) {
+                persistPhotoImmediately(processedBytes)
+            } else {
+                Toast.makeText(activity, "Фото выбрано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
+            }
         } catch (e: Exception) {
             Logger.log(TAG, "Error picking image", e)
             Toast.makeText(activity, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
@@ -126,10 +140,72 @@ class ItemPhotoController(
             binding.photoOverlay.visibility = View.VISIBLE
             binding.btnAddPhoto.visibility = View.GONE
             onPhotoChanged()
-            Toast.makeText(activity, "Фото сделано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
+
+            // 🆕 v21.0.3: вне режима редактирования — сохраняем сразу.
+            if (!isEditModeProvider()) {
+                persistPhotoImmediately(processedBytes)
+            } else {
+                Toast.makeText(activity, "Фото сделано. Не забудь сохранить.", Toast.LENGTH_SHORT).show()
+            }
         } catch (e: Exception) {
             Logger.log(TAG, "Error processing camera photo", e)
             Toast.makeText(activity, "Ошибка обработки фото", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 🆕 v21.0.3: немедленное сохранение фото вне режима редактирования.
+     *
+     * 1) пишет файл filesDir/images/<id>.jpg;
+     * 2) обновляет БД: imageUrl = "images/<id>.jpg", imageSynced = false,
+     *    updatedDate/updatedBy;
+     * 3) обновляет currentItem через onCurrentItemChanged;
+     * 4) сбрасывает pending-байты;
+     * 5) показывает Toast.
+     *
+     * imageSynced = false — чтобы uploadUnsyncedImages при следующем синке
+     * залил фото на Диск (флаг ставится только в репозитории после успеха).
+     */
+    private fun persistPhotoImmediately(bytes: ByteArray) {
+        val id = itemIdProvider()
+        if (id == null) {
+            Logger.log(TAG, "persistPhotoImmediately: itemId is null")
+            return
+        }
+        val item = currentItemProvider()
+        if (item == null) {
+            Logger.log(TAG, "persistPhotoImmediately: currentItem is null for $id")
+            return
+        }
+
+        activity.lifecycleScope.launch {
+            try {
+                // 1) файл на диск
+                withContext(Dispatchers.IO) {
+                    ImageUtils.saveImageLocally(activity.applicationContext, id, bytes)
+                }
+
+                // 2) БД
+                val updated = item.copy(
+                    imageUrl = "images/$id.jpg",
+                    imageSynced = false,
+                    updatedDate = System.currentTimeMillis(),
+                    updatedBy = "user"
+                )
+                viewModel.updateItemFull(updated)
+
+                // 3) локальный currentItem
+                onCurrentItemChanged(updated)
+
+                // 4) сбросить pending — фото уже сохранено
+                newImageBytes = null
+
+                Logger.log(TAG, "persistPhotoImmediately: photo saved for $id (${bytes.size} bytes, imageSynced=false)")
+                Toast.makeText(activity, "Фото сохранено", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Logger.log(TAG, "persistPhotoImmediately error for $id: ${e.message}", e)
+                Toast.makeText(activity, "Ошибка сохранения фото: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
