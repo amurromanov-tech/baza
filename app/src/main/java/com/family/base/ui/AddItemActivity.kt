@@ -58,6 +58,10 @@ class AddItemActivity : AppCompatActivity() {
 
     private val TAG = "AddItemActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    // 🆕 v21.0.17: парсер ISO 8601 из Честного Знака (expDate)
+    private val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
     private val CAMERA_PERMISSION_REQUEST = 100
 
     private var parentFolderId: String? = null
@@ -162,9 +166,6 @@ class AddItemActivity : AppCompatActivity() {
     /**
      * 🆕 v21.0.10: Google Code Scanner (PDF417/DataMatrix/QR).
      * Системный сканер Play Services, умеет авто-зум.
-     *
-     * 🆕 v21.0.12: для PDF417 передаём codeType = "qr" — публичный endpoint
-     * Честного Знака ожидает его для не-DataMatrix кодов.
      */
     private fun startGoogleCodeScanner() {
         val options = GmsBarcodeScannerOptions.Builder()
@@ -335,13 +336,8 @@ class AddItemActivity : AppCompatActivity() {
      * Пытается получить информацию о товаре через публичный endpoint
      * Честного Знака (mobile.api.crpt.ru/mobile/check).
      *
-     * 🆕 v21.0.12: codeType теперь передаётся снаружи:
-     *  - PDF417/QR → "qr"
-     *  - DataMatrix → "datamatrix"
-     * Внутри ChestnyZnakService при неудаче перебираются все варианты.
-     *
-     * Если товар найден — заполняем название, описание, тип/подтип.
-     * Если нет — молча откатываемся на lookupProduct() (старая цепочка).
+     * 🆕 v21.0.17: если сервер вернул expDate (срок годности) — конвертируем
+     * ISO 8601 в Long и заполняем поле «Срок годности» в авто-режиме.
      */
     private fun lookupChestnyZnak(code: String, codeType: String = "datamatrix") {
         Logger.log(TAG, "ChestnyZnak lookup: code=$code, type=$codeType")
@@ -365,6 +361,25 @@ class AddItemActivity : AppCompatActivity() {
                         }
                     }.trim()
                     binding.etAutoDescription.setText(descriptionText)
+
+                    // 🆕 v21.0.17: срок годности из Честного Знака
+                    if (!product.expiryDate.isNullOrBlank()) {
+                        try {
+                            val parsed = isoDateFormat.parse(product.expiryDate)
+                            if (parsed != null) {
+                                val expiryLong = parsed.time
+                                expiryDate = expiryLong
+                                val formatted = dateFormat.format(parsed)
+                                binding.etAutoExpiry.setText(formatted)
+                                Logger.log(
+                                    TAG,
+                                    "ChestnyZnak expiryDate: ${product.expiryDate} → $formatted ($expiryLong)"
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "ChestnyZnak: cannot parse expDate '${product.expiryDate}': ${e.message}")
+                        }
+                    }
 
                     // Маппинг категории Честного Знака → тип/подтип БАЗЫ
                     autoSelectTypeFromChestnyZnak(product.category, displayName)
@@ -402,10 +417,6 @@ class AddItemActivity : AppCompatActivity() {
 
     /**
      * 🆕 v21.0.6: маппинг категории Честного Знака → itemType/itemSubtype БАЗЫ.
-     *
-     * Категории ЧЗ (из ответа): "milk", "water", "medicine", "shoes",
-     * "tobacco", "perfume", "tires", "clothes", "bike", "photo", "wheelchair",
-     * "antiseptic", "bio" (БАД) и т.д.
      */
     private fun autoSelectTypeFromChestnyZnak(category: String?, productName: String?) {
         val cat = category?.lowercase(Locale.getDefault()) ?: ""
@@ -465,13 +476,6 @@ class AddItemActivity : AppCompatActivity() {
     // 🆕 C: АВТОКОМПЛИТ НАЗВАНИЯ ИЗ ИСТОРИИ
     // ============================================================
 
-    /**
-     * Настраивает autocomplete на etManualName:
-     *  - адаптер подсказок — ItemSuggestionAdapter (Filterable, ищет в БД);
-     *  - debounce 250 мс, чтобы не дёргать БД на каждый символ;
-     *  - по клику на подсказку — ставим в поле ТОЛЬКО item.name
-     *    (не toString() объекта!) и подставляем поля из шаблона.
-     */
     private fun setupNameAutocomplete() {
         val autoComplete = binding.etManualName as MaterialAutoCompleteTextView
 
@@ -484,10 +488,6 @@ class AddItemActivity : AppCompatActivity() {
         suggestionAdapter = adapter
         autoComplete.setAdapter(adapter)
 
-        // 🆕 v20.6.4: клик по подсказке — ставим в поле только name,
-        // скрываем dropdown, убираем фокус с клавиатуры и подставляем поля.
-        // Без этого MaterialAutoCompleteTextView сам вызывает toString()
-        // у ItemEntity и вставляет всю простыню полей data-класса.
         autoComplete.setOnItemClickListener { parent, _, position, _ ->
             searchJob?.cancel()
 
@@ -497,7 +497,6 @@ class AddItemActivity : AppCompatActivity() {
                 return@setOnItemClickListener
             }
 
-            // Только название — никакого toString()
             autoComplete.setText(picked.name, false)
             autoComplete.setSelection(autoComplete.text?.length ?: 0)
             autoComplete.dismissDropDown()
@@ -513,15 +512,12 @@ class AddItemActivity : AppCompatActivity() {
             applyTemplateFromHistory(picked)
         }
 
-        // debounce: при вводе текста — через 250 мс запрашиваем подсказки
         autoComplete.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 searchJob?.cancel()
                 val query = s?.toString()?.trim().orEmpty()
 
-                // Если пользователь стёр текст или изменил его — сбрасываем
-                // выбранный шаблон (чтобы при сохранении не применить старый).
                 if (selectedTemplate != null && selectedTemplate?.name != query) {
                     selectedTemplate = null
                 }
@@ -549,25 +545,10 @@ class AddItemActivity : AppCompatActivity() {
         })
     }
 
-    /**
-     * 🆕 C: подстановка полей из выбранного шаблона.
-     * Правила (утверждены):
-     *  - itemType, itemSubtype — да (радио-кнопки и подтип переключаются);
-     *  - description — да (если у пользователя пусто);
-     *  - barcode — да (если у шаблона есть и у пользователя пусто);
-     *  - imageUrl — да (показываем превью, если у пользователя нет фото);
-     *  - expiryDate, manufacturedDate — НЕ подставляем;
-     *  - price — НЕ подставляем.
-     *
-     * 🆕 v20.6.6: фото грузится каскадом, и при успехе байты кладутся
-     * в imageBytes, чтобы новый ItemEntity получил свою копию файла
-     * (Вариант A: копирование фото в новый предмет).
-     */
     private fun applyTemplateFromHistory(template: ItemEntity) {
         selectedTemplate = template
         Logger.log(TAG, "applyTemplateFromHistory: '${template.name}' (id=${template.id})")
 
-        // Тип
         val type = template.itemType ?: "thing"
         currentManualType = type
         when (type) {
@@ -579,7 +560,6 @@ class AddItemActivity : AppCompatActivity() {
         selectedManualSubtype = null
         updateSubtypesForManual(type)
 
-        // Подтип — выбираем по key (если есть)
         template.itemSubtype?.let { subtypeKey ->
             val subtypes = SubtypeCatalog.getSubtypes(type)
             val idx = subtypes.indexOfFirst { it.key == subtypeKey }
@@ -590,22 +570,18 @@ class AddItemActivity : AppCompatActivity() {
             }
         }
 
-        // Описание — только если пусто
         if (binding.etManualDescription.text.isNullOrBlank() && !template.description.isNullOrBlank()) {
             binding.etManualDescription.setText(template.description)
         }
 
-        // Штрих-код — только если у пользователя пусто
         if (barcode.isNullOrBlank() && !template.barcode.isNullOrBlank()) {
             barcode = template.barcode
         }
 
-        // Фото — только если у пользователя нет фото
         if (imageBytes == null && !template.imageUrl.isNullOrBlank()) {
             loadTemplatePhoto(template)
         }
 
-        // Гасим фокус с поля названия, чтобы dropdown не переоткрылся
         binding.etManualName.clearFocus()
         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(binding.etManualName.windowToken, 0)
@@ -617,17 +593,9 @@ class AddItemActivity : AppCompatActivity() {
         ).show()
     }
 
-    /**
-     * 🆕 v20.6.6: каскадная загрузка фото шаблона.
-     *  1. Локальный файл (filesDir/images/...) → Coil + читаем байты в imageBytes.
-     *  2. Иначе — скачать с Яндекс.Диска по itemId через MainViewModel,
-     *     сохранить локально, показать, положить байты в imageBytes.
-     *  3. Иначе — ничего не показываем (лог).
-     */
     private fun loadTemplatePhoto(template: ItemEntity) {
         lifecycleScope.launch {
             try {
-                // 1. Локальный файл
                 val localFile = withContext(Dispatchers.IO) {
                     ImageUtils.getLocalImageFileByUrl(this@AddItemActivity, template.imageUrl)
                 }
@@ -649,7 +617,6 @@ class AddItemActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // 2. Скачать с Диска
                 Logger.log(
                     TAG,
                     "loadTemplatePhoto: локального файла нет для '${template.imageUrl}', " +
@@ -666,11 +633,8 @@ class AddItemActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Кладём байты в imageBytes — при сохранении у нового предмета
-                // будет своя копия фото (Вариант A).
                 imageBytes = bytes
 
-                // Сохраняем локально (кэш для следующих показов)
                 val savedFile = withContext(Dispatchers.IO) {
                     try {
                         ImageUtils.saveImageLocally(this@AddItemActivity, template.id, bytes)
@@ -694,10 +658,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.6.5: показать фото из файла через Coil.
-     * Coil 2.x: data(File) — поддерживается.
-     */
     private fun showPhotoFromFile(file: File) {
         try {
             binding.ivManualPhoto.visibility = View.VISIBLE
@@ -726,7 +686,6 @@ class AddItemActivity : AppCompatActivity() {
         }
 
         // 🆕 v21.0.10: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
-        // запускает Google Code Scanner (системный сканер Play Services).
         binding.btnQrMode.setOnClickListener {
             startGoogleCodeScanner()
         }
@@ -747,7 +706,6 @@ class AddItemActivity : AppCompatActivity() {
             barcodeScannerLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
         }
 
-        // 🆕 v20.2.0: голосовой ввод для названия/описания
         binding.tilAutoName.setEndIconOnClickListener {
             startVoiceFor(binding.etAutoName)
         }
@@ -784,9 +742,6 @@ class AddItemActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.2.0: запуск голосового ввода для конкретного поля.
-     */
     private fun startVoiceFor(field: EditText) {
         pendingVoiceField = field
         VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
@@ -1122,7 +1077,6 @@ class AddItemActivity : AppCompatActivity() {
         val itemType = if (isAutoMode) currentAutoType else currentManualType
         val itemSubtype = if (isAutoMode) selectedAutoSubtype else selectedManualSubtype
 
-        // Сброс ошибок перед проверкой
         binding.tilAutoSubtype.error = null
         binding.tilManualSubtype.error = null
         binding.tilAutoQuantity.error = null
