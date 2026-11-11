@@ -9,8 +9,6 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
-        // 🆕 v21.0.8: JitPack нужен для code-scanner (ZXing) и PhotoView.
-        maven { url = uri("https://jitpack.io") }
     }
 }
 
@@ -19,8 +17,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // 🆕 v21.0.8: JitPack для com.github.yuriy-budiyev:code-scanner:2.3.2
-        // (и уже существующего com.github.chrisbanes:PhotoView).
+        // JitPack нужен для com.github.chrisbanes:PhotoView
         maven { url = uri("https://jitpack.io") }
     }
 }
