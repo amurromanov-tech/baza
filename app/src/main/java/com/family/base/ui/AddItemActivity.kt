@@ -153,7 +153,7 @@ class AddItemActivity : AppCompatActivity() {
                     // пробуем Честный Знак. Если не найден — старое поведение.
                     barcode = scannedValue
                     binding.etAutoBarcode.setText(scannedValue)
-                    lookupChestnyZnak(scannedValue)
+                    lookupChestnyZnak(scannedValue, "datamatrix")
                 }
             }
         }
@@ -162,12 +162,9 @@ class AddItemActivity : AppCompatActivity() {
     /**
      * 🆕 v21.0.10: Google Code Scanner (PDF417/DataMatrix/QR).
      * Системный сканер Play Services, умеет авто-зум.
-     * Заменяет QrScannerActivity (ZXing) по кнопке «Сканер QR/DataMatrix».
      *
-     * Важно: при локальной установке (не из Play Store) первый вызов может
-     * выдать CODE_SCANNER_UNAVAILABLE — модуль сканера докачивается
-     * Play Services при первом использовании. В этом случае просим
-     * повторить через несколько секунд.
+     * 🆕 v21.0.12: для PDF417 передаём codeType = "qr" — публичный endpoint
+     * Честного Знака ожидает его для не-DataMatrix кодов.
      */
     private fun startGoogleCodeScanner() {
         val options = GmsBarcodeScannerOptions.Builder()
@@ -196,8 +193,16 @@ class AddItemActivity : AppCompatActivity() {
                     barcode = rawValue
                     binding.etAutoBarcode.setText(rawValue)
 
+                    // 🆕 v21.0.12: определяем codeType по формату
+                    val codeType = when (barcodeResult.format) {
+                        Barcode.FORMAT_PDF417 -> "qr"
+                        Barcode.FORMAT_QR_CODE -> "qr"
+                        Barcode.FORMAT_DATA_MATRIX -> "datamatrix"
+                        else -> "datamatrix"
+                    }
+
                     // В QR-режиме всегда идём в Честный Знак
-                    lookupChestnyZnak(rawValue)
+                    lookupChestnyZnak(rawValue, codeType)
                 } else {
                     Toast.makeText(this, "Код не распознан", Toast.LENGTH_SHORT).show()
                 }
@@ -317,7 +322,7 @@ class AddItemActivity : AppCompatActivity() {
                 lookupProduct(code)
             } else {
                 // 🆕 v21.0.6: DataMatrix/QR — сначала Честный Знак
-                lookupChestnyZnak(code)
+                lookupChestnyZnak(code, "datamatrix")
             }
         }
     }
@@ -330,20 +335,15 @@ class AddItemActivity : AppCompatActivity() {
      * Пытается получить информацию о товаре через публичный endpoint
      * Честного Знака (mobile.api.crpt.ru/mobile/check).
      *
-     * Если товар найден — заполняем название, описание, тип/подтип.
-     * Если нет (не маркированный товар, ошибка сети, endpoint изменился) —
-     * молча откатываемся на lookupProduct() (старая цепочка из 10 баз).
+     * 🆕 v21.0.12: codeType теперь передаётся снаружи:
+     *  - PDF417/QR → "qr"
+     *  - DataMatrix → "datamatrix"
+     * Внутри ChestnyZnakService при неудаче перебираются все варианты.
      *
-     * codeType определяем по формату:
-     *  - содержит "\\u001d" (GS1 FNC1) или длинный (>50) — "datamatrix"
-     *  - начинается с "http" или содержит "://" — "qr"
-     *  - иначе "datamatrix" (безопасный дефолт для маркировки)
+     * Если товар найден — заполняем название, описание, тип/подтип.
+     * Если нет — молча откатываемся на lookupProduct() (старая цепочка).
      */
-    private fun lookupChestnyZnak(code: String) {
-        val codeType = when {
-            code.startsWith("http", ignoreCase = true) || code.contains("://") -> "qr"
-            else -> "datamatrix"
-        }
+    private fun lookupChestnyZnak(code: String, codeType: String = "datamatrix") {
         Logger.log(TAG, "ChestnyZnak lookup: code=$code, type=$codeType")
 
         lifecycleScope.launch {
