@@ -62,6 +62,15 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 
+        <!-- 🆕 v21.0.10: предзагрузка модуля Google Code Scanner.
+             Play Services скачает barcode_ui при установке из Play Store
+             (при локальной установке — при первом использовании).
+             Если при первом запуске будет CODE_SCANNER_UNAVAILABLE —
+             просто подождать несколько секунд и повторить. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
