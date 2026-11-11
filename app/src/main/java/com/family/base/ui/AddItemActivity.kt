@@ -24,6 +24,7 @@ import com.family.base.R
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.model.SubtypeCatalog
+import com.family.base.data.remote.ChestnyZnakService
 import com.family.base.data.remote.ProductLookupService
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.databinding.ActivityAddItemBinding
@@ -48,6 +49,9 @@ class AddItemActivity : AppCompatActivity() {
     private lateinit var repository: CatalogRepository
     private lateinit var viewModel: MainViewModel
     private val productLookupService = ProductLookupService()
+
+    // 🆕 v21.0.6: клиент Честного Знака (публичный, без токена)
+    private val chestnyZnakService = ChestnyZnakService()
 
     private val TAG = "AddItemActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
@@ -142,8 +146,11 @@ class AddItemActivity : AppCompatActivity() {
                     binding.etAutoBarcode.setText(scannedValue)
                     lookupProduct(scannedValue)
                 } else {
-                    binding.etAutoName.setText(scannedValue)
-                    Toast.makeText(this, "QR-код распознан: $scannedValue", Toast.LENGTH_LONG).show()
+                    // 🆕 v21.0.6: нецифровой код (DataMatrix/QR) — сначала
+                    // пробуем Честный Знак. Если не найден — старое поведение.
+                    barcode = scannedValue
+                    binding.etAutoBarcode.setText(scannedValue)
+                    lookupChestnyZnak(scannedValue)
                 }
             }
         }
@@ -241,8 +248,147 @@ class AddItemActivity : AppCompatActivity() {
             if (code.all { it.isDigit() }) {
                 lookupProduct(code)
             } else {
-                binding.etAutoName.setText(code)
-                Toast.makeText(this, "QR-код распознан: $code", Toast.LENGTH_LONG).show()
+                // 🆕 v21.0.6: DataMatrix/QR — сначала Честный Знак
+                lookupChestnyZnak(code)
+            }
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.0.6: ЧЕСТНЫЙ ЗНАК (ПУБЛИЧНЫЙ ENDPOINT, БЕЗ ТОКЕНА)
+    // ============================================================
+
+    /**
+     * Пытается получить информацию о товаре через публичный endpoint
+     * Честного Знака (mobile.api.crpt.ru/mobile/check).
+     *
+     * Если товар найден — заполняем название, описание, тип/подтип.
+     * Если нет (не маркированный товар, ошибка сети, endpoint изменился) —
+     * молча откатываемся на lookupProduct() (старая цепочка из 10 баз).
+     *
+     * codeType определяем по формату:
+     *  - содержит "\\u001d" (GS1 FNC1) или длинный (>50) — "datamatrix"
+     *  - начинается с "http" или содержит "://" — "qr"
+     *  - иначе "datamatrix" (безопасный дефолт для маркировки)
+     */
+    private fun lookupChestnyZnak(code: String) {
+        val codeType = when {
+            code.startsWith("http", ignoreCase = true) || code.contains("://") -> "qr"
+            else -> "datamatrix"
+        }
+        Logger.log(TAG, "ChestnyZnak lookup: code=$code, type=$codeType")
+
+        lifecycleScope.launch {
+            try {
+                val product = chestnyZnakService.lookupProduct(code, codeType)
+                if (product != null && !product.name.isNullOrBlank()) {
+                    val displayName = product.name
+                    binding.etAutoName.setText(displayName)
+
+                    val descriptionText = buildString {
+                        if (!product.brand.isNullOrEmpty() && product.brand != displayName) {
+                            append("Производитель: ${product.brand}\n")
+                        }
+                        if (!product.category.isNullOrEmpty()) {
+                            append("Категория: ${product.category}\n")
+                        }
+                        if (!product.description.isNullOrEmpty()) {
+                            append("\n${product.description}")
+                        }
+                    }.trim()
+                    binding.etAutoDescription.setText(descriptionText)
+
+                    // Маппинг категории Честного Знака → тип/подтип БАЗЫ
+                    autoSelectTypeFromChestnyZnak(product.category, displayName)
+
+                    Toast.makeText(
+                        this@AddItemActivity,
+                        "Честный ЗНАК: $displayName",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    Logger.log(TAG, "ChestnyZnak found: $displayName (category=${product.category})")
+                } else {
+                    Logger.log(TAG, "ChestnyZnak: not found for $code, fallback to ProductLookupService")
+                    // Fallback: старое поведение
+                    if (code.all { it.isDigit() }) {
+                        lookupProduct(code)
+                    } else {
+                        // Нецифровой код и Честный Знак не нашёл — просто
+                        // оставляем код в поле штрихкода, пользователь заполнит вручную
+                        Toast.makeText(
+                            this@AddItemActivity,
+                            "Код не найден в Честном ЗНАКе. Заполните название вручную.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "ChestnyZnak error: ${e.message}", e)
+                // При любой ошибке — fallback
+                if (code.all { it.isDigit() }) {
+                    lookupProduct(code)
+                }
+            }
+        }
+    }
+
+    /**
+     * 🆕 v21.0.6: маппинг категории Честного Знака → itemType/itemSubtype БАЗЫ.
+     *
+     * Категории ЧЗ (из ответа): "milk", "water", "medicine", "shoes",
+     * "tobacco", "perfume", "tires", "clothes", "bike", "photo", "wheelchair",
+     * "antiseptic", "bio" (БАД) и т.д.
+     */
+    private fun autoSelectTypeFromChestnyZnak(category: String?, productName: String?) {
+        val cat = category?.lowercase(Locale.getDefault()) ?: ""
+        val name = productName?.lowercase(Locale.getDefault()) ?: ""
+
+        val (type, subtypeKey) = when {
+            // Еда
+            cat.contains("milk") || cat.contains("dairy") -> "food" to "dairy"
+            cat.contains("water") -> "food" to "water"
+            cat.contains("food") || cat.contains("grocery") -> "food" to null
+            cat.contains("bio") || cat.contains("bad") || cat.contains("supplement") -> "medicine" to "vitamins"
+
+            // Лекарства
+            cat.contains("medicine") || cat.contains("pharma") || cat.contains("drug") -> "medicine" to "medicines"
+
+            // Одежда/обувь
+            cat.contains("shoes") -> "thing" to "shoes"
+            cat.contains("clothes") || cat.contains("apparel") -> "thing" to "clothes"
+            cat.contains("perfume") -> "thing" to "perfume"
+            cat.contains("tires") -> "thing" to "auto"
+            cat.contains("bike") -> "thing" to "sport"
+            cat.contains("photo") -> "thing" to "electronics"
+            cat.contains("tobacco") -> "other" to null
+
+            // Fallback по названию
+            name.contains("молок") || name.contains("кефир") || name.contains("сыр") -> "food" to "dairy"
+            name.contains("вода") -> "food" to "water"
+            name.contains("таблет") || name.contains("капсул") -> "medicine" to "medicines"
+
+            else -> "thing" to null
+        }
+
+        Logger.log(TAG, "ChestnyZnak type mapping: category=$category → type=$type, subtype=$subtypeKey")
+
+        currentAutoType = type
+        when (type) {
+            "food" -> binding.rgAutoType.check(R.id.rbAutoFood)
+            "medicine" -> binding.rgAutoType.check(R.id.rbAutoMedicine)
+            "thing" -> binding.rgAutoType.check(R.id.rbAutoThing)
+            else -> binding.rgAutoType.check(R.id.rbAutoOther)
+        }
+        selectedAutoSubtype = null
+        updateSubtypesForAuto(type)
+
+        // Если подтип известен — выбираем
+        if (subtypeKey != null) {
+            val subtypes = SubtypeCatalog.getSubtypes(type)
+            val idx = subtypes.indexOfFirst { it.key == subtypeKey }
+            if (idx >= 0) {
+                selectedAutoSubtype = subtypeKey
+                binding.autoCompleteSubtypeAuto.setText(subtypes[idx].displayName, false)
             }
         }
     }
