@@ -42,6 +42,9 @@ import java.io.File
  * Если разрешения нет — открывает Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
  * и показывает Toast. После возврата пользователь жмёт кнопку снова.
  * На Android 10 и ниже проверка всегда проходит.
+ *
+ * 🆕 v21.0.2 (UI): блок полного бэкапа сворачиваемый —
+ * по умолчанию кнопки скрыты, по нажатию на заголовок раскрываются/сворачиваются.
  */
 class BackupActivity : AppCompatActivity() {
 
@@ -55,6 +58,9 @@ class BackupActivity : AppCompatActivity() {
     private var progressBarRef: ProgressBar? = null
     private var progressPercentRef: TextView? = null
     private var progressTitleRef: TextView? = null
+
+    // 🆕 v21.0.2: состояние сворачиваемого блока полного бэкапа
+    private var fullBackupExpanded = false
 
     // 🆕 v21.0.1: launcher для выбора ZIP при импорте
     private val importZipLauncher = registerForActivityResult(
@@ -154,12 +160,28 @@ class BackupActivity : AppCompatActivity() {
 
     /**
      * 🆕 v21.0.1: блок полного бэкапа виден только Алексею.
+     * 🆕 v21.0.2: кнопки внутри блока свёрнуты по умолчанию,
+     * раскрываются/сворачиваются по нажатию на заголовок llFullBackupHeader.
      */
     private fun applyFullBackupPermissions() {
         val currentUser = tokenStorage.getCurrentUser()
         val isAdmin = AppUser.canDelete(currentUser)
         binding.llFullBackupBlock.visibility = if (isAdmin) View.VISIBLE else View.GONE
         Logger.log(TAG, "Full backup block visible=$isAdmin (user=$currentUser)")
+
+        // 🆕 v21.0.2: стартовое состояние — свёрнуто
+        fullBackupExpanded = false
+        binding.llFullBackupButtons.visibility = View.GONE
+        binding.tvFullBackupChevron.text = "▼"
+
+        // 🆕 v21.0.2: клик по заголовку — раскрыть/свернуть кнопки
+        binding.llFullBackupHeader.setOnClickListener {
+            fullBackupExpanded = !fullBackupExpanded
+            binding.llFullBackupButtons.visibility =
+                if (fullBackupExpanded) View.VISIBLE else View.GONE
+            binding.tvFullBackupChevron.text = if (fullBackupExpanded) "▲" else "▼"
+            Logger.log(TAG, "Full backup block expanded=$fullBackupExpanded")
+        }
 
         binding.btnFullBackupExport.setOnClickListener {
             Logger.log(TAG, "Full backup export clicked")
