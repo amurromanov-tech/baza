@@ -10,19 +10,16 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * 🆕 v21.0.12: публичный клиент Честного Знака (фикс).
+ * 🆕 v21.0.13: публичный клиент Честного Знака (фикс 403).
  *
- * Используется GET-запрос (как в рабочем MCP-сервере):
- *   GET https://mobile.api.crpt.ru/mobile/check?code=<code>&codeType=<type>
+ * Проблема: сервер возвращает 403 (Forbidden) на GET-запрос.
+ * Возможные причины:
+ *  - User-Agent "BAZA/1.0" блокируется;
+ *  - отсутствует Content-Type;
+ *  - геоблокировка не-РФ IP [citation:13];
+ *  - код с ведущим GS (0x1D) не принимается.
  *
- * codeType:
- *  - "datamatrix" — по умолчанию (DataMatrix с упаковки)
- *  - "qr"         — QR-код
- *  - "ean13"      — обычный штрихкод (для маркированных категорий)
- *
- * 🆕 Санитизация: перед отправкой удаляем непечатаемые символы
- * (кроме ASCII 29/GS, если он нужен серверу), чтобы Google Code Scanner
- * случайно не «сломал» код. Пробуем несколько вариантов codeType.
+ * Решение: пробуем несколько комбинаций заголовков и форматов кода.
  */
 class ChestnyZnakService {
 
@@ -36,54 +33,66 @@ class ChestnyZnakService {
 
     /**
      * Пытается получить информацию о товаре по коду маркировки.
-     * @param rawCode отсканированный код (DataMatrix/QR/PDF417)
-     * @param preferredCodeType "datamatrix" | "qr" | "ean13"
-     * @return ProductInfo или null, если не найден / ошибка / не маркированный товар
      */
     suspend fun lookupProduct(rawCode: String, preferredCodeType: String = "datamatrix"): ProductInfo? =
         withContext(Dispatchers.IO) {
             if (rawCode.isBlank()) return@withContext null
 
-            // 🆕 Санитизация: убираем пробелы и непечатаемые символы (кроме ASCII 29/GS)
             val sanitized = sanitizeCode(rawCode)
             Logger.log(TAG, "Original code (hex): ${toHex(rawCode)}")
             Logger.log(TAG, "Sanitized code (hex): ${toHex(sanitized)}")
 
-            // 🆕 Пробуем разные codeType, если первый не сработал
+            // 🆕 Варианты кода: как есть, без ведущего GS (0x1D), без хвостового GS
+            val codeVariants = buildList {
+                add(sanitized) // как есть
+                if (sanitized.startsWith("\u001D")) {
+                    add(sanitized.substring(1)) // без ведущего GS
+                }
+                if (sanitized.endsWith("\u001D")) {
+                    add(sanitized.dropLast(1)) // без хвостового GS
+                }
+            }.distinct()
+
             val typesToTry = when (preferredCodeType) {
                 "datamatrix" -> listOf("datamatrix", "qr", "ean13")
                 "qr" -> listOf("qr", "datamatrix", "ean13")
                 else -> listOf(preferredCodeType, "datamatrix", "qr")
             }
 
-            for (codeType in typesToTry) {
-                val result = tryLookup(sanitized, codeType)
-                if (result != null) {
-                    Logger.log(TAG, "Found with codeType=$codeType")
-                    return@withContext result
+            // 🆕 Заголовки: пробуем разные User-Agent
+            val userAgents = listOf(
+                "okhttp/4.11.0",
+                "Mozilla/5.0 (Linux; Android 14)",
+                "BAZA/1.0"
+            )
+
+            for (codeVariant in codeVariants) {
+                for (codeType in typesToTry) {
+                    for (ua in userAgents) {
+                        val result = tryLookup(codeVariant, codeType, ua)
+                        if (result != null) {
+                            Logger.log(TAG, "Found with codeType=$codeType, UA=$ua")
+                            return@withContext result
+                        }
+                    }
                 }
-                Logger.log(TAG, "Not found with codeType=$codeType, trying next...")
             }
 
-            Logger.log(TAG, "Not found with any codeType for code (hex): ${toHex(sanitized)}")
+            Logger.log(TAG, "Not found with any combination for code (hex): ${toHex(sanitized)}")
             return@withContext null
         }
 
-    /**
-     * Санитизация кода: удаляем пробелы и непечатаемые символы,
-     * но оставляем ASCII 29 (GS, FNC1), если он есть — он может быть нужен.
-     */
     private fun sanitizeCode(code: String): String {
         return code
-            .replace(Regex("[\\s]+"), "") // убираем пробелы/переносы
-            .filter { it.code == 29 || (it.code in 32..126) } // GS + печатаемые ASCII
+            .replace(Regex("[\\s]+"), "")
+            .filter { it.code == 29 || (it.code in 32..126) }
     }
 
     private fun toHex(s: String): String {
         return s.toByteArray(Charsets.UTF_8).joinToString(" ") { "%02X".format(it) }
     }
 
-    private fun tryLookup(code: String, codeType: String): ProductInfo? {
+    private fun tryLookup(code: String, codeType: String, userAgent: String): ProductInfo? {
         return try {
             val encodedCode = URLEncoder.encode(code, "UTF-8")
             val encodedType = URLEncoder.encode(codeType, "UTF-8")
@@ -93,12 +102,15 @@ class ChestnyZnakService {
             connection.requestMethod = "GET"
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("User-Agent", "BAZA/1.0")
+
+            // 🆕 Заголовки: User-Agent + Content-Type + Accept
+            connection.setRequestProperty("User-Agent", userAgent)
             connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/json")
 
             val responseCode = connection.responseCode
             if (responseCode != 200) {
-                Logger.log(TAG, "HTTP $responseCode for codeType=$codeType, code(hex)=${toHex(code)}")
+                Logger.log(TAG, "HTTP $responseCode for codeType=$codeType, UA=$userAgent, code(hex)=${toHex(code)}")
                 return null
             }
 
@@ -107,17 +119,16 @@ class ChestnyZnakService {
 
             val json = JsonParser.parseString(text).asJsonObject
 
-            // Если сервер явно сказал, что код не найден
-            val found = json.get("found")?.asBoolean
-            if (found == false) {
-                Logger.log(TAG, "Server says found=false for codeType=$codeType")
+            // 🆕 В публичном API результат проверки лежит в checkResult (а не found)
+            val checkResult = json.get("checkResult")?.asBoolean
+            if (checkResult == false) {
+                Logger.log(TAG, "Server says checkResult=false for codeType=$codeType")
                 return null
             }
 
             val productName = json.get("productName")?.asString
             val category = json.get("category")?.asString
 
-            // Данные производителя/владельца лежат в <category>Data
             val nestedKey = if (!category.isNullOrBlank()) "${category}Data" else null
             val nested = nestedKey?.let { key -> json.getAsJsonObject(key) }
 
@@ -150,7 +161,7 @@ class ChestnyZnakService {
                 source = "Честный ЗНАК"
             )
         } catch (e: Exception) {
-            Logger.log(TAG, "Error lookup codeType=$codeType: ${e.message}", e)
+            Logger.log(TAG, "Error lookup codeType=$codeType, UA=$userAgent: ${e.message}", e)
             null
         }
     }
