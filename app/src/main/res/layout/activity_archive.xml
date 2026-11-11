@@ -74,14 +74,23 @@
             app:chipSpacingHorizontal="6dp"
             app:chipSpacingVertical="0dp">
 
+            <!-- 🆕 v21.0.4: «Все» — первым и по умолчанию -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipFolderAll"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📦 Все"
+                android:checkable="true"
+                android:checked="true" />
+
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFolderThings"
                 style="@style/Widget.MaterialComponents.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="📦 Вещи"
-                android:checkable="true"
-                android:checked="true" />
+                android:checkable="true" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFolderMedicine"
