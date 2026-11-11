@@ -157,8 +157,8 @@ class AddItemActivity : AppCompatActivity() {
     }
 
     /**
-     * 🆕 v21.0.7: отдельный launcher для QR/DataMatrix-сканера.
-     * Открывает авто-режим и сразу шлёт код в Честный Знак.
+     * 🆕 v21.0.8: launcher для ZXing-сканера QR/DataMatrix/PDF417.
+     * Запускает QrScannerActivity и сразу шлёт код в Честный Знак.
      */
     private val qrScannerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -683,15 +683,10 @@ class AddItemActivity : AppCompatActivity() {
             binding.manualModeLayout.visibility = View.GONE
         }
 
-        // 🆕 v21.0.7: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
+        // 🆕 v21.0.8: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
+        // запускает ZXing-сканер QrScannerActivity.
         binding.btnQrMode.setOnClickListener {
-            val intent = Intent(this, BarcodeScannerActivity::class.java).apply {
-                putExtra(
-                    BarcodeScannerActivity.EXTRA_SCAN_MODE,
-                    BarcodeScannerActivity.MODE_QR_DATAMATRIX
-                )
-            }
-            qrScannerLauncher.launch(intent)
+            qrScannerLauncher.launch(Intent(this, QrScannerActivity::class.java))
         }
 
         binding.btnCancel.setOnClickListener { finish() }
