@@ -9,13 +9,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 🆕 v21.0.16: публичный клиент Честного Знака (фикс JSON-экранирования).
+ * 🆕 v21.0.17: публичный клиент Честного Знака (парсинг срока годности).
  *
- * Сервер принимает POST, но требует, чтобы управляющие символы
- * (например, GS 0x1D из DataMatrix) были экранированы в JSON
- * как \u001D, а не переданы «сырыми».
- *
- * Тело: {"code":"...","codeType":"..."} — с заменой 0x1D на \\u001D.
+ * Сервер отдаёт expDate в формате ISO 8601:
+ *   "expDate":"2029-01-31T00:00:00.000Z"
+ * Достаём его и кладём в ProductInfo.expiryDate (как строку ISO).
+ * Конвертация в Long — в AddItemActivity.
  */
 class ChestnyZnakService {
 
@@ -31,12 +30,10 @@ class ChestnyZnakService {
         withContext(Dispatchers.IO) {
             if (rawCode.isBlank()) return@withContext null
 
-            // Санитизация оставляем как есть (убираем пробелы, оставляем GS)
             val sanitized = sanitizeCode(rawCode)
             Logger.log(TAG, "Original code (hex): ${toHex(rawCode)}")
             Logger.log(TAG, "Sanitized code (hex): ${toHex(sanitized)}")
 
-            // 🆕 Пробуем POST с правильно экранированным JSON
             val result = tryLookupPost(sanitized, preferredCodeType)
             if (result != null) {
                 Logger.log(TAG, "Found with POST, codeType=$preferredCodeType")
@@ -57,11 +54,6 @@ class ChestnyZnakService {
         return s.toByteArray(Charsets.UTF_8).joinToString(" ") { "%02X".format(it) }
     }
 
-    /**
-     * 🆕 POST с JSON-экранированием.
-     * Заменяем сырой символ 0x1D на строку "\\u001D", чтобы JSON-парсер
-     * на стороне сервера его понял.
-     */
     private fun tryLookupPost(code: String, codeType: String): ProductInfo? {
         return try {
             val url = URL(BASE_URL)
@@ -74,11 +66,10 @@ class ChestnyZnakService {
             connection.setRequestProperty("User-Agent", "okhttp/4.11.0")
             connection.setRequestProperty("Accept", "application/json")
 
-            // 🆕 Экранируем JSON: кавычки и управляющий символ GS (0x1D)
             val escapedCode = code
-                .replace("\\", "\\\\")   // сначала экранируем обратный слэш
-                .replace("\"", "\\\"")   // затем кавычки
-                .replace("\u001D", "\\u001D") // GS → \u001D
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\u001D", "\\u001D")
 
             val jsonBody = """{"code":"$escapedCode","codeType":"$codeType"}"""
             Logger.log(TAG, "POST body: $jsonBody")
@@ -143,6 +134,10 @@ class ChestnyZnakService {
         val status = nested?.get("status")?.asString
             ?: json.get("status")?.asString
 
+        // 🆕 v21.0.17: срок годности — из expDate (ISO 8601)
+        val expDate = json.get("expDate")?.asString
+            ?: nested?.get("expDate")?.asString
+
         if (productName.isNullOrBlank() && producerName.isNullOrBlank() && category.isNullOrBlank()) {
             Logger.log(TAG, "Empty product info")
             return null
@@ -154,7 +149,11 @@ class ChestnyZnakService {
             if (!status.isNullOrBlank()) append("Статус: $status")
         }.trim().ifBlank { null }
 
-        Logger.log(TAG, "Found: name=$productName, category=$category, producer=$producerName, status=$status")
+        Logger.log(
+            TAG,
+            "Found: name=$productName, category=$category, producer=$producerName, " +
+                "status=$status, expDate=$expDate"
+        )
 
         return ProductInfo(
             name = productName,
@@ -162,7 +161,8 @@ class ChestnyZnakService {
             category = category,
             description = description,
             imageUrl = null,
-            source = "Честный ЗНАК"
+            source = "Честный ЗНАК",
+            expiryDate = expDate
         )
     }
 }
