@@ -10,16 +10,10 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * 🆕 v21.0.13: публичный клиент Честного Знака (фикс 403).
+ * 🆕 v21.0.14: публичный клиент Честного Знака (диагностика).
  *
- * Проблема: сервер возвращает 403 (Forbidden) на GET-запрос.
- * Возможные причины:
- *  - User-Agent "BAZA/1.0" блокируется;
- *  - отсутствует Content-Type;
- *  - геоблокировка не-РФ IP [citation:13];
- *  - код с ведущим GS (0x1D) не принимается.
- *
- * Решение: пробуем несколько комбинаций заголовков и форматов кода.
+ * Добавлено логирование сырого ответа при HTTP 200 — чтобы увидеть,
+ * что именно возвращает сервер (JSON, HTML, пустота).
  */
 class ChestnyZnakService {
 
@@ -31,9 +25,6 @@ class ChestnyZnakService {
         private const val READ_TIMEOUT_MS = 8000
     }
 
-    /**
-     * Пытается получить информацию о товаре по коду маркировки.
-     */
     suspend fun lookupProduct(rawCode: String, preferredCodeType: String = "datamatrix"): ProductInfo? =
         withContext(Dispatchers.IO) {
             if (rawCode.isBlank()) return@withContext null
@@ -42,43 +33,15 @@ class ChestnyZnakService {
             Logger.log(TAG, "Original code (hex): ${toHex(rawCode)}")
             Logger.log(TAG, "Sanitized code (hex): ${toHex(sanitized)}")
 
-            // 🆕 Варианты кода: как есть, без ведущего GS (0x1D), без хвостового GS
-            val codeVariants = buildList {
-                add(sanitized) // как есть
-                if (sanitized.startsWith("\u001D")) {
-                    add(sanitized.substring(1)) // без ведущего GS
-                }
-                if (sanitized.endsWith("\u001D")) {
-                    add(sanitized.dropLast(1)) // без хвостового GS
-                }
-            }.distinct()
-
-            val typesToTry = when (preferredCodeType) {
-                "datamatrix" -> listOf("datamatrix", "qr", "ean13")
-                "qr" -> listOf("qr", "datamatrix", "ean13")
-                else -> listOf(preferredCodeType, "datamatrix", "qr")
+            // 🆕 Пробуем только один вариант кода и один codeType,
+            // чтобы не забивать лог. Если не сработает — будем думать дальше.
+            val result = tryLookup(sanitized, preferredCodeType)
+            if (result != null) {
+                Logger.log(TAG, "Found with codeType=$preferredCodeType")
+                return@withContext result
             }
 
-            // 🆕 Заголовки: пробуем разные User-Agent
-            val userAgents = listOf(
-                "okhttp/4.11.0",
-                "Mozilla/5.0 (Linux; Android 14)",
-                "BAZA/1.0"
-            )
-
-            for (codeVariant in codeVariants) {
-                for (codeType in typesToTry) {
-                    for (ua in userAgents) {
-                        val result = tryLookup(codeVariant, codeType, ua)
-                        if (result != null) {
-                            Logger.log(TAG, "Found with codeType=$codeType, UA=$ua")
-                            return@withContext result
-                        }
-                    }
-                }
-            }
-
-            Logger.log(TAG, "Not found with any combination for code (hex): ${toHex(sanitized)}")
+            Logger.log(TAG, "Not found for code (hex): ${toHex(sanitized)}, codeType=$preferredCodeType")
             return@withContext null
         }
 
@@ -92,7 +55,7 @@ class ChestnyZnakService {
         return s.toByteArray(Charsets.UTF_8).joinToString(" ") { "%02X".format(it) }
     }
 
-    private fun tryLookup(code: String, codeType: String, userAgent: String): ProductInfo? {
+    private fun tryLookup(code: String, codeType: String): ProductInfo? {
         return try {
             val encodedCode = URLEncoder.encode(code, "UTF-8")
             val encodedType = URLEncoder.encode(codeType, "UTF-8")
@@ -102,27 +65,46 @@ class ChestnyZnakService {
             connection.requestMethod = "GET"
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-
-            // 🆕 Заголовки: User-Agent + Content-Type + Accept
-            connection.setRequestProperty("User-Agent", userAgent)
+            connection.setRequestProperty("User-Agent", "okhttp/4.11.0")
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("Content-Type", "application/json")
 
             val responseCode = connection.responseCode
+            Logger.log(TAG, "HTTP $responseCode for codeType=$codeType")
+
             if (responseCode != 200) {
-                Logger.log(TAG, "HTTP $responseCode for codeType=$codeType, UA=$userAgent, code(hex)=${toHex(code)}")
+                // 🆕 Логируем тело ошибки (может быть HTML или JSON с описанием)
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (e: Exception) { null }
+                Logger.log(TAG, "Error body: ${errorBody?.take(500)}")
                 return null
             }
 
             val text = connection.inputStream.bufferedReader().use { it.readText() }
-            if (text.isBlank()) return null
 
-            val json = JsonParser.parseString(text).asJsonObject
+            // 🆕 ЛОГИРУЕМ СЫРОЙ ОТВЕТ (первые 1000 символов)
+            Logger.log(TAG, "Raw response (first 1000 chars): ${text.take(1000)}")
 
-            // 🆕 В публичном API результат проверки лежит в checkResult (а не found)
+            if (text.isBlank()) {
+                Logger.log(TAG, "Response is BLANK")
+                return null
+            }
+
+            val json = try {
+                JsonParser.parseString(text).asJsonObject
+            } catch (e: Exception) {
+                Logger.log(TAG, "Response is NOT JSON: ${e.message}")
+                return null
+            }
+
+            // 🆕 Логируем все ключи верхнего уровня
+            Logger.log(TAG, "JSON keys: ${json.keySet()}")
+
+            // Результат проверки читается из checkResult
             val checkResult = json.get("checkResult")?.asBoolean
+            Logger.log(TAG, "checkResult=$checkResult")
             if (checkResult == false) {
-                Logger.log(TAG, "Server says checkResult=false for codeType=$codeType")
+                Logger.log(TAG, "Server says checkResult=false")
                 return null
             }
 
@@ -140,7 +122,7 @@ class ChestnyZnakService {
                 ?: json.get("status")?.asString
 
             if (productName.isNullOrBlank() && producerName.isNullOrBlank() && category.isNullOrBlank()) {
-                Logger.log(TAG, "Empty product info for codeType=$codeType")
+                Logger.log(TAG, "Empty product info (productName/producer/category all blank)")
                 return null
             }
 
@@ -161,7 +143,7 @@ class ChestnyZnakService {
                 source = "Честный ЗНАК"
             )
         } catch (e: Exception) {
-            Logger.log(TAG, "Error lookup codeType=$codeType, UA=$userAgent: ${e.message}", e)
+            Logger.log(TAG, "Error lookup: ${e.message}", e)
             null
         }
     }
