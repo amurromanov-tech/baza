@@ -36,7 +36,11 @@ class ArchiveActivity : AppCompatActivity() {
     private val TAG = "ArchiveActivity"
     private val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
 
-    private enum class ArchiveFolder { THINGS, MEDICINE, FOOD }
+    /**
+     * 🆕 v21.0.4: добавлен ALL — «Все» (дефолт).
+     * THINGS/MEDICINE/FOOD — как раньше.
+     */
+    private enum class ArchiveFolder { ALL, THINGS, MEDICINE, FOOD }
 
     private enum class Sort(val label: String) {
         ARCHIVED_DESC("📅 По дате архивации: новые сначала"),
@@ -48,7 +52,8 @@ class ArchiveActivity : AppCompatActivity() {
         PURCHASE_ASC("🛒 По дате покупки: старые сначала")
     }
 
-    private var currentFolder: ArchiveFolder = ArchiveFolder.THINGS
+    // 🆕 v21.0.4: по умолчанию — «Все»
+    private var currentFolder: ArchiveFolder = ArchiveFolder.ALL
     private var currentReasonKey: String? = null
     private var currentSort: Sort = Sort.ARCHIVED_DESC
     private var currentSearchQuery: String? = null
@@ -108,6 +113,10 @@ class ArchiveActivity : AppCompatActivity() {
                 currentFolder = ArchiveFolder.THINGS
                 binding.chipGroupFolder.check(R.id.chipFolderThings)
             }
+            "all" -> {
+                currentFolder = ArchiveFolder.ALL
+                binding.chipGroupFolder.check(R.id.chipFolderAll)
+            }
             else -> Logger.log(TAG, "Unknown start_folder: $startFolder")
         }
     }
@@ -119,7 +128,8 @@ class ArchiveActivity : AppCompatActivity() {
             when (checkedIds.firstOrNull()) {
                 R.id.chipFolderMedicine -> currentFolder = ArchiveFolder.MEDICINE
                 R.id.chipFolderFood -> currentFolder = ArchiveFolder.FOOD
-                else -> currentFolder = ArchiveFolder.THINGS
+                R.id.chipFolderThings -> currentFolder = ArchiveFolder.THINGS
+                else -> currentFolder = ArchiveFolder.ALL
             }
             binding.chipGroupReason.check(R.id.chipReasonAll)
             currentReasonKey = null
@@ -264,6 +274,9 @@ class ArchiveActivity : AppCompatActivity() {
 
     private fun matchesFolder(item: ItemEntity, folder: ArchiveFolder): Boolean {
         return when (folder) {
+            // 🆕 v21.0.4: «Все» — без фильтра по типу
+            ArchiveFolder.ALL -> true
+
             ArchiveFolder.FOOD -> item.itemType == "food"
             ArchiveFolder.MEDICINE -> item.itemType == "medicine"
             ArchiveFolder.THINGS -> {
