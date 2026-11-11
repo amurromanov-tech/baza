@@ -139,7 +139,7 @@ class AddItemActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             val scannedValue = result.data?.getStringExtra("barcode")
             if (!scannedValue.isNullOrEmpty()) {
-                Logger.log(TAG, "Scanned value: $scannedValue")
+                Logger.log(TAG, "Scanned value (barcode mode): $scannedValue")
 
                 if (scannedValue.all { it.isDigit() }) {
                     barcode = scannedValue
@@ -152,6 +152,32 @@ class AddItemActivity : AppCompatActivity() {
                     binding.etAutoBarcode.setText(scannedValue)
                     lookupChestnyZnak(scannedValue)
                 }
+            }
+        }
+    }
+
+    /**
+     * 🆕 v21.0.7: отдельный launcher для QR/DataMatrix-сканера.
+     * Открывает авто-режим и сразу шлёт код в Честный Знак.
+     */
+    private val qrScannerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val scannedValue = result.data?.getStringExtra("barcode")
+            if (!scannedValue.isNullOrEmpty()) {
+                Logger.log(TAG, "Scanned value (qr mode): $scannedValue")
+
+                // Переключаемся в авто-режим, чтобы было видно результат
+                binding.modeSelection.visibility = View.GONE
+                binding.autoModeLayout.visibility = View.VISIBLE
+                binding.manualModeLayout.visibility = View.GONE
+
+                barcode = scannedValue
+                binding.etAutoBarcode.setText(scannedValue)
+
+                // В QR-режиме всегда идём в Честный Знак
+                lookupChestnyZnak(scannedValue)
             }
         }
     }
@@ -655,6 +681,17 @@ class AddItemActivity : AppCompatActivity() {
             binding.modeSelection.visibility = View.GONE
             binding.autoModeLayout.visibility = View.VISIBLE
             binding.manualModeLayout.visibility = View.GONE
+        }
+
+        // 🆕 v21.0.7: кнопка «Сканер QR/DataMatrix (Честный ЗНАК)»
+        binding.btnQrMode.setOnClickListener {
+            val intent = Intent(this, BarcodeScannerActivity::class.java).apply {
+                putExtra(
+                    BarcodeScannerActivity.EXTRA_SCAN_MODE,
+                    BarcodeScannerActivity.MODE_QR_DATAMATRIX
+                )
+            }
+            qrScannerLauncher.launch(intent)
         }
 
         binding.btnCancel.setOnClickListener { finish() }
