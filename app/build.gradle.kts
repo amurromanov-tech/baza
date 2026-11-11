@@ -128,6 +128,12 @@ dependencies {
     // ===== ML KIT (BARCODE) =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
 
+    // ===== 🆕 v21.0.8: ZXing (Code Scanner) для QR/DataMatrix/PDF417 =====
+    // Честный ЗНАК использует PDF417/DataMatrix — ML Kit их плохо берёт
+    // на мелких кодах. ZXing справляется лучше. JitPack-репозиторий уже
+    // добавлен в settings.gradle.kts (см. файл 2/5).
+    implementation("com.github.yuriy-budiyev:code-scanner:2.3.2")
+
     // ===== 🆕 v20.5.14: ВИДЕО (ExoPlayer / Media3) =====
     // MP4, MKV, WebM, 3GP, MOV — играет.
     // AVI — НЕ играет (нет поддержки контейнера), уходит во внешний плеер.
