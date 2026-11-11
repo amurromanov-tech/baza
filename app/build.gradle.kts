@@ -12,8 +12,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 222
-        versionName = "21.0.2"
+        versionCode = 223
+        versionName = "21.0.3"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
