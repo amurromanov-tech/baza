@@ -12,8 +12,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 228
-        versionName = "21.0.8"
+        versionCode = 229
+        versionName = "21.0.9"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
@@ -128,11 +128,12 @@ dependencies {
     // ===== ML KIT (BARCODE) =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
 
-    // ===== 🆕 v21.0.8: ZXing (Code Scanner) для QR/DataMatrix/PDF417 =====
-    // Честный ЗНАК использует PDF417/DataMatrix — ML Kit их плохо берёт
-    // на мелких кодах. ZXing справляется лучше. JitPack-репозиторий уже
-    // добавлен в settings.gradle.kts (см. файл 2/5).
-    implementation("com.github.yuriy-budiyev:code-scanner:2.3.2")
+    // ===== 🆕 v21.0.10: Google Code Scanner (PDF417/DataMatrix/QR) =====
+    // Системный сканер Google Play Services. Умеет авто-зум (с 16.1.0),
+    // не требует разрешения камеры в манифесте, поддерживает PDF417.
+    // При локальной сборке при первом запуске может выдать
+    // CODE_SCANNER_UNAVAILABLE — подождать и повторить (модуль докачается).
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
     // ===== 🆕 v20.5.14: ВИДЕО (ExoPlayer / Media3) =====
     // MP4, MKV, WebM, 3GP, MOV — играет.
