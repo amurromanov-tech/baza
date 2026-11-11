@@ -7,16 +7,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
 /**
- * 🆕 v21.0.15: публичный клиент Честного Знака (POST-попытка).
+ * 🆕 v21.0.16: публичный клиент Честного Знака (фикс JSON-экранирования).
  *
- * Проблема: nginx отдаёт 403 на GET-запрос.
- * Решение: пробуем POST с JSON-телом, как это делает мобильное приложение.
+ * Сервер принимает POST, но требует, чтобы управляющие символы
+ * (например, GS 0x1D из DataMatrix) были экранированы в JSON
+ * как \u001D, а не переданы «сырыми».
  *
- * Тело: {"code": "...", "codeType": "..."}
- * Заголовки: Content-Type: application/json, User-Agent: okhttp/4.11.0
+ * Тело: {"code":"...","codeType":"..."} — с заменой 0x1D на \\u001D.
  */
 class ChestnyZnakService {
 
@@ -32,26 +31,19 @@ class ChestnyZnakService {
         withContext(Dispatchers.IO) {
             if (rawCode.isBlank()) return@withContext null
 
+            // Санитизация оставляем как есть (убираем пробелы, оставляем GS)
             val sanitized = sanitizeCode(rawCode)
             Logger.log(TAG, "Original code (hex): ${toHex(rawCode)}")
             Logger.log(TAG, "Sanitized code (hex): ${toHex(sanitized)}")
 
-            // 🆕 Пробуем POST с JSON
+            // 🆕 Пробуем POST с правильно экранированным JSON
             val result = tryLookupPost(sanitized, preferredCodeType)
             if (result != null) {
                 Logger.log(TAG, "Found with POST, codeType=$preferredCodeType")
                 return@withContext result
             }
 
-            // Если POST не сработал — пробуем GET (на всякий случай)
-            Logger.log(TAG, "POST failed, trying GET...")
-            val resultGet = tryLookupGet(sanitized, preferredCodeType)
-            if (resultGet != null) {
-                Logger.log(TAG, "Found with GET, codeType=$preferredCodeType")
-                return@withContext resultGet
-            }
-
-            Logger.log(TAG, "Not found with POST or GET for code (hex): ${toHex(sanitized)}")
+            Logger.log(TAG, "Not found for code (hex): ${toHex(sanitized)}")
             return@withContext null
         }
 
@@ -66,7 +58,9 @@ class ChestnyZnakService {
     }
 
     /**
-     * 🆕 POST-запрос с JSON-телом.
+     * 🆕 POST с JSON-экранированием.
+     * Заменяем сырой символ 0x1D на строку "\\u001D", чтобы JSON-парсер
+     * на стороне сервера его понял.
      */
     private fun tryLookupPost(code: String, codeType: String): ProductInfo? {
         return try {
@@ -80,8 +74,13 @@ class ChestnyZnakService {
             connection.setRequestProperty("User-Agent", "okhttp/4.11.0")
             connection.setRequestProperty("Accept", "application/json")
 
-            // JSON-тело
-            val jsonBody = """{"code":"${code.replace("\"", "\\\"")}","codeType":"$codeType"}"""
+            // 🆕 Экранируем JSON: кавычки и управляющий символ GS (0x1D)
+            val escapedCode = code
+                .replace("\\", "\\\\")   // сначала экранируем обратный слэш
+                .replace("\"", "\\\"")   // затем кавычки
+                .replace("\u001D", "\\u001D") // GS → \u001D
+
+            val jsonBody = """{"code":"$escapedCode","codeType":"$codeType"}"""
             Logger.log(TAG, "POST body: $jsonBody")
 
             connection.outputStream.use { os ->
@@ -109,46 +108,6 @@ class ChestnyZnakService {
         }
     }
 
-    /**
-     * GET-запрос (fallback).
-     */
-    private fun tryLookupGet(code: String, codeType: String): ProductInfo? {
-        return try {
-            val encodedCode = URLEncoder.encode(code, "UTF-8")
-            val encodedType = URLEncoder.encode(codeType, "UTF-8")
-            val url = URL("$BASE_URL?code=$encodedCode&codeType=$encodedType")
-
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("User-Agent", "okhttp/4.11.0")
-            connection.setRequestProperty("Accept", "application/json")
-
-            val responseCode = connection.responseCode
-            Logger.log(TAG, "GET HTTP $responseCode for codeType=$codeType")
-
-            if (responseCode != 200) {
-                val errorBody = try {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() }
-                } catch (e: Exception) { null }
-                Logger.log(TAG, "GET error body: ${errorBody?.take(500)}")
-                return null
-            }
-
-            val text = connection.inputStream.bufferedReader().use { it.readText() }
-            Logger.log(TAG, "GET raw response (first 1000 chars): ${text.take(1000)}")
-
-            parseResponse(text)
-        } catch (e: Exception) {
-            Logger.log(TAG, "GET error: ${e.message}", e)
-            null
-        }
-    }
-
-    /**
-     * Парсинг JSON-ответа.
-     */
     private fun parseResponse(text: String): ProductInfo? {
         if (text.isBlank()) {
             Logger.log(TAG, "Response is BLANK")
