@@ -254,9 +254,20 @@
         <!-- Один экран для трёх режимов (source = "ai" | "user" | "all"),-->
         <!-- задаётся через EXTRA_SOURCE. Портретная ориентация,          -->
         <!-- adjustResize — как у остальных экранов.                      -->
+        <!--                                                              -->
+        <!-- RecipeEditActivity: создание/редактирование рецепта.         -->
+        <!-- Режим создания — обязателен EXTRA_SOURCE; режим              -->
+        <!-- редактирования — EXTRA_RECIPE_ID.                            -->
         <!-- ============================================================ -->
         <activity
             android:name=".ui.RecipeListActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
+
+        <activity
+            android:name=".ui.RecipeEditActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
