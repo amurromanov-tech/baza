@@ -11,6 +11,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.*
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.data.repository.GalleryRepository
+import com.family.base.data.repository.RecipesRepository
 import com.family.base.data.repository.TaskRepository
 import com.family.base.ui.SyncStatus
 import com.family.base.util.Logger
@@ -49,6 +50,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * GalleryViewModel (у него свой экземпляр GalleryRepository).
      */
     private val galleryRepository = GalleryRepository(db)
+
+    /**
+     * 🆕 v21.1.0: репозиторий рецептов.
+     * Используется для ensureRecipesFolders — идемпотентное создание
+     * трёх системных папок «🍳 Рецепты» / «🤖 Рецепты ИИ» / «📝 Мои рецепты»
+     * при первом запуске. CRUD рецептов идёт из RecipeListActivity /
+     * RecipeEditActivity через свой экземпляр RecipesRepository
+     * (или через RecipeViewModel — решим в Шаге 1.4).
+     */
+    private val recipesRepository = RecipesRepository(
+        db = db,
+        appContext = application.applicationContext
+    )
 
     private val tokenStorage = TokenStorage(application)
     private val lockDao = db.lockDao()
@@ -171,6 +185,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Logger.log(TAG, "checkFirstLaunch: system folder 'gallery' ensured")
         } catch (e: Exception) {
             Logger.log(TAG, "Error ensuring gallery folder: ${e.message}")
+        }
+
+        // ============================================================
+        // 🆕 v21.1.0: системные папки «Рецепты».
+        // Идемпотентно создаёт три папки:
+        //   - «🍳 Рецепты»      (systemKey = "recipes",    parentId = null)
+        //   - «🤖 Рецепты ИИ»   (systemKey = "recipes_ai", parentId = id «Рецептов»)
+        //   - «📝 Мои рецепты»  (systemKey = "recipes_my", parentId = id «Рецептов»)
+        //
+        // Фиксированные id (SYSTEM_ID_RECIPES / _AI / _MY) — чтобы
+        // на всех устройствах это были одни и те же записи и синк
+        // через folders.json не плодил дубликаты.
+        // ============================================================
+        try {
+            val (created, rootId) = recipesRepository.ensureRecipesFolders(currentUser)
+            Logger.log(
+                TAG,
+                "checkFirstLaunch: system folders 'recipes' ensured " +
+                    "(created=$created, rootId=$rootId)"
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "Error ensuring recipes folders: ${e.message}")
         }
 
         try {
