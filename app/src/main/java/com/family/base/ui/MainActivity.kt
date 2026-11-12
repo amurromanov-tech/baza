@@ -38,6 +38,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.dao.FolderStatsRow
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.databinding.ActivityMainBinding
 import com.family.base.ui.adapter.CatalogAdapter
@@ -87,10 +88,6 @@ class MainActivity : AppCompatActivity() {
     // 🆕 v20.4.2: запрос POST_NOTIFICATIONS (Android 13+)
     // ============================================================
 
-    /**
-     * Лаунчер запроса разрешения POST_NOTIFICATIONS.
-     * Объявлен до onCreate — так требует registerForActivityResult.
-     */
     private val postNotificationsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -315,6 +312,43 @@ class MainActivity : AppCompatActivity() {
                         Logger.log(TAG, "onFolderClick: opening GalleryActivity")
                         startActivity(Intent(this, GalleryActivity::class.java))
                     }
+                    // ============================================================
+                    // 🆕 v21.1.0: СИСТЕМНЫЕ ПАПКИ «РЕЦЕПТЫ»
+                    //
+                    // Пока — заглушка: Toast и лог. Реальный экран
+                    // RecipeListActivity появится на Шаге 1.3.
+                    //
+                    // Планируемое поведение:
+                    //   SYSTEM_KEY_RECIPES     → RecipeListActivity с фильтром
+                    //                            «все рецепты» (или меню выбора
+                    //                            между ИИ и Мои — решим в UI);
+                    //   SYSTEM_KEY_RECIPES_AI  → RecipeListActivity с source = "ai";
+                    //   SYSTEM_KEY_RECIPES_MY  → RecipeListActivity с source = "user".
+                    // ============================================================
+                    FolderEntity.SYSTEM_KEY_RECIPES -> {
+                        Logger.log(TAG, "onFolderClick: opening Recipes (root) — STUB")
+                        Toast.makeText(
+                            this,
+                            "🍳 Открываю Рецепты… (экран появится на следующем шаге)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
+                        Logger.log(TAG, "onFolderClick: opening Recipes AI — STUB")
+                        Toast.makeText(
+                            this,
+                            "🤖 Открываю Рецепты ИИ… (экран появится на следующем шаге)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    FolderEntity.SYSTEM_KEY_RECIPES_MY -> {
+                        Logger.log(TAG, "onFolderClick: opening My Recipes — STUB")
+                        Toast.makeText(
+                            this,
+                            "📝 Открываю Мои рецепты… (экран появится на следующем шаге)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     else -> navigateToFolder(folder)
                 }
             },
@@ -375,10 +409,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        // 🆕 ЧЕКИ: кнопка «📷 Сканировать QR чека»
-        // (иконка в layout — прежняя, от сканера чеков).
-        // Запускаем BarcodeScannerActivity в режиме MODE_RECEIPT_QR,
-        // она сама откроет ReceiptPreviewActivity.
         binding.btnScanCheck.setOnClickListener {
             Logger.log(TAG, "Scan receipt QR clicked")
             receiptPreviewLauncher.launch(
@@ -398,7 +428,6 @@ class MainActivity : AppCompatActivity() {
             launchSelectUserIfNeeded()
         }
 
-        // 🆕 v20.4.2: запрос POST_NOTIFICATIONS (один раз при первом запуске)
         maybeRequestPostNotifications()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -436,20 +465,6 @@ class MainActivity : AppCompatActivity() {
     // 🆕 v20.4.2: ЗАПРОС POST_NOTIFICATIONS
     // ============================================================
 
-    /**
-     * Запрашивает POST_NOTIFICATIONS один раз при первом запуске.
-     *
-     * Логика:
-     *  - Android < 13 → разрешение не нужно, выходим.
-     *  - Разрешение уже выдано → выходим.
-     *  - Уже спрашивали ранее (флаг в SharedPreferences) → выходим,
-     *    чтобы не спамить диалогом при каждом старте.
-     *  - Иначе → ставим флаг «спрашивали» и запускаем лаунчер.
-     *
-     * Если пользователь отказал — второй раз не спрашиваем.
-     * Включить можно через AppSettingsActivity (кнопка «Напоминания»)
-     * или системные настройки приложения.
-     */
     private fun maybeRequestPostNotifications() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             Logger.log(TAG, "maybeRequestPostNotifications: Android < 13, no permission needed")
@@ -497,10 +512,29 @@ class MainActivity : AppCompatActivity() {
                  val shoppingList = db.itemDao()
                      .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
 
+                 // 🆕 v21.1.0: счётчики рецептов для подписей
+                 // «🤖 N рецептов» / «📝 N рецептов» в корне.
+                 // Оба запроса лёгкие (COUNT + индекс по source),
+                 // выполняются на IO-диспетчере.
+                 val recipesAi = try {
+                     db.recipeDao().countBySource(RecipeEntity.SOURCE_AI)
+                 } catch (e: Exception) {
+                     Logger.log(TAG, "countBySource(ai) error: ${e.message}")
+                     0
+                 }
+                 val recipesMy = try {
+                     db.recipeDao().countBySource(RecipeEntity.SOURCE_USER)
+                 } catch (e: Exception) {
+                     Logger.log(TAG, "countBySource(user) error: ${e.message}")
+                     0
+                 }
+
                  CatalogAdapter.SystemFolderCounters(
                      homeTasksActive = homeTasks,
                      purchasesItems = purchasesItems,
-                     shoppingListItems = shoppingList
+                     shoppingListItems = shoppingList,
+                     recipesAiCount = recipesAi,
+                     recipesMyCount = recipesMy
                  )
              }
              adapter.setSystemFolderCounters(counters)
@@ -979,10 +1013,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v20.3.9: пункт «Удалить» в контекстном меню папки показывается
-     * только Алексею (AppUser.canDelete). У Римы/Димы — его нет.
-     */
     private fun showFolderContextMenu(folder: FolderEntity) {
         if (folder.isSystem) {
             Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
@@ -1020,10 +1050,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 🆕 v20.3.9: пункт «Удалить» в контекстном меню предмета показывается
-     * только Алексею (AppUser.canDelete). У Римы/Димы — его нет.
-     */
     private fun showItemContextMenu(item: ItemEntity) {
         val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
 
@@ -1445,7 +1471,6 @@ class MainActivity : AppCompatActivity() {
     // УДАЛЕНИЕ ПАПКИ
     // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
-        // 🆕 v20.3.9: страховка — если пункт «Удалить» как-то вызван у Римы/Димы.
         if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
             Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
             return
@@ -1611,7 +1636,6 @@ class MainActivity : AppCompatActivity() {
     // УДАЛЕНИЕ ПРЕДМЕТА
     // ============================================================
     private fun confirmDeleteItem(item: ItemEntity) {
-        // 🆕 v20.3.9: страховка — если пункт «Удалить» как-то вызван у Римы/Димы.
         if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
             Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
             return
@@ -1716,10 +1740,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        /**
-         * 🆕 v20.4.2: ключ SharedPreferences — спрашивали ли POST_NOTIFICATIONS.
-         * Хранится в BaseApplication.PREFS_NAME ("baza_settings").
-         */
         private const val KEY_POST_NOTIFICATIONS_ASKED = "post_notifications_asked"
     }
 }
