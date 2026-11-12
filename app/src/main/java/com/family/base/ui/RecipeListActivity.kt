@@ -19,9 +19,9 @@ import com.family.base.ui.viewmodel.RecipeViewModel
 import com.family.base.util.Logger
 
 /**
- * 🆕 v21.1.0 (Шаг 1.3 + 1.4a + 1.4b-1): экран «Рецепты».
+ * 🆕 v21.1.0 (Шаг 1.3 + 1.4a + 1.4b-1 + 1.4b-2): экран «Рецепты».
  *
- * Что делает на этом шаге (1.4b-1):
+ * Что делает на этом шаге:
  *  - Принимает EXTRA_SOURCE ("ai" | "user" | "all"), ставит заголовок;
  *  - Подключает RecipeViewModel + RecipeAdapter + RecyclerView;
  *  - Поиск: клик по btnSearch разворачивает searchLayout/etSearch,
@@ -30,8 +30,9 @@ import com.family.base.util.Logger
  *  - FAB «+» (для "ai" / "user") открывает RecipeEditActivity;
  *  - Тап по emptyState (для "ai" / "user") — то же самое;
  *  - По возврату из RecipeEditActivity перезагружает список;
- *  - Клик по карточке — пока Toast («Открою рецепт: <title>»).
- *    Реальный просмотр — 1.4b-2 (RecipeDetailActivity).
+ *  - 🆕 Клик по карточке — открывает RecipeDetailActivity (1.4b-2);
+ *  - 🆕 По возврату из RecipeDetailActivity, если рецепт менялся/удалён
+ *    (RESULT_OK + EXTRA_RESULT_CHANGED=true), перезагружает список.
  *
  * ВАЖНО (правило проекта):
  *  - Заголовок ставим через supportActionBar?.title = ..., а НЕ через
@@ -69,6 +70,24 @@ class RecipeListActivity : AppCompatActivity() {
     ) { result ->
         Logger.log(TAG, "editLauncher result: ${result.resultCode}")
         viewModel.loadRecipes()
+    }
+
+    /**
+     * 🆕 1.4b-2: возврат из RecipeDetailActivity.
+     * Если рецепт менялся/удалён (RESULT_OK + EXTRA_RESULT_CHANGED=true) —
+     * перезагружаем список. Иначе ничего не делаем.
+     */
+    private val detailLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val changed = result.data?.getBooleanExtra(
+            RecipeDetailActivity.EXTRA_RESULT_CHANGED,
+            false
+        ) ?: false
+        Logger.log(TAG, "detailLauncher result: code=${result.resultCode}, changed=$changed")
+        if (result.resultCode == RESULT_OK && changed) {
+            viewModel.loadRecipes()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -134,18 +153,25 @@ class RecipeListActivity : AppCompatActivity() {
     private fun setupRecycler() {
         adapter = RecipeAdapter(
             onRecipeClick = { recipe ->
-                // 1.4b-1: Toast. 1.4b-2: открыть RecipeDetailActivity.
-                Toast.makeText(this, "Открою рецепт: ${recipe.title}", Toast.LENGTH_SHORT).show()
+                // 🆕 1.4b-2: открываем экран просмотра рецепта.
                 Logger.log(TAG, "recipe clicked: id=${recipe.id}, title='${recipe.title}'")
+                openRecipeDetail(recipe.id)
             },
             onRecipeLongClick = { recipe ->
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}")
-                // Контекстное меню / удаление — 1.4b-2.
+                // Контекстное меню / быстрое удаление — можно добавить позже.
             }
         )
 
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
         binding.rvRecipes.adapter = adapter
+    }
+
+    private fun openRecipeDetail(recipeId: String) {
+        val intent = Intent(this, RecipeDetailActivity::class.java).apply {
+            putExtra(RecipeDetailActivity.EXTRA_RECIPE_ID, recipeId)
+        }
+        detailLauncher.launch(intent)
     }
 
     // ============================================================
@@ -308,10 +334,6 @@ class RecipeListActivity : AppCompatActivity() {
 
         viewModel.isLoading.observe(this) { loading ->
             Logger.log(TAG, "isLoading: $loading")
-            // На 1.4b-1 прогресс-бар не завезли — просто не мешаем.
-            // Когда loading == true и список пуст — emptyState не показываем,
-            // чтобы не мигало. Пустое состояние вернётся, когда isEmpty == true
-            // и loading == false (см. updateUiState).
             updateUiState(isEmpty = viewModel.isEmpty.value ?: true)
         }
     }
@@ -330,8 +352,6 @@ class RecipeListActivity : AppCompatActivity() {
         // Чипы сортировки — только когда есть элементы.
         binding.sortChipsScroll.visibility =
             if (hasItems) View.VISIBLE else View.GONE
-
-        // Поиск имеет смысл, даже если пока пусто, но оставим btnSearch всегда.
     }
 
     private enum class FolderTitle(val text: String) {
