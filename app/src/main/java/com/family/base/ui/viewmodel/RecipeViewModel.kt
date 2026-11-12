@@ -9,7 +9,6 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.repository.RecipesRepository
 import com.family.base.ui.adapter.RecipeAdapter
-import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -21,19 +20,17 @@ import kotlinx.coroutines.launch
  *  - загрузку списка рецептов по source ("ai" | "user");
  *  - поиск (query) — через RecipesRepository.searchRecipes;
  *  - сортировку (sortNewest: 🕐 Новые / 🔤 А-Я);
- *  - подстановку локального файла первого фото каждому рецепту
- *    (RecipeAdapter.RecipeListItem) — чтобы адаптер не ходил в БД;
  *  - уведомление UI об изменениях (LiveData).
  *
  * Стиль — AndroidViewModel + LiveData (как у остальных ViewModel в проекте).
  * Работа с БД — suspend-методы репозитория, внутри viewModelScope.
  *
- * Почему RecipeListItem, а не просто RecipeEntity:
- *  у RecipeEntity НЕТ поля imageUrl — фото живут в recipe_media
- *  (RecipeMediaEntity). Чтобы не тянуть БД из адаптера, ViewModel
- *  для каждого рецепта достаёт первое фото (getPhotos(recipeId).firstOrNull())
- *  и вычисляет локальный File через ImageUtils.getRecipeMediaFile(...).
- *  Адаптер получает готовый photoFile.
+ * ⚠️ ФОТО РЕЦЕПТОВ В 1.4b-1 НЕ ГРУЗИМ.
+ *  У RecipeEntity нет поля imageUrl — фото живут в recipe_media
+ *  (RecipeMediaEntity), а методы для них (ImageUtils.getRecipeMediaFile,
+ *  RecipeMediaController) появятся только на Шаге 1.5. Поэтому здесь
+ *  photoFile ВСЕГДА null, а RecipeAdapter честно показывает
+ *  ic_item_default. На Шаге 1.5 заполним это поле реальным File.
  *
  * Особенности:
  *  - loadRecipes() отменяет предыдущую загрузку (Job) — нет гонки
@@ -117,31 +114,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     else found.sortedBy { it.title.lowercase() }
                 }
 
-                // Для каждого рецепта — локальный файл первого фото (если есть).
-                val appContext = getApplication<Application>()
+                // Фото пока не подставляем (Шаг 1.5). photoFile = null.
                 val listItems: List<RecipeAdapter.RecipeListItem> = recipes.map { recipe ->
-                    val firstPhoto = try {
-                        recipesRepository.getPhotos(recipe.id).firstOrNull()
-                    } catch (e: Exception) {
-                        null
-                    }
-
-                    val photoFile: java.io.File? = if (firstPhoto?.imageUrl != null) {
-                        try {
-                            ImageUtils.getRecipeMediaFile(
-                                appContext,
-                                recipe.id,
-                                firstPhoto.imageUrl
-                            )
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "loadRecipes: photoFile error for ${recipe.id}: ${e.message}", e)
-                            null
-                        }
-                    } else {
-                        null
-                    }
-
-                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
+                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = null)
                 }
 
                 Logger.log(
