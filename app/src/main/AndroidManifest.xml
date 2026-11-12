@@ -258,6 +258,10 @@
         <!-- RecipeEditActivity: создание/редактирование рецепта.         -->
         <!-- Режим создания — обязателен EXTRA_SOURCE; режим              -->
         <!-- редактирования — EXTRA_RECIPE_ID.                            -->
+        <!--                                                              -->
+        <!-- 🆕 v21.1.0 (Шаг 1.4b-2): RecipeDetailActivity — просмотр     -->
+        <!-- рецепта. Принимает EXTRA_RECIPE_ID. Кнопка «Удалить» —       -->
+        <!-- только Алексей или автор (см. RecipeDetailActivity).         -->
         <!-- ============================================================ -->
         <activity
             android:name=".ui.RecipeListActivity"
@@ -268,6 +272,13 @@
 
         <activity
             android:name=".ui.RecipeEditActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
+
+        <activity
+            android:name=".ui.RecipeDetailActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
