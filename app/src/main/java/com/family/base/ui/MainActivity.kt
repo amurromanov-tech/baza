@@ -204,6 +204,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * 🆕 v21.1.0 (Шаг 1.3): launcher для возврата из RecipeListActivity.
+     * Сейчас используется для того, чтобы обновить счётчики рецептов
+     * после добавления/удаления рецепта на будущих шагах. Пока просто
+     * перезагружает счётчики — это безопасно и полезно.
+     */
+    private val recipeListLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "RecipeListActivity result: ${result.resultCode}")
+        loadSystemFolderCounters()
+    }
+
+    /**
      * 🆕 ЧЕКИ: launcher для сканирования QR-кода чека.
      *
      * Запускает BarcodeScannerActivity в режиме MODE_RECEIPT_QR.
@@ -313,41 +326,49 @@ class MainActivity : AppCompatActivity() {
                         startActivity(Intent(this, GalleryActivity::class.java))
                     }
                     // ============================================================
-                    // 🆕 v21.1.0: СИСТЕМНЫЕ ПАПКИ «РЕЦЕПТЫ»
+                    // 🆕 v21.1.0 (Шаг 1.3): СИСТЕМНЫЕ ПАПКИ «РЕЦЕПТЫ»
                     //
-                    // Пока — заглушка: Toast и лог. Реальный экран
-                    // RecipeListActivity появится на Шаге 1.3.
+                    // Открываем RecipeListActivity с EXTRA_SOURCE:
+                    //   SYSTEM_KEY_RECIPES     → "all"  («🍳 Рецепты» — все)
+                    //   SYSTEM_KEY_RECIPES_AI  → "ai"   («🤖 Рецепты ИИ»)
+                    //   SYSTEM_KEY_RECIPES_MY  → "user" («📝 Мои рецепты»)
                     //
-                    // Планируемое поведение:
-                    //   SYSTEM_KEY_RECIPES     → RecipeListActivity с фильтром
-                    //                            «все рецепты» (или меню выбора
-                    //                            между ИИ и Мои — решим в UI);
-                    //   SYSTEM_KEY_RECIPES_AI  → RecipeListActivity с source = "ai";
-                    //   SYSTEM_KEY_RECIPES_MY  → RecipeListActivity с source = "user".
+                    // Используем recipeListLauncher, чтобы после возврата
+                    // обновить счётчики рецептов в корне (пригодятся
+                    // на Шаге 1.4, когда появятся реальные добавления).
                     // ============================================================
                     FolderEntity.SYSTEM_KEY_RECIPES -> {
-                        Logger.log(TAG, "onFolderClick: opening Recipes (root) — STUB")
-                        Toast.makeText(
-                            this,
-                            "🍳 Открываю Рецепты… (экран появится на следующем шаге)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=all)")
+                        recipeListLauncher.launch(
+                            Intent(this, RecipeListActivity::class.java).apply {
+                                putExtra(
+                                    RecipeListActivity.EXTRA_SOURCE,
+                                    RecipeListActivity.EXTRA_SOURCE_ALL
+                                )
+                            }
+                        )
                     }
                     FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
-                        Logger.log(TAG, "onFolderClick: opening Recipes AI — STUB")
-                        Toast.makeText(
-                            this,
-                            "🤖 Открываю Рецепты ИИ… (экран появится на следующем шаге)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=ai)")
+                        recipeListLauncher.launch(
+                            Intent(this, RecipeListActivity::class.java).apply {
+                                putExtra(
+                                    RecipeListActivity.EXTRA_SOURCE,
+                                    RecipeEntity.SOURCE_AI
+                                )
+                            }
+                        )
                     }
                     FolderEntity.SYSTEM_KEY_RECIPES_MY -> {
-                        Logger.log(TAG, "onFolderClick: opening My Recipes — STUB")
-                        Toast.makeText(
-                            this,
-                            "📝 Открываю Мои рецепты… (экран появится на следующем шаге)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=user)")
+                        recipeListLauncher.launch(
+                            Intent(this, RecipeListActivity::class.java).apply {
+                                putExtra(
+                                    RecipeListActivity.EXTRA_SOURCE,
+                                    RecipeEntity.SOURCE_USER
+                                )
+                            }
+                        )
                     }
                     else -> navigateToFolder(folder)
                 }
@@ -514,8 +535,6 @@ class MainActivity : AppCompatActivity() {
 
                  // 🆕 v21.1.0: счётчики рецептов для подписей
                  // «🤖 N рецептов» / «📝 N рецептов» в корне.
-                 // Оба запроса лёгкие (COUNT + индекс по source),
-                 // выполняются на IO-диспетчере.
                  val recipesAi = try {
                      db.recipeDao().countBySource(RecipeEntity.SOURCE_AI)
                  } catch (e: Exception) {
