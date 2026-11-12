@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.repository.RecipesRepository
+import com.family.base.ui.adapter.RecipeAdapter
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -19,17 +21,23 @@ import kotlinx.coroutines.launch
  *  - загрузку списка рецептов по source ("ai" | "user");
  *  - поиск (query) — через RecipesRepository.searchRecipes;
  *  - сортировку (sortNewest: 🕐 Новые / 🔤 А-Я);
+ *  - подстановку локального файла первого фото каждому рецепту
+ *    (RecipeAdapter.RecipeListItem) — чтобы адаптер не ходил в БД;
  *  - уведомление UI об изменениях (LiveData).
  *
- * Стиль — как у остальных ViewModel в проекте (AndroidViewModel + LiveData).
- * Работа с БД — suspend-методы репозитория, поэтому всё внутри viewModelScope.
+ * Стиль — AndroidViewModel + LiveData (как у остальных ViewModel в проекте).
+ * Работа с БД — suspend-методы репозитория, внутри viewModelScope.
  *
- * Почему не Flow: в проекте везде LiveData + suspend, Room без Flow.
- * Не плодим второй стиль.
+ * Почему RecipeListItem, а не просто RecipeEntity:
+ *  у RecipeEntity НЕТ поля imageUrl — фото живут в recipe_media
+ *  (RecipeMediaEntity). Чтобы не тянуть БД из адаптера, ViewModel
+ *  для каждого рецепта достаёт первое фото (getPhotos(recipeId).firstOrNull())
+ *  и вычисляет локальный File через ImageUtils.getRecipeMediaFile(...).
+ *  Адаптер получает готовый photoFile.
  *
  * Особенности:
- *  - loadRecipes() отменяет предыдущую загрузку (Job), чтобы при быстром
- *    переключении сортировки/поиска не было гонки и «мигания» старых данных.
+ *  - loadRecipes() отменяет предыдущую загрузку (Job) — нет гонки
+ *    при быстром переключении сортировки/поиска.
  *  - searchQuery и sortNewest хранятся в полях, чтобы повторный вызов
  *    loadRecipes() (например, после возврата из RecipeEditActivity)
  *    подхватил актуальное состояние.
@@ -59,8 +67,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // LIVEDATA ДЛЯ UI
     // ============================================================
 
-    private val _recipes = MutableLiveData<List<RecipeEntity>>(emptyList())
-    val recipes: LiveData<List<RecipeEntity>> = _recipes
+    private val _recipes = MutableLiveData<List<RecipeAdapter.RecipeListItem>>(emptyList())
+    val recipes: LiveData<List<RecipeAdapter.RecipeListItem>> = _recipes
 
     /** true — идёт загрузка (для прогресса / скрытия emptyState). */
     private val _isLoading = MutableLiveData(false)
@@ -99,7 +107,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         loadJob = viewModelScope.launch {
             _isLoading.value = true
             try {
-                val result: List<RecipeEntity> = if (searchQuery.isBlank()) {
+                val recipes: List<RecipeEntity> = if (searchQuery.isBlank()) {
                     recipesRepository.getRecipesBySource(source, sortNewest)
                 } else {
                     // Поиск возвращает по createdAt DESC (см. RecipeDao.searchBySource).
@@ -109,13 +117,40 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     else found.sortedBy { it.title.lowercase() }
                 }
 
+                // Для каждого рецепта — локальный файл первого фото (если есть).
+                val appContext = getApplication<Application>()
+                val listItems: List<RecipeAdapter.RecipeListItem> = recipes.map { recipe ->
+                    val firstPhoto = try {
+                        recipesRepository.getPhotos(recipe.id).firstOrNull()
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    val photoFile: java.io.File? = if (firstPhoto?.imageUrl != null) {
+                        try {
+                            ImageUtils.getRecipeMediaFile(
+                                appContext,
+                                recipe.id,
+                                firstPhoto.imageUrl
+                            )
+                        } catch (e: Exception) {
+                            Logger.log(TAG, "loadRecipes: photoFile error for ${recipe.id}: ${e.message}", e)
+                            null
+                        }
+                    } else {
+                        null
+                    }
+
+                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
+                }
+
                 Logger.log(
                     TAG,
-                    "loadRecipes: source=$source, query='$searchQuery', sortNewest=$sortNewest, count=${result.size}"
+                    "loadRecipes: source=$source, query='$searchQuery', sortNewest=$sortNewest, count=${listItems.size}"
                 )
 
-                _recipes.value = result
-                _isEmpty.value = result.isEmpty()
+                _recipes.value = listItems
+                _isEmpty.value = listItems.isEmpty()
             } catch (e: Exception) {
                 Logger.log(TAG, "loadRecipes ERROR: ${e.message}", e)
                 _recipes.value = emptyList()
