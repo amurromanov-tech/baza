@@ -4,6 +4,8 @@ import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
+import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.Logger
 import com.google.gson.Gson
@@ -11,8 +13,9 @@ import com.google.gson.Gson
 /**
  * Единая точка записи изменений в outbox (changelog).
  *
- * Вызывается из MainViewModel / TaskRepository при каждом
- * локальном изменении Item / Folder / Task / History.
+ * Вызывается из MainViewModel / TaskRepository / RecipesRepository
+ * при каждом локальном изменении Item / Folder / Task / History /
+ * Recipe / RecipeMedia.
  *
  * Отвечает за:
  *  - Сериализацию entity в JSON.
@@ -130,6 +133,80 @@ object OutboxHelper {
             Logger.log(TAG, "logHistory: id=${entry.id}, action=${entry.action}, itemId=${entry.itemId}")
         } catch (e: Exception) {
             Logger.log(TAG, "logHistory ERROR: id=${entry.id}, ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0: РЕЦЕПТЫ И МЕДИА РЕЦЕПТОВ
+    // ============================================================
+
+    /**
+     * Записать изменение рецепта в outbox.
+     *
+     * RecipeEntity сериализуется целиком (title, description, source,
+     * syncStatus, isDeleted, deletedAt, deletedBy, deleteConfirmed и т.д.)
+     * — значит новые поля уезжают в changelog автоматически, если
+     * завтра добавим что-то ещё в сущность. Не переписывать payload
+     * вручную — потеряются поля.
+     */
+    suspend fun logRecipe(
+        db: AppDatabase,
+        recipe: RecipeEntity,
+        action: String,
+        changedBy: String
+    ) {
+        try {
+            val json = gson.toJson(recipe)
+            val entry = OutboxEntity(
+                entityType = OutboxEntity.ENTITY_RECIPE,
+                entityId = recipe.id,
+                action = action,
+                payloadJson = json,
+                changedBy = changedBy,
+                createdAt = System.currentTimeMillis()
+            )
+            db.outboxDao().insert(entry)
+            Logger.log(
+                TAG,
+                "logRecipe: action=$action, id=${recipe.id}, source='${recipe.source}', title='${recipe.title}'"
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "logRecipe ERROR: action=$action, id=${recipe.id}, ${e.message}")
+        }
+    }
+
+    /**
+     * Записать изменение медиа рецепта в outbox.
+     *
+     * RecipeMediaEntity сериализуется целиком (recipeId, mediaType,
+     * orderIndex, imageUrl, thumbnailUrl, imageSynced, mimeType,
+     * isDeleted и т.д.). Одна строка = один файл = одна запись
+     * в changelog.
+     */
+    suspend fun logRecipeMedia(
+        db: AppDatabase,
+        media: RecipeMediaEntity,
+        action: String,
+        changedBy: String
+    ) {
+        try {
+            val json = gson.toJson(media)
+            val entry = OutboxEntity(
+                entityType = OutboxEntity.ENTITY_RECIPE_MEDIA,
+                entityId = media.id,
+                action = action,
+                payloadJson = json,
+                changedBy = changedBy,
+                createdAt = System.currentTimeMillis()
+            )
+            db.outboxDao().insert(entry)
+            Logger.log(
+                TAG,
+                "logRecipeMedia: action=$action, id=${media.id}, recipeId=${media.recipeId}, " +
+                    "type=${media.mediaType}, order=${media.orderIndex}"
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "logRecipeMedia ERROR: action=$action, id=${media.id}, ${e.message}")
         }
     }
 
