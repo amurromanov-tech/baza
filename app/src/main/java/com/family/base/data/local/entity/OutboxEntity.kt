@@ -8,9 +8,9 @@ import java.util.UUID
 /**
  * Очередь исходящих изменений для синхронизации через changelog.
  *
- * Каждое локальное изменение Item / Folder / Task / History кладёт сюда запись.
- * SyncManager читает несинхронизированные записи, формирует
- * JSON-пакет changelog и отправляет на Яндекс.Диск.
+ * Каждое локальное изменение Item / Folder / Task / History / Recipe /
+ * RecipeMedia кладёт сюда запись. SyncManager читает несинхронизированные
+ * записи, формирует JSON-пакет changelog и отправляет на Яндекс.Диск.
  *
  * После успешной отправки — record помечается isSynced = true.
  */
@@ -30,12 +30,15 @@ data class OutboxEntity(
      *  - "item"
      *  - "folder"
      *  - "task"
-     *  - "history"  🆕 v16.2
+     *  - "history"       🆕 v16.2
+     *  - "recipe"        🆕 v21.1.0
+     *  - "recipe_media"  🆕 v21.1.0
      */
     val entityType: String,
 
     /**
-     * ID изменённой сущности (item.id / folder.id / task.id / history.id).
+     * ID изменённой сущности
+     * (item.id / folder.id / task.id / history.id / recipe.id / recipe_media.id).
      */
     val entityId: String,
 
@@ -89,6 +92,10 @@ data class OutboxEntity(
         const val ENTITY_FOLDER = "folder"
         const val ENTITY_TASK = "task"
         const val ENTITY_HISTORY = "history"  // 🆕 v16.2
+
+        // 🆕 v21.1.0: рецепты и их медиа
+        const val ENTITY_RECIPE = "recipe"
+        const val ENTITY_RECIPE_MEDIA = "recipe_media"
 
         const val ACTION_CREATE = "create"
         const val ACTION_UPDATE = "update"
