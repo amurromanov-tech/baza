@@ -76,17 +76,10 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingRootFolderType: String? = null
 
-    /**
-     * 🆕 v20.3.4: защита от двойного показа в одном onResume.
-     */
     private var todayDialogShownInThisResume = false
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
-
-    // ============================================================
-    // 🆕 v20.4.2: запрос POST_NOTIFICATIONS (Android 13+)
-    // ============================================================
 
     private val postNotificationsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -184,9 +177,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v16.0.15: возврат из «🛒 Список покупок».
-     */
     private val shoppingListLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -203,12 +193,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 🆕 v21.1.0 (Шаг 1.3): launcher для возврата из RecipeListActivity.
-     * Сейчас используется для того, чтобы обновить счётчики рецептов
-     * после добавления/удаления рецепта на будущих шагах. Пока просто
-     * перезагружает счётчики — это безопасно и полезно.
-     */
     private val recipeListLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -216,13 +200,6 @@ class MainActivity : AppCompatActivity() {
         loadSystemFolderCounters()
     }
 
-    /**
-     * 🆕 ЧЕКИ: launcher для сканирования QR-кода чека.
-     *
-     * Запускает BarcodeScannerActivity в режиме MODE_RECEIPT_QR.
-     * Сканер сам открывает ReceiptPreviewActivity, а та — по RESULT_OK
-     * возвращает id созданной папки покупки → навигация в неё.
-     */
     private val receiptPreviewLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -314,13 +291,6 @@ class MainActivity : AppCompatActivity() {
                             Intent(this, ShoppingListActivity::class.java)
                         )
                     }
-                    // ============================================================
-                    // 🆕 v20.4.9: СИСТЕМНАЯ ПАПКА «🖼️ ГАЛЕРЕЯ»
-                    // Открываем GalleryActivity на пути /Романовы (по умолчанию
-                    // в GalleryActivity, если EXTRA_PATH не передан).
-                    // Внутрь этой папки через navigateToFolder НЕ ходим —
-                    // её содержимое не в Room, а на Яндекс.Диске.
-                    // ============================================================
                     FolderEntity.SYSTEM_KEY_GALLERY -> {
                         Logger.log(TAG, "onFolderClick: opening GalleryActivity")
                         startActivity(Intent(this, GalleryActivity::class.java))
@@ -328,25 +298,23 @@ class MainActivity : AppCompatActivity() {
                     // ============================================================
                     // 🆕 v21.1.0 (Шаг 1.3): СИСТЕМНЫЕ ПАПКИ «РЕЦЕПТЫ»
                     //
-                    // Открываем RecipeListActivity с EXTRA_SOURCE:
-                    //   SYSTEM_KEY_RECIPES     → "all"  («🍳 Рецепты» — все)
-                    //   SYSTEM_KEY_RECIPES_AI  → "ai"   («🤖 Рецепты ИИ»)
-                    //   SYSTEM_KEY_RECIPES_MY  → "user" («📝 Мои рецепты»)
+                    // ВАЖНОЕ ОТЛИЧИЕ (после жалобы пользователя):
+                    //  - Корневая «🍳 Рецепты» — открывается как ОБЫЧНАЯ ПАПКА
+                    //    через navigateToFolder. Так пользователь видит две
+                    //    подпапки «🤖 Рецепты ИИ» и «📝 Мои рецепты» внутри,
+                    //    как раньше. Иначе он попадает в пустой экран
+                    //    с надписью «Рецептов пока нет» и думает, что всё
+                    //    сломалось.
                     //
-                    // Используем recipeListLauncher, чтобы после возврата
-                    // обновить счётчики рецептов в корне (пригодятся
-                    // на Шаге 1.4, когда появятся реальные добавления).
+                    //  - Дочерние «🤖 Рецепты ИИ» и «📝 Мои рецепты» —
+                    //    открывают RecipeListActivity с EXTRA_SOURCE.
+                    //
+                    //  Так и задумано: корень «Рецептов» = контейнер,
+                    //  содержимое = RecipeListActivity.
                     // ============================================================
                     FolderEntity.SYSTEM_KEY_RECIPES -> {
-                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=all)")
-                        recipeListLauncher.launch(
-                            Intent(this, RecipeListActivity::class.java).apply {
-                                putExtra(
-                                    RecipeListActivity.EXTRA_SOURCE,
-                                    RecipeListActivity.EXTRA_SOURCE_ALL
-                                )
-                            }
-                        )
+                        Logger.log(TAG, "onFolderClick: navigating into recipes root folder")
+                        navigateToFolder(folder)
                     }
                     FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
                         Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=ai)")
@@ -482,10 +450,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // ============================================================
-    // 🆕 v20.4.2: ЗАПРОС POST_NOTIFICATIONS
-    // ============================================================
-
     private fun maybeRequestPostNotifications() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             Logger.log(TAG, "maybeRequestPostNotifications: Android < 13, no permission needed")
@@ -518,9 +482,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
- // ============================================================
- // СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
- // ============================================================
  private fun loadSystemFolderCounters() {
      lifecycleScope.launch {
          try {
@@ -533,8 +494,6 @@ class MainActivity : AppCompatActivity() {
                  val shoppingList = db.itemDao()
                      .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
 
-                 // 🆕 v21.1.0: счётчики рецептов для подписей
-                 // «🤖 N рецептов» / «📝 N рецептов» в корне.
                  val recipesAi = try {
                      db.recipeDao().countBySource(RecipeEntity.SOURCE_AI)
                  } catch (e: Exception) {
@@ -598,9 +557,6 @@ class MainActivity : AppCompatActivity() {
          }
      }
  }
-    // ============================================================
-    // onNewIntent
-    // ============================================================
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Logger.log(TAG, "onNewIntent called")
@@ -614,9 +570,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ОТКРЫТИЕ КОРНЕВОЙ ПАПКИ ПО ТИПУ
-    // ============================================================
     private fun handlePendingRootFolder() {
         val type = pendingRootFolderType ?: return
         pendingRootFolderType = null
@@ -677,10 +630,6 @@ class MainActivity : AppCompatActivity() {
         hideProgressJob?.cancel()
         stopRepeat()
     }
-
-    // ============================================================
-    // ОКНО «НА СЕГОДНЯ»
-    // ============================================================
 
     private suspend fun maybeShowTodayDialog() {
         try {
@@ -782,9 +731,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // ВЫБОР ПОЛЬЗОВАТЕЛЯ
-    // ============================================================
     private fun launchSelectUserIfNeeded() {
         if (tokenStorage.getCurrentUser() == null) {
             Logger.log(TAG, "No user selected, launching SelectUserActivity")
@@ -796,9 +742,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПЛАШКА ПРОГРЕССА СИНХРОНИЗАЦИИ
-    // ============================================================
     private fun updateSyncProgressCard(progress: SyncProgress) {
         hideProgressJob?.cancel()
 
@@ -861,9 +804,6 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
-    // ============================================================
-    // НАВИГАЦИЯ
-    // ============================================================
     private fun updatePathTitle() {
         pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
     }
@@ -878,9 +818,6 @@ class MainActivity : AppCompatActivity() {
         itemDetailLauncher.launch(intent)
     }
 
-    // ============================================================
-    // ПОИСК
-    // ============================================================
     private fun showSearchDialog() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1101,9 +1038,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // ДИАЛОГ «НЕЛЬЗЯ АРХИВИРОВАТЬ»
-    // ============================================================
     private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
         AlertDialog.Builder(this)
             .setTitle("⚠️ Нельзя архивировать")
@@ -1120,10 +1054,6 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Отмена", null)
             .show()
     }
-
-    // ============================================================
-    // СПИСАНИЕ / АРХИВ
-    // ============================================================
 
     private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
         if (item.quantity <= 1) {
@@ -1223,9 +1153,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ С ВЫБОРОМ КОЛИЧЕСТВА
-    // ============================================================
     private fun showMoveItemDialog(item: ItemEntity) {
         if (item.quantity <= 1) {
             openMoveFolderPicker(item, 1)
@@ -1280,9 +1207,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    // ============================================================
-    // СТЕППЕР
-    // ============================================================
     private class StepperResult(
         val container: LinearLayout,
         val editText: EditText,
@@ -1420,9 +1344,6 @@ class MainActivity : AppCompatActivity() {
         repeatRunnable = null
     }
 
-    // ============================================================
-    // АРХИВАЦИЯ ИЗ КОНТЕКСТНОГО МЕНЮ
-    // ============================================================
     private fun showArchiveDialog(item: ItemEntity) {
         val reasons = arrayOf(
             "🧴 Израсходовано",
@@ -1486,9 +1407,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // УДАЛЕНИЕ ПАПКИ
-    // ============================================================
     private fun confirmDeleteFolder(folder: FolderEntity) {
         if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
             Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
@@ -1582,9 +1500,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ ПАПКИ
-    // ============================================================
     private fun showMoveFolderDialog(folder: FolderEntity) {
         if (folder.isSystem) {
             Toast.makeText(this, "Системную папку нельзя переместить", Toast.LENGTH_SHORT).show()
@@ -1651,9 +1566,6 @@ class MainActivity : AppCompatActivity() {
         itemDetailLauncher.launch(intent)
     }
 
-    // ============================================================
-    // УДАЛЕНИЕ ПРЕДМЕТА
-    // ============================================================
     private fun confirmDeleteItem(item: ItemEntity) {
         if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
             Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
