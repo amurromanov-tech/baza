@@ -19,9 +19,11 @@ import com.family.base.data.local.entity.*
         SyncInfoEntity::class,
         TaskEntity::class,
         OutboxEntity::class,
-        ProcessedChangelogEntity::class
+        ProcessedChangelogEntity::class,
+        RecipeEntity::class,
+        RecipeMediaEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +37,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
     abstract fun outboxDao(): OutboxDao
     abstract fun processedChangelogDao(): ProcessedChangelogDao
+    abstract fun recipeDao(): RecipeDao
+    abstract fun recipeMediaDao(): RecipeMediaDao
 
     companion object {
         @Volatile
@@ -452,7 +456,7 @@ abstract class AppDatabase : RoomDatabase() {
         //   - в FolderEntity: @ColumnInfo(defaultValue = "0") val iconSynced
         //   - индексы объявлены в @Entity(indices=...).
         // ============================================================
-        private val MIGRATION_20_21 = object : Migration(20, 21) {
+                private val MIGRATION_20_21 = object : Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // items.imageSynced
                 db.execSQL("ALTER TABLE items ADD COLUMN imageSynced INTEGER NOT NULL DEFAULT 0")
@@ -461,6 +465,101 @@ abstract class AppDatabase : RoomDatabase() {
                 // folders.iconSynced
                 db.execSQL("ALTER TABLE folders ADD COLUMN iconSynced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_iconSynced ON folders(iconSynced)")
+            }
+        }
+
+        // ============================================================
+        // 🆕 v21.1.0 (миграция 21→22): РЕЦЕПТЫ + МЕДИА РЕЦЕПТОВ
+        //
+        // Добавляем две новые таблицы:
+        //   recipes       — «Рецепты ИИ» и «Мои рецепты» (одна таблица, source = "ai" | "user");
+        //   recipe_media  — фото/видео рецептов (одна строка = один файл).
+        //
+        // ⚠️ Правило №34: схема @Entity должна точно совпадать с этим SQL.
+        //
+        // recipes:
+        //  - source         TEXT NOT NULL DEFAULT 'user'   → @ColumnInfo(defaultValue = "user")
+        //  - syncStatus     TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
+        //  - isDeleted      INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //  - deleteConfirmed INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
+        //  - description, updatedBy, deletedAt, deletedBy — nullable, без DEFAULT.
+        //
+        // recipe_media:
+        //  - mediaType      TEXT NOT NULL                  → без defaultValue (обязательное)
+        //  - orderIndex     INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //  - imageSynced    INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //  - syncStatus     TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
+        //  - isDeleted      INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //  - deleteConfirmed INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
+        //  - imageUrl, thumbnailUrl, mimeType, deletedAt, deletedBy — nullable, без DEFAULT.
+        //
+        // Индексы создаём здесь же — имена должны совпадать с @Entity(indices=...).
+        // ============================================================
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                // ---------- recipes ----------
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS recipes (
+                        id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        description TEXT,
+                        source TEXT NOT NULL DEFAULT 'user',
+                        createdBy TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedBy TEXT,
+                        updatedAt INTEGER NOT NULL,
+                        syncStatus TEXT NOT NULL DEFAULT 'synced',
+                        isDeleted INTEGER NOT NULL DEFAULT 0,
+                        deletedAt INTEGER,
+                        deletedBy TEXT,
+                        deleteConfirmed INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_title ON recipes(title)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_createdAt ON recipes(createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_source_createdAt ON recipes(source, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_isDeleted ON recipes(isDeleted)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_recipes_deleteConfirmed_deletedAt " +
+                        "ON recipes(deleteConfirmed, deletedAt)"
+                )
+
+                // ---------- recipe_media ----------
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS recipe_media (
+                        id TEXT NOT NULL,
+                        recipeId TEXT NOT NULL,
+                        mediaType TEXT NOT NULL,
+                        orderIndex INTEGER NOT NULL DEFAULT 0,
+                        imageUrl TEXT,
+                        thumbnailUrl TEXT,
+                        imageSynced INTEGER NOT NULL DEFAULT 0,
+                        mimeType TEXT,
+                        createdAt INTEGER NOT NULL,
+                        createdBy TEXT NOT NULL,
+                        syncStatus TEXT NOT NULL DEFAULT 'synced',
+                        isDeleted INTEGER NOT NULL DEFAULT 0,
+                        deletedAt INTEGER,
+                        deletedBy TEXT,
+                        deleteConfirmed INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_media_recipeId ON recipe_media(recipeId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_recipe_media_recipeId_orderIndex " +
+                        "ON recipe_media(recipeId, orderIndex)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_media_imageSynced ON recipe_media(imageSynced)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_media_isDeleted ON recipe_media(isDeleted)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_recipe_media_deleteConfirmed_deletedAt " +
+                        "ON recipe_media(deleteConfirmed, deletedAt)"
+                )
             }
         }
 
@@ -2165,7 +2264,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_20,
                         MIGRATION_17_20,
 
-                        // 🆕 v20 → v21 (v20.7.5): imageSynced + iconSynced
+                                                // 🆕 v20 → v21 (v20.7.5): imageSynced + iconSynced
                         MIGRATION_20_21_DIRECT,
 
                         // 🆕 Цепочки с пропуском 20 (сразу в 21)
@@ -2186,7 +2285,11 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_21,
                         MIGRATION_17_21,
                         MIGRATION_18_21,
-                        MIGRATION_19_21
+                        MIGRATION_19_21,
+
+                        // 🆕 v21 → v22 (v21.1.0): recipes + recipe_media
+                        MIGRATION_21_22
+                    )
                     )
                     .build()
                     .also { INSTANCE = it }
