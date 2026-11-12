@@ -215,7 +215,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v15 → v16: processed_changelogs (учёт входящих пакетов)
+        // v15 → v16: processed_changelogs (учёт входящих пакетов)
         // ============================================================
         private val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -240,15 +240,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v16 → v17: системные папки «Покупки» и «Список покупок»
-        //
-        // Задача: превратить уже существующую папку «🛒 Покупки»
-        // (если есть) в системную с фиксированным id, и создать
-        // системную папку «🛒 Список покупок».
-        //
-        // ⚠️ Миграция НЕ пишет в outbox — иначе первый синк зальёт
-        // псевдо-изменения. Changelog подхватит эти папки позже —
-        // при следующем штатном изменении или через mergeData.
+        // v16 → v17: системные папки «Покупки» и «Список покупок»
         // ============================================================
         private val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -299,7 +291,6 @@ abstract class AppDatabase : RoomDatabase() {
                             "WHERE id = 'system-folder-purchases'"
                     )
                 }
-                // Если oldId == null — папки «Покупки» нет, создадим ниже пустую.
 
                 // ── Шаг 2. Убедиться, что системная «🛒 Покупки» существует ──
                 val purchasesExists: Boolean = run {
@@ -352,7 +343,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v17 → v18: удаление мёртвой таблицы sync_queue
+        // v17 → v18: удаление мёртвой таблицы sync_queue
         // ============================================================
         private val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -361,7 +352,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v18 → v19: tombstones для удалений (№10)
+        // v18 → v19: tombstones для удалений (№10)
         // ============================================================
         private val MIGRATION_18_19 = object : Migration(18, 19) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -394,21 +385,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v19 → v20: напоминания задач (Путь 2 + Путь 3)
-        //
-        // Добавляем в tasks:
-        //   remindAt          INTEGER NULL       — точный момент напоминания
-        //   autoRemindEnabled INTEGER NOT NULL DEFAULT 1 — умный пинг «пока не сделаю»
-        //
-        // Существующие задачи автоматически получают remindAt = NULL
-        // (точного пинга нет) и autoRemindEnabled = 1 (умный пинг включён).
-        // Поведение старых задач: если есть dueDate — планировщик возьмёт
-        // его; если нет — включится умный пинг (Путь 3).
-        //
-        // ⚠️ Правило №34: схема @Entity должна точно совпадать с этой миграцией.
-        //  - remindAt — nullable без DEFAULT → в TaskEntity БЕЗ @ColumnInfo(defaultValue).
-        //  - autoRemindEnabled — NOT NULL DEFAULT 1 → в TaskEntity @ColumnInfo(defaultValue = "1").
-        //  - Индексы создаём здесь → в TaskEntity @Entity(indices=...) объявлены.
+        // v19 → v20: напоминания задач (Путь 2 + Путь 3)
         // ============================================================
         private val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -428,35 +405,9 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v20 → v21 (эта сессия, v20.7.5): ФОТО НА ДИСКЕ
-        //
-        // Задача: разделить «файл в кэше приложения» и «файл залит
-        // на Яндекс.Диск». До этой миграции оба факта кодировались
-        // одним imageUrl/iconUrl, из-за чего uploadUnsyncedImages
-        // с фильтром imageUrl.isNullOrEmpty() отсекал все новые фото:
-        // CatalogViewModel.createItem проставлял imageUrl локально
-        // ещё до синка → на Диск фото не уходило никогда.
-        //
-        // Что делаем:
-        //   items.imageSynced   INTEGER NOT NULL DEFAULT 0
-        //   folders.iconSynced  INTEGER NOT NULL DEFAULT 0
-        // + индексы index_items_imageSynced, index_folders_iconSynced.
-        //
-        // ⚠️ DEFAULT 0 для ВСЕХ существующих записей — намеренно.
-        // После обновления первый синк перезальёт на Диск всё, у чего
-        // есть локальный файл фото. Это безопасно:
-        //   - getUploadUrl(overwrite=true);
-        //   - uploadItemImage/uploadFolderImage идемпотентны.
-        // Зато так гарантированно чинится и repair-кейс
-        // «imageUrl есть, а на Диске 404» — перезалив восстановит файл.
-        //
-        // ⚠️ Правило №34: схема @Entity должна точно совпадать
-        // с этой миграцией:
-        //   - в ItemEntity: @ColumnInfo(defaultValue = "0") val imageSynced
-        //   - в FolderEntity: @ColumnInfo(defaultValue = "0") val iconSynced
-        //   - индексы объявлены в @Entity(indices=...).
+        // v20 → v21: imageSynced + iconSynced (фото на Диске)
         // ============================================================
-                private val MIGRATION_20_21 = object : Migration(20, 21) {
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // items.imageSynced
                 db.execSQL("ALTER TABLE items ADD COLUMN imageSynced INTEGER NOT NULL DEFAULT 0")
@@ -469,31 +420,25 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 v21.1.0 (миграция 21→22): РЕЦЕПТЫ + МЕДИА РЕЦЕПТОВ
+        // v21 → v22: РЕЦЕПТЫ + МЕДИА РЕЦЕПТОВ (v21.1.0)
         //
-        // Добавляем две новые таблицы:
-        //   recipes       — «Рецепты ИИ» и «Мои рецепты» (одна таблица, source = "ai" | "user");
+        // Новые таблицы:
+        //   recipes       — «Рецепты ИИ» + «Мои рецепты» (одна таблица, source = "ai" | "user");
         //   recipe_media  — фото/видео рецептов (одна строка = один файл).
         //
-        // ⚠️ Правило №34: схема @Entity должна точно совпадать с этим SQL.
-        //
-        // recipes:
-        //  - source         TEXT NOT NULL DEFAULT 'user'   → @ColumnInfo(defaultValue = "user")
-        //  - syncStatus     TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
-        //  - isDeleted      INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
-        //  - deleteConfirmed INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
-        //  - description, updatedBy, deletedAt, deletedBy — nullable, без DEFAULT.
-        //
-        // recipe_media:
-        //  - mediaType      TEXT NOT NULL                  → без defaultValue (обязательное)
-        //  - orderIndex     INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
-        //  - imageSynced    INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
-        //  - syncStatus     TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
-        //  - isDeleted      INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
-        //  - deleteConfirmed INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
-        //  - imageUrl, thumbnailUrl, mimeType, deletedAt, deletedBy — nullable, без DEFAULT.
-        //
-        // Индексы создаём здесь же — имена должны совпадать с @Entity(indices=...).
+        // ⚠️ Схема @Entity должна точно совпадать с этим SQL (Правило №34):
+        //   recipes:
+        //     - source          TEXT NOT NULL DEFAULT 'user'   → @ColumnInfo(defaultValue = "user")
+        //     - syncStatus      TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
+        //     - isDeleted       INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //     - deleteConfirmed INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //   recipe_media:
+        //     - mediaType       TEXT NOT NULL                  → без defaultValue
+        //     - orderIndex      INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //     - imageSynced     INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //     - syncStatus      TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
+        //     - isDeleted       INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //     - deleteConfirmed INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
         // ============================================================
         private val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -1397,7 +1342,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 15 (сразу в 16)
+        // ЦЕПОЧКИ С ПРОПУСКОМ 15 (сразу в 16)
         // ============================================================
         private fun migrateTo16(db: SupportSQLiteDatabase) {
             db.execSQL("""
@@ -1521,7 +1466,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 16 (сразу в 17)
+        // ЦЕПОЧКИ С ПРОПУСКОМ 16 (сразу в 17)
         // ============================================================
         private val MIGRATION_2_17 = object : Migration(2, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -1622,7 +1567,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 17 (сразу в 18)
+        // ЦЕПОЧКИ С ПРОПУСКОМ 17 (сразу в 18)
         // ============================================================
         private val MIGRATION_2_18 = object : Migration(2, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -1732,7 +1677,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_17_18_DIRECT = MIGRATION_17_18
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 18 (сразу в 19)
+        // ЦЕПОЧКИ С ПРОПУСКОМ 18 (сразу в 19)
         // ============================================================
         private val MIGRATION_17_19 = object : Migration(17, 19) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -1849,10 +1794,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_18_19_DIRECT = MIGRATION_18_19
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 19 (сразу в 20)
-        //
-        // Для каждой старой версии X: сначала применяем существующую
-        // цепочку до 19, потом MIGRATION_19_20.
+        // ЦЕПОЧКИ С ПРОПУСКОМ 19 (сразу в 20)
         // ============================================================
         private val MIGRATION_18_20 = object : Migration(18, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -1976,14 +1918,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_19_20_DIRECT = MIGRATION_19_20
 
         // ============================================================
-        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 20 (сразу в 21, эта сессия v20.7.5)
-        //
-        // Для каждой старой версии X: сначала существующая цепочка
-        // до 20, потом MIGRATION_20_21. Это страховка на случай,
-        // если на устройстве осталась очень старая БД.
-        //
-        // Практически основным будет MIGRATION_20_21 (переход с
-        // текущей v20 на v21). Остальные цепочки — для совместимости.
+        // ЦЕПОЧКИ С ПРОПУСКОМ 20 (сразу в 21)
         // ============================================================
         private val MIGRATION_20_21_DIRECT = MIGRATION_20_21
 
@@ -2113,6 +2048,154 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ============================================================
+        // ЦЕПОЧКИ С ПРОПУСКОМ 21 (сразу в 22)
+        //
+        // Нужны, если на устройстве осталась ОЧЕНЬ старая БД
+        // (например, восстановили бэкап v2 или устройство обновилось
+        // с давней версии, минуя промежуточные).
+        //
+        // Практически основным будет MIGRATION_21_22. Остальные —
+        // страховка.
+        // ============================================================
+        private val MIGRATION_21_22_DIRECT = MIGRATION_21_22
+
+        private val MIGRATION_2_22 = object : Migration(2, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_3_22 = object : Migration(3, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_4_22 = object : Migration(4, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_5_22 = object : Migration(5, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_6_22 = object : Migration(6, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_7_22 = object : Migration(7, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_8_22 = object : Migration(8, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_9_22 = object : Migration(9, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_10_22 = object : Migration(10, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_11_22 = object : Migration(11, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_12_22 = object : Migration(12, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_13_22 = object : Migration(13, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_14_22 = object : Migration(14, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_15_22 = object : Migration(15, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_15_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_16_22 = object : Migration(16, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_16_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_17_22 = object : Migration(17, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_17_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_18_22 = object : Migration(18, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_18_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_19_22 = object : Migration(19, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_19_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        private val MIGRATION_20_22 = object : Migration(20, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_20_21.migrate(db)
+                MIGRATION_21_22.migrate(db)
+            }
+        }
+
+        // ============================================================
+        // СБОРКА ЭКЗЕМПЛЯРА
+        // ============================================================
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -2167,7 +2250,7 @@ abstract class AppDatabase : RoomDatabase() {
                         // Цепочки 13 → 15
                         MIGRATION_13_15,
 
-                        // 🆕 Цепочки с пропуском 15 (сразу в 16)
+                        // Цепочки с пропуском 15 (сразу в 16)
                         MIGRATION_2_16,
                         MIGRATION_3_16,
                         MIGRATION_4_16,
@@ -2182,10 +2265,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_16,
                         MIGRATION_14_16,
 
-                        // 🆕 v16 → v17: системные «Покупки» и «Список покупок»
+                        // v16 → v17: системные «Покупки» и «Список покупок»
                         MIGRATION_16_17,
 
-                        // 🆕 Цепочки с пропуском 16 (сразу в 17)
+                        // Цепочки с пропуском 16 (сразу в 17)
                         MIGRATION_2_17,
                         MIGRATION_3_17,
                         MIGRATION_4_17,
@@ -2201,10 +2284,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_14_17,
                         MIGRATION_15_17,
 
-                        // 🆕 v17 → v18: DROP TABLE sync_queue
+                        // v17 → v18: DROP TABLE sync_queue
                         MIGRATION_17_18_DIRECT,
 
-                        // 🆕 Цепочки с пропуском 17 (сразу в 18)
+                        // Цепочки с пропуском 17 (сразу в 18)
                         MIGRATION_2_18,
                         MIGRATION_3_18,
                         MIGRATION_4_18,
@@ -2221,10 +2304,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_15_18,
                         MIGRATION_16_18,
 
-                        // 🆕 v18 → v19: tombstones (№10)
+                        // v18 → v19: tombstones (№10)
                         MIGRATION_18_19_DIRECT,
 
-                        // 🆕 Цепочки с пропуском 18 (сразу в 19)
+                        // Цепочки с пропуском 18 (сразу в 19)
                         MIGRATION_17_19,
                         MIGRATION_2_19,
                         MIGRATION_3_19,
@@ -2242,10 +2325,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_15_19,
                         MIGRATION_16_19,
 
-                        // 🆕 v19 → v20: напоминания (Путь 2 + Путь 3)
+                        // v19 → v20: напоминания
                         MIGRATION_19_20_DIRECT,
 
-                        // 🆕 Цепочки с пропуском 19 (сразу в 20)
+                        // Цепочки с пропуском 19 (сразу в 20)
                         MIGRATION_18_20,
                         MIGRATION_2_20,
                         MIGRATION_3_20,
@@ -2264,10 +2347,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_20,
                         MIGRATION_17_20,
 
-                                                // 🆕 v20 → v21 (v20.7.5): imageSynced + iconSynced
+                        // v20 → v21: imageSynced + iconSynced
                         MIGRATION_20_21_DIRECT,
 
-                        // 🆕 Цепочки с пропуском 20 (сразу в 21)
+                        // Цепочки с пропуском 20 (сразу в 21)
                         MIGRATION_2_21,
                         MIGRATION_3_21,
                         MIGRATION_4_21,
@@ -2287,9 +2370,29 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_18_21,
                         MIGRATION_19_21,
 
-                        // 🆕 v21 → v22 (v21.1.0): recipes + recipe_media
-                        MIGRATION_21_22
-                    )
+                        // v21 → v22: recipes + recipe_media
+                        MIGRATION_21_22_DIRECT,
+
+                        // Цепочки с пропуском 21 (сразу в 22)
+                        MIGRATION_2_22,
+                        MIGRATION_3_22,
+                        MIGRATION_4_22,
+                        MIGRATION_5_22,
+                        MIGRATION_6_22,
+                        MIGRATION_7_22,
+                        MIGRATION_8_22,
+                        MIGRATION_9_22,
+                        MIGRATION_10_22,
+                        MIGRATION_11_22,
+                        MIGRATION_12_22,
+                        MIGRATION_13_22,
+                        MIGRATION_14_22,
+                        MIGRATION_15_22,
+                        MIGRATION_16_22,
+                        MIGRATION_17_22,
+                        MIGRATION_18_22,
+                        MIGRATION_19_22,
+                        MIGRATION_20_22
                     )
                     .build()
                     .also { INSTANCE = it }
