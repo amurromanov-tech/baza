@@ -1,9 +1,11 @@
 package com.family.base.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import com.family.base.R
+import androidx.lifecycle.lifecycleScope
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.databinding.ActivityRecipeListBinding
@@ -11,27 +13,26 @@ import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.lifecycle.lifecycleScope
 
 /**
- * 🆕 v21.1.0 (Шаг 1.3): экран «Рецепты».
+ * 🆕 v21.1.0 (Шаг 1.3 + 1.4a): экран «Рецепты».
  *
- * На этом шаге — только каркас:
- *  - MaterialToolbar с заголовком и кнопкой «назад»;
- *  - пустое состояние (emptyState) с разными текстами для «Рецептов ИИ»
- *    и «Моих рецептов»;
- *  - RecyclerView и FAB «+» пока скрыты — реальный список и форма
- *    добавления появятся на Шаге 1.4.
+ * Что делает на этом шаге:
+ *  - Принимает EXTRA_SOURCE ("ai" | "user" | "all"), ставит заголовок;
+ *  - Показывает пустое состояние с разными текстами;
+ *  - Делает один COUNT, чтобы понять, есть ли рецепты;
+ *  - FAB «+» (для "ai" / "user") открывает RecipeEditActivity
+ *    в режиме создания с нужным EXTRA_SOURCE;
+ *  - Тап по пустому состоянию (для "ai" / "user") — то же самое;
+ *  - По возврату из RecipeEditActivity перезагружает COUNT.
  *
- * Запускается из MainActivity с одним из extra:
- *  - RecipeListActivity.EXTRA_SOURCE = RecipeEntity.SOURCE_AI   → «🤖 Рецепты ИИ»
- *  - RecipeListActivity.EXTRA_SOURCE = RecipeEntity.SOURCE_USER → «📝 Мои рецепты»
- *  - RecipeListActivity.EXTRA_SOURCE = EXTRA_SOURCE_ALL         → «🍳 Все рецепты»
- *    (для корневой папки «Рецепты» — на будущее, пока не используется)
+ * Что НЕ делает на этом шаге:
+ *  - Не показывает реальный список (RecyclerView) — это Шаг 1.4b;
+ *  - Не показывает поиск и сортировку — это Шаг 1.4b;
+ *  - Не открывает просмотр рецепта — это Шаг 1.4b (RecipeDetailActivity).
  *
- * БД не трогаем на этом шаге, кроме одного COUNT — чтобы понять,
- * есть ли уже рецепты (для текста пустого состояния). Реальный
- * список будет на Шаге 1.4.
+ * Для source = "all" («🍳 Рецепты») FAB скрыт: это агрегат,
+ * добавлять в него напрямую нечего — только через дочерние.
  */
 class RecipeListActivity : AppCompatActivity() {
 
@@ -49,6 +50,18 @@ class RecipeListActivity : AppCompatActivity() {
 
     /** Источник рецептов: "ai" | "user" | "all". */
     private var source: String = EXTRA_SOURCE_ALL
+
+    /**
+     * Launcher для возврата из RecipeEditActivity / RecipeDetailActivity.
+     * На этом шаге используется только для перезагрузки COUNT после
+     * создания рецепта. В Шаге 1.4b — ещё и для перезагрузки списка.
+     */
+    private val editLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Logger.log(TAG, "editLauncher result: ${result.resultCode}")
+        loadCount()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +81,7 @@ class RecipeListActivity : AppCompatActivity() {
 
         setupToolbar()
         setupEmptyState()
+        setupFab()
         loadCount()
     }
 
@@ -87,12 +101,10 @@ class RecipeListActivity : AppCompatActivity() {
             else -> FolderTitle.ALL
         }
         binding.toolbar.title = title.text
+
+        // Поиск — Шаг 1.4b. Пока btnSearch скрыт в layout.
     }
 
-    /**
-     * Настраивает тексты пустого состояния в зависимости от source.
-     * Сам emptyState показывается в loadCount() — если рецептов нет.
-     */
     private fun setupEmptyState() {
         val (icon, title, subtitle) = when (source) {
             RecipeEntity.SOURCE_AI -> Triple(
@@ -103,7 +115,7 @@ class RecipeListActivity : AppCompatActivity() {
             RecipeEntity.SOURCE_USER -> Triple(
                 "📝",
                 "Здесь пока пусто",
-                "Скоро здесь можно будет добавлять свои рецепты:\nназвание, описание, фото и видео.\n(Появится на Шаге 1.4)"
+                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео."
             )
             else -> Triple(
                 "🍳",
@@ -115,16 +127,48 @@ class RecipeListActivity : AppCompatActivity() {
         binding.tvEmptyIcon.text = icon
         binding.tvEmptyTitle.text = title
         binding.tvEmptySubtitle.text = subtitle
+
+        // Тап по пустому состоянию = «+». Только для "ai" / "user"
+        // (для "all" добавлять напрямую нечего).
+        binding.emptyState.setOnClickListener {
+            if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
+                openCreateRecipe()
+            }
+        }
     }
 
     /**
-     * Один COUNT, чтобы понять, есть ли уже рецепты в выбранном source.
+     * FAB «+» и его видимость.
+     *  - "ai" / "user" → FAB видим, открывает RecipeEditActivity.
+     *  - "all"         → FAB скрыт (агрегат).
+     */
+    private fun setupFab() {
+        if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
+            binding.fabAddRecipe.visibility = View.VISIBLE
+            binding.fabAddRecipe.setOnClickListener {
+                openCreateRecipe()
+            }
+        } else {
+            binding.fabAddRecipe.visibility = View.GONE
+            binding.fabAddRecipe.setOnClickListener(null)
+        }
+    }
+
+    private fun openCreateRecipe() {
+        Logger.log(TAG, "openCreateRecipe: source=$source")
+        val intent = Intent(this, RecipeEditActivity::class.java).apply {
+            putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
+        }
+        editLauncher.launch(intent)
+    }
+
+    /**
+     * Один COUNT, чтобы понять, есть ли рецепты в выбранном source.
      *
-     * На Шаге 1.3 адаптера ещё нет, поэтому:
-     *  - если count == 0 → показываем emptyState (это норма сейчас);
-     *  - если count > 0   → показываем заглушку «Загрузка…» (не пусто,
-     *    но и списка пока нет). На Шаге 1.4 этот метод заменится на
-     *    реальную загрузку списка через RecipeViewModel/RecipesRepository.
+     * На Шаге 1.4a адаптера ещё нет, поэтому:
+     *  - если count == 0 → emptyState (норма, пока ничего не создано);
+     *  - если count > 0   → заглушка «Загрузка…» (список появится
+     *    в Шаге 1.4b).
      */
     private fun loadCount() {
         lifecycleScope.launch {
@@ -141,11 +185,9 @@ class RecipeListActivity : AppCompatActivity() {
                 if (count <= 0) {
                     showEmptyState()
                 } else {
-                    // На Шаге 1.4 здесь будет реальный список.
-                    // Пока рецептов нет — этот бранч практически не сработает.
                     showEmptyState(
                         overrideTitle = "Загрузка…",
-                        overrideSubtitle = "Рецепты есть ($count), но список появится на следующем шаге."
+                        overrideSubtitle = "Рецепты есть ($count), но список появится на Шаге 1.4b."
                     )
                 }
             } catch (e: Exception) {
