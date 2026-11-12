@@ -17,7 +17,6 @@
             android:layout_height="wrap_content"
             android:background="?attr/colorPrimary"
             android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
-            app:navigationIcon="@drawable/ic_arrow_back"
             app:titleTextColor="?attr/colorOnPrimary"
             tools:title="Рецепты">
 
@@ -44,7 +43,7 @@
 
         <!--
             Контейнер для чипов сортировки (🕐 Новые / 🔤 А-Я) — появится
-            на Шаге 1.4, когда будет реальный список. Сейчас скрыт.
+            на Шаге 1.4b, когда будет реальный список. Сейчас скрыт.
         -->
         <HorizontalScrollView
             android:id="@+id/sortChipsScroll"
@@ -129,7 +128,7 @@
 
     <!--
         FAB «+». На Шаге 1.3 скрыт: реальной формы добавления рецепта
-        пока нет (появится на Шаге 1.4). Включим позже сменой visibility.
+        пока нет (появится на Шаге 1.4a). Включим позже сменой visibility.
     -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabAddRecipe"
