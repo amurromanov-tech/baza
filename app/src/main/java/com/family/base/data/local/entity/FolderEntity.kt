@@ -30,6 +30,11 @@ import java.util.UUID
  * на iconSynced, а не на iconUrl.isNullOrEmpty(), иначе только что
  * созданная папка с локально проставленным iconUrl отсекалась бы
  * фильтром и никогда не уезжала на Диск.
+ *
+ * 🆕 v21.1.0 (миграция 21→22): добавлены константы для «Рецептов»
+ * (SYSTEM_ID_RECIPES / SYSTEM_ID_RECIPES_AI / SYSTEM_ID_RECIPES_MY
+ * и SYSTEM_KEY_* / SYSTEM_NAME_*). Схема БД НЕ меняется —
+ * это просто строковые константы, миграция Room не нужна.
  */
 @Entity(
     tableName = "folders",
@@ -80,7 +85,7 @@ data class FolderEntity(
      * архивировать. В UI скрываются соответствующие кнопки.
      *
      * Примеры: «🏠 Домашние дела», «🛒 Покупки», «🛒 Список покупок»,
-     * «🖼️ Галерея».
+     * «🖼️ Галерея», «🍳 Рецепты» (и две её дочерние).
      */
     val isSystem: Boolean = false,
 
@@ -90,7 +95,10 @@ data class FolderEntity(
      * "home_tasks"    — для папки «🏠 Домашние дела».
      * "purchases"     — для папки «🛒 Покупки» (чеки).
      * "shopping_list" — для папки «🛒 Список покупок».
-     * "gallery"       — для папки «🖼️ Галерея» (🆕 v20.4.9).
+     * "gallery"       — для папки «🖼️ Галерея» (v20.4.9).
+     * "recipes"       — для папки «🍳 Рецепты» (v21.1.0).
+     * "recipes_ai"    — для папки «🤖 Рецепты ИИ» (v21.1.0).
+     * "recipes_my"    — для папки «📝 Мои рецепты» (v21.1.0).
      *
      * Используется для поиска системной папки при старте приложения
      * (upsert, если её нет) и для перехвата клика в MainActivity.
@@ -203,6 +211,40 @@ data class FolderEntity(
          */
         const val SYSTEM_KEY_GALLERY = "gallery"
         const val SYSTEM_ID_GALLERY = "system-folder-gallery"
+
+        // ============================================================
+        // 🆕 v21.1.0: «🍳 РЕЦЕПТЫ» (корневая + две дочерние)
+        //
+        // Корневая системная папка и две её дочерние — тоже isSystem.
+        // Создаются идемпотентно в RecipesRepository.ensureRecipesFolders()
+        // при старте приложения (по аналогии с ensureGalleryFolder).
+        //
+        // Фиксированные id (а не UUID) — чтобы на всех устройствах
+        // это были одни и те же записи, и синк через folders.json
+        // не плодил дубликаты.
+        //
+        // Поле parentId у дочерних = SYSTEM_ID_RECIPES.
+        //
+        // Клик по «🍳 Рецепты» в MainActivity → открывает экран
+        // с двумя дочерними (или сразу общий список — решим в UI).
+        // Клик по «🤖 Рецепты ИИ» / «📝 Мои рецепты» → открывает
+        // RecipeListActivity с соответствующим фильтром по source.
+        // ============================================================
+
+        // ---------- Корневая «🍳 Рецепты» ----------
+        const val SYSTEM_KEY_RECIPES = "recipes"
+        const val SYSTEM_ID_RECIPES = "system-folder-recipes"
+        const val SYSTEM_NAME_RECIPES = "🍳 Рецепты"
+
+        // ---------- «🤖 Рецепты ИИ» ----------
+        const val SYSTEM_KEY_RECIPES_AI = "recipes_ai"
+        const val SYSTEM_ID_RECIPES_AI = "system-folder-recipes-ai"
+        const val SYSTEM_NAME_RECIPES_AI = "🤖 Рецепты ИИ"
+
+        // ---------- «📝 Мои рецепты» ----------
+        const val SYSTEM_KEY_RECIPES_MY = "recipes_my"
+        const val SYSTEM_ID_RECIPES_MY = "system-folder-recipes-my"
+        const val SYSTEM_NAME_RECIPES_MY = "📝 Мои рецепты"
 
         const val SYNC_STATUS_SYNCED = "synced"
         const val SYNC_STATUS_PENDING = "pending"
