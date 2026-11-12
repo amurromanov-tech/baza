@@ -34,14 +34,18 @@ class CatalogAdapter(
      *  - shopping_list  → предметы в корне «Списка покупок» («купить»).
      *
      * 🆕 v20.4.9: для «🖼️ Галерея» счётчик не нужен (фото на Диске,
-     * не в БД). Поле galleryPhotos оставлено на будущее (Шаг 3:
-     * можно показать «N фото» после листинга), сейчас не заполняется.
+     * не в БД). Поле galleryPhotos оставлено на будущее.
+     *
+     * 🆕 v21.1.0: для «Рецептов» счётчик берётся из recipes (source = "user" / "ai").
+     * Сейчас не заполняется — покажем статичный текст «Открыть рецепты».
      */
     data class SystemFolderCounters(
         val homeTasksActive: Int = 0,
         val purchasesItems: Int = 0,
         val shoppingListItems: Int = 0,
-        val galleryPhotos: Int = 0
+        val galleryPhotos: Int = 0,
+        val recipesAiCount: Int = 0,
+        val recipesMyCount: Int = 0
     )
 
     private var items: List<Any> = emptyList()
@@ -150,14 +154,10 @@ class CatalogAdapter(
     }
 
     /**
-     * 🆕 v16.0.14: отрисовка системной папки по её systemKey.
+     * Отрисовка системной папки по её systemKey.
      *
-     * 🆕 v20.4.9: добавлена ветка SYSTEM_KEY_GALLERY.
-     *  - иконка ic_gallery;
-     *  - название из entry.name («🖼️ Галерея»);
-     *  - подпись «Открыть фотоархив» (счётчик фото не считаем —
-     *    они на Диске, не в БД);
-     *  - цветная полоса — цвет primary (как у остальных системных).
+     * 🆕 v20.4.9: ветка SYSTEM_KEY_GALLERY.
+     * 🆕 v21.1.0: ветки SYSTEM_KEY_RECIPES / SYSTEM_KEY_RECIPES_AI / SYSTEM_KEY_RECIPES_MY.
      */
     private fun bindSystemFolder(holder: ViewHolder, entry: FolderEntity) {
         val context = holder.itemView.context
@@ -222,6 +222,64 @@ class CatalogAdapter(
                 holder.info.text = "📷 Открыть фотоархив"
             }
 
+            // ============================================================
+            // 🆕 v21.1.0: СИСТЕМНАЯ ПАПКА «🍳 РЕЦЕПТЫ» (корневая)
+            // Открывает экран со списком рецептов (или меню с двумя
+            // дочерними — решим в UI RecipeListActivity).
+            // ============================================================
+            FolderEntity.SYSTEM_KEY_RECIPES -> {
+                holder.icon.load(R.drawable.ic_folder_default) {
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
+                }
+                holder.name.text = entry.name
+
+                val aiCount = systemFolderCounters.recipesAiCount
+                val myCount = systemFolderCounters.recipesMyCount
+                holder.info.text = when {
+                    aiCount + myCount <= 0 -> "🍳 Открыть рецепты"
+                    else -> "🍳 ИИ: $aiCount · Мои: $myCount"
+                }
+            }
+
+            // ============================================================
+            // 🆕 v21.1.0: СИСТЕМНАЯ ПАПКА «🤖 РЕЦЕПТЫ ИИ»
+            // Открывает RecipeListActivity с фильтром source = "ai".
+            // ============================================================
+            FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
+                holder.icon.load(R.drawable.ic_folder_default) {
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
+                }
+                holder.name.text = entry.name
+
+                val n = systemFolderCounters.recipesAiCount
+                holder.info.text = if (n > 0) {
+                    "🤖 $n ${pluralRecipes(n)}"
+                } else {
+                    "🤖 Спросить, что приготовить"
+                }
+            }
+
+            // ============================================================
+            // 🆕 v21.1.0: СИСТЕМНАЯ ПАПКА «📝 МОИ РЕЦЕПТЫ»
+            // Открывает RecipeListActivity с фильтром source = "user".
+            // ============================================================
+            FolderEntity.SYSTEM_KEY_RECIPES_MY -> {
+                holder.icon.load(R.drawable.ic_folder_default) {
+                    placeholder(R.drawable.ic_folder_default)
+                    error(R.drawable.ic_folder_default)
+                }
+                holder.name.text = entry.name
+
+                val n = systemFolderCounters.recipesMyCount
+                holder.info.text = if (n > 0) {
+                    "📝 $n ${pluralRecipes(n)}"
+                } else {
+                    "📝 Добавить свой рецепт"
+                }
+            }
+
             else -> {
                 holder.icon.load(R.drawable.ic_home) {
                     placeholder(R.drawable.ic_home)
@@ -247,6 +305,19 @@ class CatalogAdapter(
             mod10 == 1 && mod100 != 11 -> "предмет"
             mod10 in 2..4 && mod100 !in 12..14 -> "предмета"
             else -> "предметов"
+        }
+    }
+
+    /**
+     * 🆕 v21.1.0: склонение для рецептов.
+     */
+    private fun pluralRecipes(n: Int): String {
+        val mod10 = n % 10
+        val mod100 = n % 100
+        return when {
+            mod10 == 1 && mod100 != 11 -> "рецепт"
+            mod10 in 2..4 && mod100 !in 12..14 -> "рецепта"
+            else -> "рецептов"
         }
     }
 
