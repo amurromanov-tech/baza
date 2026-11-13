@@ -39,26 +39,13 @@ import kotlinx.coroutines.withContext
  *  - Описание: необязательно, многострочное. Пустая строка → null.
  *
  * МЕДИА (🆕 Шаг 1.5-2):
- *  - В режиме РЕДАКТИРОВАНИЯ (рецепт уже сохранён) показываем блок
- *    «Фото и видео»: горизонтальный список уже добавленных файлов
- *    + кнопки «📷 Добавить фото» / «🎬 Добавить видео».
+ *  - В режиме РЕДАКТИРОВАНИЯ показываем блок «Фото и видео»:
+ *    горизонтальный список уже добавленных файлов + кнопки
+ *    «📷 Добавить фото» / «🎬 Добавить видео».
  *  - В режиме СОЗДАНИЯ медиа-блок скрыт с подсказкой
- *    «Сначала сохраните рецепт…» — потому что recipe_media.recipeId
- *    требует существующего рецепта.
- *  - Фото: PickVisualMedia(ImageOnly) → RecipeMediaController.savePhotoFromUri
- *          → RecipesRepository.addMedia(mediaType=photo, mediaId=...).
- *  - Видео: GetContent("video/*") → RecipeMediaController.saveVideoFromUri
- *          → RecipesRepository.addMedia(mediaType=video, mediaId=...).
- *  - Удаление: RecipeMediaController.deleteMediaFiles + RecipesRepository.deleteMedia.
+ *    «Сначала сохраните рецепт…».
  *  - ВСЁ РАБОТАЕТ ОФЛАЙН: файлы пишутся в filesDir/recipe_media/<recipeId>/.
  *    Синк на Диск — Шаг 1.6.
- *
- * Сохранение:
- *  - Создание: RecipesRepository.createRecipe(...) → RESULT_OK + EXTRA_RECIPE_ID.
- *  - Редактирование: RecipesRepository.updateRecipe(...) → RESULT_OK + EXTRA_RECIPE_ID.
- *  - Ошибка: Toast + остаёмся на экране (не закрываемся, чтобы не потерять ввод).
- *
- * Возврат: setResult(RESULT_OK, intentWithExtra(EXTRA_RECIPE_ID, id)).
  */
 class RecipeEditActivity : AppCompatActivity() {
 
@@ -95,10 +82,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // LAUNCHERS
     // ============================================================
 
-    /**
-     * Выбор фото (системный пикер, без permission).
-     * Если пользователь отменил — uri == null.
-     */
     private val pickPhotoLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -109,10 +92,6 @@ class RecipeEditActivity : AppCompatActivity() {
         onPhotoPicked(uri)
     }
 
-    /**
-     * Выбор видео (системный пикер).
-     * GetContent("video/*") — стандартный SAF, работает без permission.
-     */
     private val pickVideoLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -144,7 +123,6 @@ class RecipeEditActivity : AppCompatActivity() {
         val extraSource = intent.getStringExtra(EXTRA_SOURCE)
 
         if (editingRecipeId == null) {
-            // Режим создания — source обязателен.
             if (extraSource != RecipeEntity.SOURCE_AI && extraSource != RecipeEntity.SOURCE_USER) {
                 Logger.log(TAG, "onCreate: CREATE without valid source (got=$extraSource), finish")
                 Toast.makeText(this, "Не указан источник рецепта", Toast.LENGTH_SHORT).show()
@@ -217,8 +195,6 @@ class RecipeEditActivity : AppCompatActivity() {
             onRemoveClick = { media -> onRemoveMediaClicked(media) },
             onItemClick = { media ->
                 Logger.log(TAG, "media item clicked: id=${media.id}, type=${media.mediaType}")
-                // В режиме редактирования клик по превью пока ничего не открывает.
-                // Просмотр — RecipeDetailActivity (1.5-3).
             }
         )
 
@@ -262,13 +238,6 @@ class RecipeEditActivity : AppCompatActivity() {
         updateMediaBlockVisibility()
     }
 
-    /**
-     * Видимость блока «Фото и видео»:
-     *  - создание (editingRecipeId == null): rvMedia/кнопки скрыты,
-     *    tvMediaHint показывает «Сначала сохраните рецепт…»;
-     *  - редактирование: кнопки видны всегда, rvMedia — если есть медиа,
-     *    tvMediaHint показывает «Нет фото и видео» или скрыт.
-     */
     private fun updateMediaBlockVisibility() {
         val isEdit = editingRecipeId != null
         binding.llAddMediaButtons.visibility = if (isEdit) View.VISIBLE else View.GONE
@@ -387,7 +356,6 @@ class RecipeEditActivity : AppCompatActivity() {
                 }
 
                 if (media == null) {
-                    // Не удалось записать в БД — файл уже сохранён, почистим.
                     withContext(Dispatchers.IO) {
                         RecipeMediaController.deleteMediaFiles(
                             this@RecipeEditActivity,
@@ -524,8 +492,6 @@ class RecipeEditActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Локальные файлы удаляем сразу — UI не должен показывать
-                // превью того, чего уже нет в рецепте.
                 withContext(Dispatchers.IO) {
                     RecipeMediaController.deleteMediaFiles(
                         this@RecipeEditActivity,
@@ -572,11 +538,8 @@ class RecipeEditActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val recipeId = editingRecipeId
-                val ok: Boolean
-                val resultId: String?
 
                 if (recipeId == null) {
-                    // Создание
                     val created = withContext(Dispatchers.IO) {
                         repository.createRecipe(
                             title = title,
@@ -585,31 +548,26 @@ class RecipeEditActivity : AppCompatActivity() {
                             currentUser = currentUser
                         )
                     }
+
+                    saving = false
+                    binding.btnSave.isEnabled = true
+
                     if (created == null) {
-                        ok = false
-                        resultId = null
-                    } else {
-                        ok = true
-                        resultId = created.id
-                        // 🆕 1.5-2: после создания переходим в режим редактирования,
-                        // чтобы пользователь сразу мог добавить фото/видео.
-                        // Для этого НЕ закрываем Activity, а перезапускаем её же
-                        // с EXTRA_RECIPE_ID. Результат RESULT_OK отдадим при
-                        // следующем закрытии.
-                        if (ok && resultId != null) {
-                            Logger.log(
-                                TAG,
-                                "onSaveClicked: created id=$resultId, reopening in EDIT mode"
-                            )
-                            withContext(Dispatchers.Main) {
-                                reopenInEditMode(resultId)
-                            }
-                            return@launch
-                        }
+                        Toast.makeText(
+                            this@RecipeEditActivity,
+                            "Не удалось сохранить рецепт",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@launch
                     }
+
+                    Logger.log(
+                        TAG,
+                        "onSaveClicked: created id=${created.id}, reopening in EDIT mode"
+                    )
+                    reopenInEditMode(created.id)
                 } else {
-                    // Редактирование
-                    ok = withContext(Dispatchers.IO) {
+                    val ok = withContext(Dispatchers.IO) {
                         repository.updateRecipe(
                             recipeId = recipeId,
                             newTitle = title,
@@ -617,26 +575,24 @@ class RecipeEditActivity : AppCompatActivity() {
                             currentUser = currentUser
                         )
                     }
-                    resultId = recipeId
-                }
 
-                saving = false
-                binding.btnSave.isEnabled = true
+                    saving = false
+                    binding.btnSave.isEnabled = true
 
-                if (ok && resultId != null) {
-                    Logger.log(TAG, "onSaveClicked: OK, recipeId=$resultId")
-                    val result = android.content.Intent().apply {
-                        putExtra(EXTRA_RECIPE_ID, resultId)
+                    if (ok) {
+                        Logger.log(TAG, "onSaveClicked: OK, recipeId=$recipeId")
+                        val result = android.content.Intent().apply {
+                            putExtra(EXTRA_RECIPE_ID, recipeId)
+                        }
+                        setResult(RESULT_OK, result)
+                        finish()
+                    } else {
+                        Toast.makeText(
+                            this@RecipeEditActivity,
+                            "Не удалось сохранить рецепт",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-                    setResult(RESULT_OK, result)
-                    finish()
-                } else {
-                    Logger.log(TAG, "onSaveClicked: failed (ok=$ok, resultId=$resultId)")
-                    Toast.makeText(
-                        this@RecipeEditActivity,
-                        "Не удалось сохранить рецепт",
-                        Toast.LENGTH_SHORT
-                    ).show()
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "onSaveClicked error: ${e.message}", e)
@@ -651,20 +607,6 @@ class RecipeEditActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * После создания рецепта — перезапускаем Activity в режиме
-     * редактирования, чтобы пользователь сразу мог добавить фото/видео.
-     *
-     * Реализовано как startActivity + finish (без relaunch Activity).
-     * RESULT_OK от новой Activity вернётся вызывающему (RecipeListActivity)
-     * через editLauncher в RecipeListActivity — потому что startActivityForResult
-     * была запущена именно оттуда.
-     *
-     * НО: чтобы RESULT_OK дошёл до RecipeListActivity, нам нужно,
-     * чтобы новая Activity запускалась «на место» старой. Используем
-     * startActivity с FLAG_ACTIVITY_FORWARD_RESULT — тогда результат
-     * новой Activity уйдёт в исходный launcher (editLauncher в RecipeListActivity).
-     */
     private fun reopenInEditMode(recipeId: String) {
         val intent = android.content.Intent(this, RecipeEditActivity::class.java).apply {
             putExtra(EXTRA_RECIPE_ID, recipeId)
@@ -678,13 +620,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // ПОДТВЕРЖДЕНИЕ ВЫХОДА
     // ============================================================
 
-    /**
-     * Если пользователь изменил название или описание — спросим,
-     * точно ли он хочет уйти без сохранения. Иначе просто finish().
-     *
-     * Медиа (фото/видео) сохраняются сразу при добавлении, поэтому
-     * «несохранённых медиа» не бывает — их не проверяем.
-     */
     private fun confirmDiscardIfChanged() {
         if (saving) return
 
