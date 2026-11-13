@@ -32,12 +32,13 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <!--
-                    Плейсхолдер под фото/видео. Реальная галерея
-                    появится на Шаге 1.5. Сейчас скрыт.
-                -->
+                <!-- ============================================================ -->
+                <!-- 🆕 Шаг 1.5-3: ГАЛЕРЕЯ ФОТО                                  -->
+                <!-- Горизонтальный RecyclerView с фото рецепта.                  -->
+                <!-- Скрыт, если фото нет. Клик → FullscreenImageActivity.        -->
+                <!-- ============================================================ -->
                 <LinearLayout
-                    android:id="@+id/mediaPlaceholder"
+                    android:id="@+id/photosBlock"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
@@ -45,13 +46,60 @@
                     tools:visibility="visible">
 
                     <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="📷 Фото"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvPhotos"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:padding="16dp"
-                        android:text="📷 Фото и видео появятся на Шаге 1.5"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="13sp" />
+                        android:layout_marginTop="8dp"
+                        android:clipToPadding="false"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="4dp"
+                        android:scrollbars="horizontal"
+                        tools:itemCount="3"
+                        tools:listitem="@layout/item_recipe_photo" />
+
+                </LinearLayout>
+
+                <!-- ============================================================ -->
+                <!-- 🆕 Шаг 1.5-3: ГАЛЕРЕЯ ВИДЕО                                 -->
+                <!-- Горизонтальный RecyclerView с видео рецепта.                  -->
+                <!-- Скрыт, если видео нет. Клик → VideoPlayerActivity.           -->
+                <!-- ============================================================ -->
+                <LinearLayout
+                    android:id="@+id/videosBlock"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🎬 Видео"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvVideos"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:clipToPadding="false"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="4dp"
+                        android:scrollbars="horizontal"
+                        tools:itemCount="2"
+                        tools:listitem="@layout/item_recipe_video" />
 
                 </LinearLayout>
 
@@ -60,6 +108,7 @@
                     android:id="@+id/tvTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="22sp"
                     android:textStyle="bold"
