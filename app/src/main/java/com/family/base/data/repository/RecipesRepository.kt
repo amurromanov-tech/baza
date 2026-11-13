@@ -43,6 +43,12 @@ import java.util.UUID
  *     - никакой работы с файлами на Диске здесь нет — это делает
  *       отдельный слой (SyncManager), потому что файлы рецептов
  *       грузятся отдельной очередью uploadUnsyncedRecipeMedia.
+ *
+ * 🆕 v21.1.0 (Шаг 1.5-2): addMedia получил параметр mediaId
+ *  (по умолчанию null → сгенерируется UUID внутри). Это нужно, чтобы
+ *  id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
+ *  (<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
+ *  Старые вызовы (без mediaId) продолжают работать как раньше.
  */
 class RecipesRepository(
     private val db: AppDatabase,
@@ -271,9 +277,11 @@ class RecipesRepository(
      *
      * ⚠️ Физическое удаление файлов с Диска — НЕ здесь. Это сделает
      * cleanupOldRecipeTombstones через год, вместе с hardDelete.
+     * Локальные файлы (filesDir/recipe_media/<recipeId>/) тоже удаляются
+     * не сразу — при hard-delete в cleanup (Шаг 1.6).
      *
-     * Права: удалять может только Алексей (проверка в UI/ViewModel,
-     * здесь только техническая операция).
+     * Права: удалять рецепт может Алексей (любой) или автор (свой) —
+     * проверка в UI/ViewModel, здесь только техническая операция.
      */
     suspend fun deleteRecipe(recipeId: String, currentUser: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -301,9 +309,6 @@ class RecipesRepository(
                 // Помечаем всё медиа рецепта tombstone (отдельные записи в outbox).
                 val affected = db.recipeMediaDao().markAllByRecipeDeleted(recipeId, now, currentUser)
                 if (affected > 0) {
-                    val media = db.recipeMediaDao().getByRecipe(recipeId)
-                    // getByRecipe фильтрует isDeleted = 0 — сейчас уже 1.
-                    // Берём все raw по recipeId для логирования outbox.
                     val allRaw = db.recipeMediaDao().getAllRaw().filter { it.recipeId == recipeId && it.isDeleted }
                     allRaw.forEach { m ->
                         try {
@@ -333,12 +338,19 @@ class RecipesRepository(
      * Файл УЖЕ должен быть сохранён локально до вызова этого метода
      * (через RecipeMediaController). Здесь только запись в БД + outbox.
      *
+     * 🆕 Шаг 1.5-2: параметр mediaId.
+     *  - Если передан (RecipeMediaController сгенерировал UUID) — используем его
+     *    как id строки recipe_media. Тогда id == имя файла (без расширения),
+     *    что упрощает синк на Шаге 1.6.
+     *  - Если null (старые вызовы) — генерируем UUID внутри, как раньше.
+     *
      * @param recipeId   id рецепта.
      * @param mediaType  RecipeMediaEntity.TYPE_PHOTO / TYPE_VIDEO.
      * @param localName  имя локального файла (например "abc-123.jpg").
      * @param thumbName  имя файла превью (для видео) или null.
      * @param mimeType   MIME (например "video/mp4").
      * @param currentUser имя пользователя.
+     * @param mediaId    🆕 id для строки recipe_media (null → сгенерируется).
      * @return созданный RecipeMediaEntity, либо null при ошибке.
      */
     suspend fun addMedia(
@@ -347,7 +359,8 @@ class RecipesRepository(
         localName: String,
         thumbName: String?,
         mimeType: String?,
-        currentUser: String
+        currentUser: String,
+        mediaId: String? = null
     ): RecipeMediaEntity? = withContext(Dispatchers.IO) {
         try {
             val recipe = db.recipeDao().getRecipeById(recipeId)
@@ -362,9 +375,10 @@ class RecipesRepository(
 
             val nextIndex = db.recipeMediaDao().nextOrderIndex(recipeId)
             val now = System.currentTimeMillis()
+            val id = mediaId ?: UUID.randomUUID().toString()
 
             val media = RecipeMediaEntity(
-                id = UUID.randomUUID().toString(),
+                id = id,
                 recipeId = recipeId,
                 mediaType = mediaType,
                 orderIndex = nextIndex,
@@ -386,7 +400,7 @@ class RecipesRepository(
 
             Logger.log(
                 TAG,
-                "addMedia: OK id=${media.id}, recipe=$recipeId, type=$mediaType, order=$nextIndex"
+                "addMedia: OK id=${media.id}, recipe=$recipeId, type=$mediaType, order=$nextIndex, localName=$localName"
             )
             media
         } catch (e: Exception) {
@@ -397,7 +411,10 @@ class RecipesRepository(
 
     /**
      * Удалить одно медиа (tombstone).
-     * Файл с Диска удалится позже — через cleanup.
+     * Файл с Диска удалится позже — через cleanup (Шаг 1.6).
+     * Локальный файл (filesDir/recipe_media/...) удаляется вызывающим
+     * (RecipeEditActivity / RecipeDetailActivity) через RecipeMediaController,
+     * чтобы UI сразу видел исчезновение.
      */
     suspend fun deleteMedia(mediaId: String, currentUser: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -482,6 +499,21 @@ class RecipesRepository(
                 db.recipeMediaDao().getVideos(recipeId)
             } catch (e: Exception) {
                 Logger.log(TAG, "getVideos ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Всё медиа рецепта (фото + видео), по orderIndex.
+     * Нужно для экрана редактирования (Шаг 1.5-2) — чтобы показать
+     * уже добавленные файлы в одном RecyclerView.
+     */
+    suspend fun getAllMedia(recipeId: String): List<RecipeMediaEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                db.recipeMediaDao().getByRecipe(recipeId)
+            } catch (e: Exception) {
+                Logger.log(TAG, "getAllMedia ERROR: ${e.message}", e)
                 emptyList()
             }
         }
