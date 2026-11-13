@@ -1,6 +1,7 @@
 package com.family.base.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
@@ -8,43 +9,54 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.family.base.AppUser
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.repository.RecipesRepository
 import com.family.base.databinding.ActivityRecipeDetailBinding
+import com.family.base.ui.adapter.RecipePhotoAdapter
+import com.family.base.ui.adapter.RecipeVideoAdapter
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
+import com.family.base.util.RecipeMediaController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * 🆕 v21.1.0 (Шаг 1.4b-2): экран просмотра рецепта.
+ * 🆕 v21.1.0 (Шаг 1.4b-2 + 1.5-3): экран просмотра рецепта.
  *
  * Показывает:
- *  - название, описание, мета (источник + дата создания);
+ *  - название, описание, мета (источник + автор + дата создания);
+ *  - 🆕 галерею ФОТО (горизонтальный RecyclerView, клик → FullscreenImageActivity);
+ *  - 🆕 галерею ВИДЕО (горизонтальный RecyclerView, клик → VideoPlayerActivity);
  *  - кнопки «✏️ Редактировать» и «🗑️ Удалить».
- *  - Плейсхолдер под фото/видео — реальные галереи на Шаге 1.5.
  *
  * ПРАВА НА УДАЛЕНИЕ (по просьбе пользователя, отличается от предметов/папок):
- *  - Алексей        — может удалять ЛЮБОЙ рецепт;
- *  - Рима / Дима    — только СВОИ (recipe.createdBy == currentUser).
- *  Технически: canDelete = AppUser.canDelete(currentUser) || recipe.createdBy == currentUser.
- *  (AppUser.canDelete(name) == true только для Алексея — оставляем как есть,
- *   для предметов/папок правило не меняется.)
+ *  - Алексей        — может удалять ЛЮБОЙ рецепт и ЛЮБОЕ его медиа;
+ *  - Рима / Дима    — только СВОИ (recipe.createdBy == currentUser)
+ *                     и своё медиа (media.createdBy == currentUser).
+ *
+ * УДАЛЕНИЕ МЕДИА:
+ *  - Долгий клик по фото/видео → диалог «Удалить файл?».
+ *  - При удалении: RecipesRepository.deleteMedia (tombstone) +
+ *    RecipeMediaController.deleteMediaFiles (локальный файл).
+ *  - Синк на Диск — Шаг 1.6 (tombstone уедет через outbox).
+ *
+ * ВСЁ РАБОТАЕТ ОФЛАЙН: файлы читаются из filesDir/recipe_media/<recipeId>/.
  *
  * Принимает EXTRA_RECIPE_ID (обязателен).
  *
  * Возврат в RecipeListActivity:
  *  - RESULT_OK + EXTRA_RESULT_CHANGED = true, если рецепт изменился/удалён.
- *  - RESULT_CANCELED — если ничего не менялось (просто посмотрели).
- *  RecipeListActivity по RESULT_OK перезагрузит список.
- *
- * Редактирование открывает RecipeEditActivity с EXTRA_RECIPE_ID (режим редактирования).
+ *  - RESULT_CANCELED — если ничего не менялось.
  */
 class RecipeDetailActivity : AppCompatActivity() {
 
@@ -67,6 +79,9 @@ class RecipeDetailActivity : AppCompatActivity() {
     /** Был ли рецепт изменён/удалён (для setResult). */
     private var changed = false
 
+    private lateinit var photoAdapter: RecipePhotoAdapter
+    private lateinit var videoAdapter: RecipeVideoAdapter
+
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
             ?: tokenStorage.getUserDisplayName()
@@ -83,6 +98,7 @@ class RecipeDetailActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             changed = true
             loadRecipe()
+            loadMedia()
         }
     }
 
@@ -114,7 +130,9 @@ class RecipeDetailActivity : AppCompatActivity() {
 
         setupToolbar()
         setupButtons()
+        setupMediaGalleries()
         loadRecipe()
+        loadMedia()
     }
 
     private fun setupToolbar() {
@@ -152,7 +170,182 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ЗАГРУЗКА
+    // ГАЛЕРЕИ ФОТО / ВИДЕО (🆕 1.5-3)
+    // ============================================================
+
+    private fun setupMediaGalleries() {
+        val rid = recipeId ?: ""
+
+        photoAdapter = RecipePhotoAdapter(
+            recipeId = rid,
+            onPhotoClick = { media, _ -> openPhotoFullscreen(media) },
+            onPhotoLongClick = { media -> onMediaLongClick(media) }
+        )
+
+        videoAdapter = RecipeVideoAdapter(
+            recipeId = rid,
+            onVideoClick = { media -> openVideo(media) },
+            onVideoLongClick = { media -> onMediaLongClick(media) }
+        )
+
+        binding.rvPhotos.layoutManager = LinearLayoutManager(
+            this,
+            LinearLayoutManager.HORIZONTAL,
+            false
+        )
+        binding.rvPhotos.adapter = photoAdapter
+
+        binding.rvVideos.layoutManager = LinearLayoutManager(
+            this,
+            LinearLayoutManager.HORIZONTAL,
+            false
+        )
+        binding.rvVideos.adapter = videoAdapter
+    }
+
+    private fun loadMedia() {
+        val rid = recipeId ?: return
+        lifecycleScope.launch {
+            val photos = withContext(Dispatchers.IO) {
+                try {
+                    repository.getPhotos(rid)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "loadMedia photos error: ${e.message}", e)
+                    emptyList()
+                }
+            }
+            val videos = withContext(Dispatchers.IO) {
+                try {
+                    repository.getVideos(rid)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "loadMedia videos error: ${e.message}", e)
+                    emptyList()
+                }
+            }
+
+            Logger.log(TAG, "loadMedia: photos=${photos.size}, videos=${videos.size}")
+
+            photoAdapter.submitList(photos)
+            videoAdapter.submitList(videos)
+
+            binding.photosBlock.visibility = if (photos.isNotEmpty()) View.VISIBLE else View.GONE
+            binding.videosBlock.visibility = if (videos.isNotEmpty()) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun openPhotoFullscreen(media: RecipeMediaEntity) {
+        val rid = recipeId ?: return
+        val fileName = media.imageUrl
+        if (fileName.isNullOrBlank()) {
+            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val file: File = ImageUtils.getRecipeMediaFile(this, rid, fileName)
+        if (!file.exists()) {
+            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Logger.log(TAG, "openPhotoFullscreen: ${file.absolutePath}")
+        val intent = Intent(this, FullscreenImageActivity::class.java).apply {
+            putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, file.absolutePath)
+            putExtra(FullscreenImageActivity.EXTRA_TITLE, recipe?.title ?: "Фото рецепта")
+        }
+        startActivity(intent)
+    }
+
+    private fun openVideo(media: RecipeMediaEntity) {
+        val rid = recipeId ?: return
+        val fileName = media.imageUrl
+        if (fileName.isNullOrBlank()) {
+            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val file: File = ImageUtils.getRecipeMediaFile(this, rid, fileName)
+        if (!file.exists()) {
+            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Logger.log(TAG, "openVideo: ${file.absolutePath}, mime=${media.mimeType}")
+        val intent = Intent(this, VideoPlayerActivity::class.java).apply {
+            putExtra(VideoPlayerActivity.EXTRA_URL, Uri.fromFile(file).toString())
+            putExtra(VideoPlayerActivity.EXTRA_TITLE, recipe?.title ?: "Видео рецепта")
+            if (!media.mimeType.isNullOrBlank()) {
+                putExtra(VideoPlayerActivity.EXTRA_MIME, media.mimeType)
+            }
+        }
+        startActivity(intent)
+    }
+
+    // ============================================================
+    // УДАЛЕНИЕ МЕДИА (долгий клик)
+    // ============================================================
+
+    private fun onMediaLongClick(media: RecipeMediaEntity) {
+        val canDelete = canDeleteMedia(media, currentUser)
+        if (!canDelete) {
+            Toast.makeText(
+                this,
+                "Удалять можно только свои файлы",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        val what = if (media.mediaType == RecipeMediaEntity.TYPE_VIDEO) "видео" else "фото"
+        AlertDialog.Builder(this)
+            .setTitle("Удалить $what?")
+            .setMessage("Файл будет удалён из рецепта. Действие нельзя отменить.")
+            .setPositiveButton("Удалить") { _, _ -> doRemoveMedia(media) }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun doRemoveMedia(media: RecipeMediaEntity) {
+        val rid = recipeId ?: return
+        lifecycleScope.launch {
+            val okDb = withContext(Dispatchers.IO) {
+                try {
+                    repository.deleteMedia(media.id, currentUser)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "doRemoveMedia error: ${e.message}", e)
+                    false
+                }
+            }
+            if (!okDb) {
+                Toast.makeText(
+                    this@RecipeDetailActivity,
+                    "Не удалось удалить файл",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
+            withContext(Dispatchers.IO) {
+                RecipeMediaController.deleteMediaFiles(
+                    this@RecipeDetailActivity,
+                    rid,
+                    media.imageUrl,
+                    media.thumbnailUrl
+                )
+            }
+
+            Logger.log(TAG, "doRemoveMedia: removed id=${media.id}")
+            changed = true
+            loadMedia()
+        }
+    }
+
+    /**
+     * Может ли текущий пользователь удалить это медиа?
+     *  - Алексей — всегда да (AppUser.canDelete == true);
+     *  - Рима / Дима — только своё (media.createdBy == currentUser).
+     */
+    private fun canDeleteMedia(media: RecipeMediaEntity, user: String): Boolean {
+        return AppUser.canDelete(user) || media.createdBy == user
+    }
+
+    // ============================================================
+    // ЗАГРУЗКА РЕЦЕПТА
     // ============================================================
 
     private fun loadRecipe() {
@@ -184,10 +377,8 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun bindRecipe(r: RecipeEntity) {
-        // Название
         binding.tvTitle.text = r.title
 
-        // Описание
         val desc = r.description?.trim()
         if (desc.isNullOrEmpty()) {
             binding.tvDescription.visibility = View.GONE
@@ -196,7 +387,6 @@ class RecipeDetailActivity : AppCompatActivity() {
             binding.tvDescription.text = desc
         }
 
-        // Мета: источник + автор + дата создания
         val sourceLabel = when (r.source) {
             RecipeEntity.SOURCE_AI -> "🤖 Рецепт ИИ"
             RecipeEntity.SOURCE_USER -> "📝 Мой рецепт"
@@ -214,25 +404,16 @@ class RecipeDetailActivity : AppCompatActivity() {
             if (created.isNotEmpty()) append(" · ").append(created)
         }
 
-        // Кнопки: удаление только если (админ) ИЛИ (автор).
-        val canDelete = canDeleteRecipe(r, currentUser)
-        binding.btnDelete.visibility = if (canDelete) View.VISIBLE else View.GONE
-
-        // Редактировать разрешаем всем — правка не удаляет данные.
-        // (Если хочешь ограничить правку только автором — скажи, поменяю.)
+        val canDeleteRecipe = canDeleteRecipe(r, currentUser)
+        binding.btnDelete.visibility = if (canDeleteRecipe) View.VISIBLE else View.GONE
         binding.btnEdit.visibility = View.VISIBLE
 
         Logger.log(
             TAG,
-            "bindRecipe: id=${r.id}, source=${r.source}, createdBy=${r.createdBy}, canDelete=$canDelete"
+            "bindRecipe: id=${r.id}, source=${r.source}, createdBy=${r.createdBy}, canDelete=$canDeleteRecipe"
         )
     }
 
-    /**
-     * Может ли текущий пользователь удалить этот рецепт?
-     *  - Алексей — всегда да (AppUser.canDelete == true);
-     *  - Рима / Дима — только свои (createdBy == currentUser).
-     */
     private fun canDeleteRecipe(r: RecipeEntity, user: String): Boolean {
         return AppUser.canDelete(user) || r.createdBy == user
     }
@@ -250,7 +431,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // УДАЛЕНИЕ
+    // УДАЛЕНИЕ РЕЦЕПТА
     // ============================================================
 
     private fun confirmDelete(r: RecipeEntity) {
