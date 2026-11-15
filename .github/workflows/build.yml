@@ -44,6 +44,7 @@ jobs:
     # 🆕 v14.1.0: СБОРКА RELEASE APK
     # Передаём секреты в переменные окружения для build.gradle.kts
     # ============================================================
+   
     - name: Build Release APK
       env:
         KEYSTORE_PATH: ${{ github.workspace }}/app/baza-upload-key.jks
@@ -52,9 +53,21 @@ jobs:
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: ./gradlew assembleRelease --no-daemon --stacktrace
 
+    # ============================================================
+    # 🆕 Создание GitHub Release с APK (обходит квоту артефактов)
+    # ============================================================
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: build-${{ github.run_number }}
+        name: "Build ${{ github.run_number }}"
+        files: app/build/outputs/apk/release/*.apk
+        generate_release_notes: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Upload APK
       uses: actions/upload-artifact@v4
-      if: false
       with:
         name: app-release
         path: app/build/outputs/apk/release/*.apk
