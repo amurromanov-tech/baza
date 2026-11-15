@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
@@ -39,13 +40,20 @@ import java.io.File
  *  - CRUD папок: createFolder(name), renameFolder(id, name), deleteFolder(id).
  *  - Перемещение рецепта: moveRecipeToFolder(recipeId, folderId).
  *
+ * 🆕 Шаг 1.7-3: счётчики рецептов в папках + текущий пользователь.
+ *  - folderRecipeCounts: LiveData<Map<String, Int>> — сколько «живых»
+ *    рецептов в каждой папке текущего уровня. Считается в loadContent()
+ *    после загрузки папок. UI берёт отсюда подпись «📁 N рецептов».
+ *  - currentUserName: String — имя текущего пользователя (из TokenStorage).
+ *    Activity больше не ходит в TokenStorage напрямую.
+ *
  *  Для «Рецептов ИИ» (source = "ai") папок нет — currentFolderId всегда null,
  *  UI не показывает кнопку «📁 Создать папку», а getFolders() вернёт пустой
  *  список (для ai просто не вызываем). Это проверяется в isFolderModeAvailable().
  *
  * Особенности:
- *  - loadContent() (ранее loadRecipes) отменяет предыдущую загрузку (Job) —
- *    нет гонки при быстром переключении сортировки/поиска/навигации.
+ *  - loadContent() отменяет предыдущую загрузку (Job) — нет гонки при
+ *    быстром переключении сортировки/поиска/навигации.
  *  - searchQuery, sortNewest, currentFolderId хранятся в полях, чтобы
  *    повторный вызов loadContent() (например, после возврата из
  *    RecipeEditActivity) подхватил актуальное состояние.
@@ -56,6 +64,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val db by lazy { AppDatabase.getInstance(application) }
     private val recipesRepository by lazy { RecipesRepository(db, application) }
+    private val tokenStorage by lazy { TokenStorage(application) }
 
     // ============================================================
     // СОСТОЯНИЕ ЭКРАНА (source задаётся один раз при старте)
@@ -92,6 +101,15 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     val folders: LiveData<List<RecipeFolderEntity>> = _folders
 
     /**
+     * 🆕 Шаг 1.7-3: количество «живых» рецептов в каждой папке
+     * текущего уровня. Ключ — folderId, значение — count.
+     * Считается в loadContent() после загрузки папок.
+     * UI берёт отсюда подпись «📁 N рецептов».
+     */
+    private val _folderRecipeCounts = MutableLiveData<Map<String, Int>>(emptyMap())
+    val folderRecipeCounts: LiveData<Map<String, Int>> = _folderRecipeCounts
+
+    /**
      * Рецепты текущего уровня (с уже подставленным photoFile первого фото).
      * В корне «Моих рецептов» — только рецепты без папки (folderId IS NULL).
      * Внутри папки — рецепты этой папки.
@@ -126,6 +144,19 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     val currentFolderName: LiveData<String?> = _currentFolderName
 
     // ============================================================
+    // ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ
+    // ============================================================
+
+    /**
+     * 🆕 Шаг 1.7-3: имя текущего пользователя (из TokenStorage).
+     * Activity больше не ходит в TokenStorage напрямую — берёт отсюда.
+     */
+    val currentUserName: String
+        get() = tokenStorage.getCurrentUser()
+            ?: tokenStorage.getUserDisplayName()
+            ?: "Пользователь"
+
+    // ============================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================
 
@@ -157,7 +188,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
      * Грузит:
      *  - папки уровня (только для source = "user" и только если searchQuery пуст —
      *    при поиске папки не показываем, ищем только рецепты);
-     *  - рецепты уровня (в корне — без папки, внутри папки — её рецепты).
+     *  - рецепты уровня (в корне — без папки, внутри папки — её рецепты);
+     *  - счётчики рецептов в папках (для подписи «📁 N рецептов»).
      *
      * Отменяет предыдущую загрузку, если она ещё идёт.
      */
@@ -180,7 +212,23 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     emptyList()
                 }
 
-                // ---------- 2. Рецепты уровня ----------
+                // ---------- 2. Счётчики рецептов в папках ----------
+                val counts: Map<String, Int> = if (foldersList.isNotEmpty()) {
+                    try {
+                        val map = HashMap<String, Int>(foldersList.size)
+                        foldersList.forEach { f ->
+                            map[f.id] = db.recipeDao().countByFolder(f.id)
+                        }
+                        map
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "loadContent: folder counts error: ${e.message}", e)
+                        emptyMap()
+                    }
+                } else {
+                    emptyMap()
+                }
+
+                // ---------- 3. Рецепты уровня ----------
                 val recipesList: List<RecipeEntity> = when {
                     isAi -> {
                         // «Рецепты ИИ» — папок нет, ищем/грузим по source.
@@ -204,7 +252,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     if (hasQuery && !sortNewest) recipesList.sortedBy { it.title.lowercase() }
                     else recipesList
 
-                // ---------- 3. Подстановка локального файла первого фото ----------
+                // ---------- 4. Подстановка локального файла первого фото ----------
                 val appContext = getApplication<Application>()
                 val listItems: List<RecipeAdapter.RecipeListItem> = sortedRecipes.map { recipe ->
                     val photoFile: File? = try {
@@ -228,7 +276,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
                 }
 
-                // ---------- 4. Имя текущей папки (для заголовка) ----------
+                // ---------- 5. Имя текущей папки (для заголовка) ----------
                 val currentName: String? = if (folderId != null) {
                     foldersList.firstOrNull { it.id == folderId }?.name
                         ?: recipesRepository.getFolders(null, true)
@@ -242,10 +290,11 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     TAG,
                     "loadContent: source=$source, folderId=$folderId, query='$searchQuery', " +
                         "sortNewest=$sortNewest, folders=${foldersList.size}, recipes=${listItems.size}, " +
-                        "withPhoto=${listItems.count { it.photoFile != null }}"
+                        "withPhoto=${listItems.count { it.photoFile != null }}, counts=${counts.size}"
                 )
 
                 _folders.value = foldersList
+                _folderRecipeCounts.value = counts
                 _recipes.value = listItems
                 _isEmpty.value = foldersList.isEmpty() && listItems.isEmpty()
                 _currentFolderId.value = folderId
@@ -253,6 +302,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 Logger.log(TAG, "loadContent ERROR: ${e.message}", e)
                 _folders.value = emptyList()
+                _folderRecipeCounts.value = emptyMap()
                 _recipes.value = emptyList()
                 _isEmpty.value = true
             } finally {
