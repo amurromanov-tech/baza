@@ -14,9 +14,10 @@ import com.family.base.Config
  * сюда НЕ входят — это не Яндекс.Диск.
  *
  * 🆕 v20.4.9: добавлен GALLERY — путь к папке «Романовы».
- * В отличие от всех остальных путей, это НЕ внутри /BAZA:
- * папка «Романовы» лежит в корне Яндекс.Диска и расшарена на
- * несколько аккаунтов. Поэтому путь абсолютный, от корня диска.
+ * 🆕 v21.1.0 (Шаг 1.6): добавлен RECIPE_MEDIA — путь к медиа рецептов:
+ *   /BAZA/data/recipe_media/<recipeId>/<fileName>
+ *   Файлы называются по mediaId: <mediaId>.jpg / <mediaId>.mp4 /
+ *   <mediaId>_thumb.jpg. См. RecipeMediaController.
  */
 object DiskPaths {
 
@@ -46,6 +47,25 @@ object DiskPaths {
 
     /** /BAZA/data/users.json */
     val USERS_JSON: String = "$DATA/users.json"
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6): МЕДИА РЕЦЕПТОВ
+    // ============================================================
+
+    /**
+     * /BAZA/data/recipe_media — корень для медиа всех рецептов.
+     *
+     * Внутри — подпапки по recipeId:
+     *   /BAZA/data/recipe_media/<recipeId>/<mediaId>.jpg
+     *   /BAZA/data/recipe_media/<recipeId>/<mediaId>.mp4
+     *   /BAZA/data/recipe_media/<recipeId>/<mediaId>_thumb.jpg
+     *
+     * Такая структура:
+     *  - удобно удалять папку рецепта целиком при hard-delete;
+     *  - recipeId в пути = быстрый листинг медиа одного рецепта;
+     *  - mediaId в имени = поштучный синк (imageSynced на каждой строке).
+     */
+    val RECIPE_MEDIA: String = "$DATA/recipe_media"
 
     // ============================================================
     // 🆕 v20.4.9: ГАЛЕРЕЯ (вне /BAZA, в корне Яндекс.Диска)
@@ -103,4 +123,32 @@ object DiskPaths {
         val clean = relativePath.trimStart('/').trimEnd('/')
         return if (clean.isEmpty()) GALLERY else "$GALLERY/$clean"
     }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6): МЕДИА РЕЦЕПТОВ — ДИНАМИЧЕСКИЕ ПУТИ
+    // ============================================================
+
+    /**
+     * Папка медиа конкретного рецепта: /BAZA/data/recipe_media/<recipeId>.
+     * Используется, когда нужно создать папку перед заливкой файла.
+     */
+    fun recipeMediaFolder(recipeId: String): String = "$RECIPE_MEDIA/$recipeId"
+
+    /**
+     * Файл медиа рецепта: /BAZA/data/recipe_media/<recipeId>/<fileName>.
+     *
+     * fileName — это RecipeMediaEntity.imageUrl
+     * (например "abc-123.jpg" или "abc-123.mp4").
+     */
+    fun recipeMediaFile(recipeId: String, fileName: String): String =
+        "$RECIPE_MEDIA/$recipeId/$fileName"
+
+    /**
+     * Файл превью видео рецепта: /BAZA/data/recipe_media/<recipeId>/<thumbName>.
+     *
+     * thumbName — это RecipeMediaEntity.thumbnailUrl
+     * (например "abc-123_thumb.jpg").
+     */
+    fun recipeMediaThumbFile(recipeId: String, thumbName: String): String =
+        "$RECIPE_MEDIA/$recipeId/$thumbName"
 }
