@@ -6,6 +6,7 @@ import com.family.base.data.local.OutboxHelper
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +50,15 @@ import java.util.UUID
  *  id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
  *  (<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
  *  Старые вызовы (без mediaId) продолжают работать как раньше.
+ *
+ * 🆕 v21.1.0+ (Шаг 1.7-2, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
+ *  Добавлен блок «5. ПАПКИ РЕЦЕПТОВ» — CRUD папок (createFolder,
+ *  renameFolder, deleteFolder с проверкой «не пуста»), навигация
+ *  (getFolders(parentId)), перемещение рецептов (moveRecipeToFolder),
+ *  чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
+ *
+ *  Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
+ *  У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
  */
 class RecipesRepository(
     private val db: AppDatabase,
@@ -187,13 +197,17 @@ class RecipesRepository(
      *  - RecipeEntity.SOURCE_AI   — для «Рецептов ИИ»;
      *  - RecipeEntity.SOURCE_USER — для «Моих рецептов».
      *
+     * 🆕 Шаг 1.7-2: параметр folderId — папка рецепта (null = корень).
+     * Для «Рецептов ИИ» всегда null (у ИИ-рецептов папок нет).
+     *
      * @return созданный RecipeEntity (с реальным id), либо null при ошибке.
      */
     suspend fun createRecipe(
         title: String,
         description: String?,
         source: String,
-        currentUser: String
+        currentUser: String,
+        folderId: String? = null
     ): RecipeEntity? = withContext(Dispatchers.IO) {
         try {
             val now = System.currentTimeMillis()
@@ -202,6 +216,7 @@ class RecipesRepository(
                 title = title.trim(),
                 description = description?.trim()?.takeIf { it.isNotEmpty() },
                 source = source,
+                folderId = folderId,
                 createdBy = currentUser,
                 createdAt = now,
                 updatedBy = currentUser,
@@ -216,7 +231,10 @@ class RecipesRepository(
                 Logger.log(TAG, "createRecipe: outbox log error: ${e.message}", e)
             }
 
-            Logger.log(TAG, "createRecipe: OK id=${recipe.id}, source=$source, title='${recipe.title}'")
+            Logger.log(
+                TAG,
+                "createRecipe: OK id=${recipe.id}, source=$source, folderId=$folderId, title='${recipe.title}'"
+            )
             recipe
         } catch (e: Exception) {
             Logger.log(TAG, "createRecipe ERROR: ${e.message}", e)
@@ -525,6 +543,328 @@ class RecipesRepository(
             } catch (e: Exception) {
                 Logger.log(TAG, "countBySource ERROR: ${e.message}", e)
                 0
+            }
+        }
+
+    // ============================================================
+    // 🆕 5. ПАПКИ РЕЦЕПТОВ (Шаг 1.7-2, миграция 22→23)
+    //
+    //  Папки есть только у «Моих рецептов» (source = "user").
+    //  У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
+    //
+    //  Все методы пишут в outbox (ENTITY_RECIPE_FOLDER), чтобы синк
+    //  через changelog разносил изменения по устройствам.
+    // ============================================================
+
+    /**
+     * Создать папку рецептов.
+     *
+     * @param name      название (обрезается, пустое недопустимо).
+     * @param parentId  id родительской папки (null = корень «Моих рецептов»).
+     * @param currentUser имя текущего пользователя.
+     * @return созданный RecipeFolderEntity либо null при ошибке/пустом имени.
+     */
+    suspend fun createFolder(
+        name: String,
+        parentId: String?,
+        currentUser: String
+    ): RecipeFolderEntity? = withContext(Dispatchers.IO) {
+        try {
+            val cleanName = name.trim()
+            if (cleanName.isEmpty()) {
+                Logger.log(TAG, "createFolder: empty name, skipped")
+                return@withContext null
+            }
+
+            // Если указан родитель — проверим, что он существует и жив.
+            if (parentId != null) {
+                val parent = db.recipeFolderDao().getLiveFolderById(parentId)
+                if (parent == null) {
+                    Logger.log(TAG, "createFolder: parent not found or deleted $parentId")
+                    return@withContext null
+                }
+            }
+
+            val now = System.currentTimeMillis()
+            val folder = RecipeFolderEntity(
+                id = UUID.randomUUID().toString(),
+                name = cleanName,
+                parentId = parentId,
+                createdBy = currentUser,
+                createdAt = now,
+                updatedBy = currentUser,
+                updatedAt = now,
+                syncStatus = RecipeFolderEntity.SYNC_STATUS_PENDING
+            )
+            db.recipeFolderDao().insertFolder(folder)
+
+            try {
+                OutboxHelper.logRecipeFolder(db, folder, OutboxEntity.ACTION_CREATE, currentUser)
+            } catch (e: Exception) {
+                Logger.log(TAG, "createFolder: outbox log error: ${e.message}", e)
+            }
+
+            Logger.log(
+                TAG,
+                "createFolder: OK id=${folder.id}, name='${folder.name}', parentId=$parentId"
+            )
+            folder
+        } catch (e: Exception) {
+            Logger.log(TAG, "createFolder ERROR: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Переименовать папку рецептов.
+     * Пишет в outbox как ACTION_UPDATE.
+     */
+    suspend fun renameFolder(
+        folderId: String,
+        newName: String,
+        currentUser: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanName = newName.trim()
+            if (cleanName.isEmpty()) {
+                Logger.log(TAG, "renameFolder: empty name, skipped")
+                return@withContext false
+            }
+
+            val existing = db.recipeFolderDao().getFolderById(folderId)
+            if (existing == null) {
+                Logger.log(TAG, "renameFolder: not found $folderId")
+                return@withContext false
+            }
+            if (existing.isDeleted) {
+                Logger.log(TAG, "renameFolder: already tombstone $folderId")
+                return@withContext false
+            }
+            if (existing.name == cleanName) {
+                Logger.log(TAG, "renameFolder: same name, skipped $folderId")
+                return@withContext true
+            }
+
+            val now = System.currentTimeMillis()
+            val updated = existing.copy(
+                name = cleanName,
+                updatedBy = currentUser,
+                updatedAt = now,
+                syncStatus = RecipeFolderEntity.SYNC_STATUS_PENDING
+            )
+            db.recipeFolderDao().updateFolder(updated)
+
+            try {
+                OutboxHelper.logRecipeFolder(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
+            } catch (e: Exception) {
+                Logger.log(TAG, "renameFolder: outbox log error: ${e.message}", e)
+            }
+
+            Logger.log(TAG, "renameFolder: OK id=$folderId, newName='$cleanName'")
+            true
+        } catch (e: Exception) {
+            Logger.log(TAG, "renameFolder ERROR: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Удалить папку рецептов (tombstone).
+     *
+     * ⚠️ Запрещено, пока в папке есть рецепты или дочерние папки.
+     * Проверяем оба условия. Если не пуста — возвращаем false
+     * с записью в лог, UI покажет сообщение.
+     *
+     * @return true — удалено (tombstone), false — нельзя/ошибка.
+     */
+    suspend fun deleteFolder(folderId: String, currentUser: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val existing = db.recipeFolderDao().getFolderById(folderId)
+                if (existing == null) {
+                    Logger.log(TAG, "deleteFolder: not found $folderId")
+                    return@withContext false
+                }
+                if (existing.isDeleted) {
+                    Logger.log(TAG, "deleteFolder: already tombstone $folderId")
+                    return@withContext false
+                }
+
+                // Проверка «не пуста»: рецепты + дочерние папки.
+                val recipesCount = db.recipeDao().countByFolder(folderId)
+                val childrenCount = db.recipeFolderDao().countChildren(folderId)
+                if (recipesCount > 0 || childrenCount > 0) {
+                    Logger.log(
+                        TAG,
+                        "deleteFolder: not empty id=$folderId, recipes=$recipesCount, children=$childrenCount"
+                    )
+                    return@withContext false
+                }
+
+                val now = System.currentTimeMillis()
+                db.recipeFolderDao().markFolderDeleted(folderId, now, currentUser)
+                val after = db.recipeFolderDao().getFolderById(folderId) ?: return@withContext false
+
+                try {
+                    OutboxHelper.logRecipeFolder(db, after, OutboxEntity.ACTION_UPDATE, currentUser)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "deleteFolder: outbox log error: ${e.message}", e)
+                }
+
+                Logger.log(TAG, "deleteFolder: OK id=$folderId")
+                true
+            } catch (e: Exception) {
+                Logger.log(TAG, "deleteFolder ERROR: ${e.message}", e)
+                false
+            }
+        }
+
+    /**
+     * Переместить рецепт в папку (или в корень, если folderId = null).
+     * Обновляет folderId, updatedAt/By и ставит syncStatus = 'pending'.
+     * Пишет в outbox как ACTION_UPDATE.
+     *
+     * Для «Рецептов ИИ» вызывать не нужно (там папок нет).
+     *
+     * @return true — перемещено/уже там, false — ошибка.
+     */
+    suspend fun moveRecipeToFolder(
+        recipeId: String,
+        folderId: String?,
+        currentUser: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val existing = db.recipeDao().getRecipeById(recipeId)
+            if (existing == null) {
+                Logger.log(TAG, "moveRecipeToFolder: recipe not found $recipeId")
+                return@withContext false
+            }
+            if (existing.isDeleted) {
+                Logger.log(TAG, "moveRecipeToFolder: recipe is tombstone $recipeId")
+                return@withContext false
+            }
+            if (existing.folderId == folderId) {
+                Logger.log(TAG, "moveRecipeToFolder: same folder, skipped $recipeId → $folderId")
+                return@withContext true
+            }
+
+            // Если указана папка — проверим, что она существует и жива.
+            if (folderId != null) {
+                val folder = db.recipeFolderDao().getLiveFolderById(folderId)
+                if (folder == null) {
+                    Logger.log(TAG, "moveRecipeToFolder: folder not found or deleted $folderId")
+                    return@withContext false
+                }
+            }
+
+            val now = System.currentTimeMillis()
+            db.recipeDao().moveRecipeToFolder(recipeId, folderId, now, currentUser)
+
+            val after = db.recipeDao().getRecipeById(recipeId) ?: return@withContext false
+            try {
+                OutboxHelper.logRecipe(db, after, OutboxEntity.ACTION_UPDATE, currentUser)
+            } catch (e: Exception) {
+                Logger.log(TAG, "moveRecipeToFolder: outbox log error: ${e.message}", e)
+            }
+
+            Logger.log(TAG, "moveRecipeToFolder: OK id=$recipeId → folderId=$folderId")
+            true
+        } catch (e: Exception) {
+            Logger.log(TAG, "moveRecipeToFolder ERROR: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Папки указанного уровня (родителя).
+     * parentId = null → корневые папки «Моих рецептов».
+     * sortNewest = true → по createdAt DESC, false → по name COLLATE NOCASE ASC.
+     */
+    suspend fun getFolders(parentId: String?, sortNewest: Boolean): List<RecipeFolderEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (sortNewest) db.recipeFolderDao().getByParentNewest(parentId)
+                else db.recipeFolderDao().getByParentAlphabetical(parentId)
+            } catch (e: Exception) {
+                Logger.log(TAG, "getFolders ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Все «живые» папки рецептов (без фильтра по родителю).
+     * Для выпадающего списка «Папка» в RecipeEditActivity (Шаг 1.7-4).
+     */
+    suspend fun getAllFolders(): List<RecipeFolderEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                db.recipeFolderDao().getAllLive()
+            } catch (e: Exception) {
+                Logger.log(TAG, "getAllFolders ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Рецепты в указанной папке.
+     * sortNewest = true → по createdAt DESC, false → по title COLLATE NOCASE ASC.
+     */
+    suspend fun getRecipesInFolder(folderId: String, sortNewest: Boolean): List<RecipeEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (sortNewest) db.recipeDao().getByFolderNewest(folderId)
+                else db.recipeDao().getByFolderAlphabetical(folderId)
+            } catch (e: Exception) {
+                Logger.log(TAG, "getRecipesInFolder ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Рецепты БЕЗ папки (в корне «Моих рецептов») по source.
+     * sortNewest = true → по createdAt DESC, false → по title COLLATE NOCASE ASC.
+     *
+     * Для «Моих рецептов»: source = "user", folderId IS NULL.
+     * Для «Рецептов ИИ»: source = "ai", folderId IS NULL (папок нет).
+     */
+    suspend fun getRootRecipes(source: String, sortNewest: Boolean): List<RecipeEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (sortNewest) db.recipeDao().getRootRecipesNewest(source)
+                else db.recipeDao().getRootRecipesAlphabetical(source)
+            } catch (e: Exception) {
+                Logger.log(TAG, "getRootRecipes ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Поиск рецептов в корне «Моих рецептов» (folderId IS NULL) по source.
+     * Если query пустой — ведёт себя как getRootRecipes(source, true).
+     */
+    suspend fun searchRootRecipes(source: String, query: String): List<RecipeEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (query.isBlank()) db.recipeDao().getRootRecipesNewest(source)
+                else db.recipeDao().searchRootRecipes(source, query.trim())
+            } catch (e: Exception) {
+                Logger.log(TAG, "searchRootRecipes ERROR: ${e.message}", e)
+                emptyList()
+            }
+        }
+
+    /**
+     * Поиск рецептов внутри папки.
+     * Если query пустой — ведёт себя как getRecipesInFolder(folderId, true).
+     */
+    suspend fun searchInFolder(folderId: String, query: String): List<RecipeEntity> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (query.isBlank()) db.recipeDao().getByFolderNewest(folderId)
+                else db.recipeDao().searchInFolder(folderId, query.trim())
+            } catch (e: Exception) {
+                Logger.log(TAG, "searchInFolder ERROR: ${e.message}", e)
+                emptyList()
             }
         }
 }
