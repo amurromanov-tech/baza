@@ -9,28 +9,31 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.repository.RecipesRepository
 import com.family.base.ui.adapter.RecipeAdapter
+import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
- * 🆕 v21.1.0 (Шаг 1.4b-1): ViewModel экрана «Рецепты».
+ * 🆕 v21.1.0 (Шаг 1.4b-1 + 1.5-4): ViewModel экрана «Рецепты».
  *
  * Отвечает за:
  *  - загрузку списка рецептов по source ("ai" | "user");
  *  - поиск (query) — через RecipesRepository.searchRecipes;
  *  - сортировку (sortNewest: 🕐 Новые / 🔤 А-Я);
+ *  - 🆕 подстановку локального файла первого фото каждому рецепту
+ *    (RecipeAdapter.RecipeListItem.photoFile) — чтобы адаптер не ходил в БД;
  *  - уведомление UI об изменениях (LiveData).
  *
  * Стиль — AndroidViewModel + LiveData (как у остальных ViewModel в проекте).
  * Работа с БД — suspend-методы репозитория, внутри viewModelScope.
  *
- * ⚠️ ФОТО РЕЦЕПТОВ В 1.4b-1 НЕ ГРУЗИМ.
- *  У RecipeEntity нет поля imageUrl — фото живут в recipe_media
- *  (RecipeMediaEntity), а методы для них (ImageUtils.getRecipeMediaFile,
- *  RecipeMediaController) появятся только на Шаге 1.5. Поэтому здесь
- *  photoFile ВСЕГДА null, а RecipeAdapter честно показывает
- *  ic_item_default. На Шаге 1.5 заполним это поле реальным File.
+ * 🆕 Шаг 1.5-4: фото рецептов теперь реально подставляются.
+ *  Для каждого рецепта берём ПЕРВОЕ фото (getPhotos(recipeId).firstOrNull())
+ *  и вычисляем локальный File через ImageUtils.getRecipeMediaFile(...).
+ *  Если фото нет или файл отсутствует — photoFile = null, адаптер покажет
+ *  ic_item_default. Всё локально, без интернета.
  *
  * Особенности:
  *  - loadRecipes() отменяет предыдущую загрузку (Job) — нет гонки
@@ -79,10 +82,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================
 
-    /**
-     * Задать source экрана ("ai" | "user"). Вызывается один раз из Activity
-     * в onCreate(). После этого loadRecipes() грузит по этому source.
-     */
     fun init(source: String) {
         if (this.source == source) return
         this.source = source
@@ -114,14 +113,34 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     else found.sortedBy { it.title.lowercase() }
                 }
 
-                // Фото пока не подставляем (Шаг 1.5). photoFile = null.
+                // 🆕 1.5-4: для каждого рецепта — локальный файл первого фото.
+                val appContext = getApplication<Application>()
                 val listItems: List<RecipeAdapter.RecipeListItem> = recipes.map { recipe ->
-                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = null)
+                    val photoFile: File? = try {
+                        val firstPhoto = recipesRepository.getPhotos(recipe.id).firstOrNull()
+                        val name = firstPhoto?.imageUrl
+                        if (!name.isNullOrBlank()) {
+                            val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
+                            if (f.exists()) f else null
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        Logger.log(
+                            TAG,
+                            "loadRecipes: photoFile error for ${recipe.id}: ${e.message}",
+                            e
+                        )
+                        null
+                    }
+
+                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
                 }
 
                 Logger.log(
                     TAG,
-                    "loadRecipes: source=$source, query='$searchQuery', sortNewest=$sortNewest, count=${listItems.size}"
+                    "loadRecipes: source=$source, query='$searchQuery', sortNewest=$sortNewest, " +
+                        "count=${listItems.size}, withPhoto=${listItems.count { it.photoFile != null }}"
                 )
 
                 _recipes.value = listItems
@@ -140,10 +159,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // ПОИСК
     // ============================================================
 
-    /**
-     * Установить поисковый запрос. Пустая строка = сброс поиска.
-     * Перезагружает список.
-     */
     fun setSearchQuery(query: String) {
         val normalized = query.trim()
         if (searchQuery == normalized) return
@@ -165,10 +180,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // СОРТИРОВКА
     // ============================================================
 
-    /**
-     * Переключить сортировку.
-     * @param newest true = «🕐 Новые», false = «🔤 А-Я».
-     */
     fun setSort(newest: Boolean) {
         if (sortNewest == newest) return
         sortNewest = newest
@@ -179,13 +190,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     fun isSortNewest(): Boolean = sortNewest
 
     // ============================================================
-    // УДАЛЕНИЕ (пока не используется в 1.4b-1, пригодится в 1.4b-2)
+    // УДАЛЕНИЕ (пригодится в дальнейшем, если понадобится из списка)
     // ============================================================
 
-    /**
-     * Удалить рецепт (tombstone). Права проверяет вызывающий (UI),
-     * здесь только техническая операция.
-     */
     fun deleteRecipe(recipeId: String, currentUser: String) {
         viewModelScope.launch {
             try {
