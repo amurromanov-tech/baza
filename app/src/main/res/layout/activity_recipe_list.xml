@@ -68,9 +68,7 @@
 
         <!--
             Чипы сортировки: 🕐 Новые / 🔤 А-Я.
-            Показываются только когда есть хотя бы один рецепт
-            (или всегда — решим в Activity; сейчас visible, чтобы
-            было видно на превью).
+            Показываются только когда есть элементы (папки или рецепты).
         -->
         <HorizontalScrollView
             android:id="@+id/sortChipsScroll"
@@ -124,7 +122,7 @@
             <!--
                 Заглушка пустого состояния. Показывается, когда список пуст.
                 Текст задаётся программно в RecipeListActivity — разный
-                для «Рецептов ИИ» и «Моих рецептов».
+                для «Рецептов ИИ» и «Моих рецептов» и для уровня папки.
             -->
             <LinearLayout
                 android:id="@+id/emptyState"
@@ -169,6 +167,23 @@
         </FrameLayout>
 
     </LinearLayout>
+
+    <!--
+        🆕 Шаг 1.7-3: кнопка «📁 Создать папку» — mini-FAB внизу слева
+        от FAB «+». Показывается только для «Моих рецептов» (source = "user").
+    -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabCreateFolder"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:contentDescription="Создать папку"
+        android:src="@drawable/ic_folder_default"
+        android:visibility="gone"
+        app:fabSize="mini"
+        app:tint="?attr/colorOnPrimary"
+        tools:visibility="visible" />
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabAddRecipe"
