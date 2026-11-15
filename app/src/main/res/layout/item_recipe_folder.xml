@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    🆕 Шаг 1.7-3: карточка папки рецептов в списке «Моих рецептов».
+
+    Стиль — как item_recipe.xml (карточка рецепта), но:
+      - слева иконка папки (ic_folder_default), а не фото;
+      - имя папки;
+      - подпись «📁 N рецептов» или «📁 Пусто»;
+      - цветная полоска слева (colorBar) — как у рецептов, для единообразия.
+-->
+<androidx.cardview.widget.CardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="12dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginTop="6dp"
+    android:layout_marginBottom="6dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?attr/selectableItemBackground"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="2dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Цветная полоска слева (как у рецептов) -->
+        <View
+            android:id="@+id/colorBar"
+            android:layout_width="6dp"
+            android:layout_height="match_parent"
+            android:background="?attr/colorPrimary" />
+
+        <!-- Иконка папки -->
+        <ImageView
+            android:id="@+id/ivFolderIcon"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="12dp"
+            android:src="@drawable/ic_folder_default"
+            android:contentDescription="Папка"
+            app:tint="?attr/colorPrimary" />
+
+        <!-- Тексты: имя + счётчик -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvFolderName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                tools:text="Супы" />
+
+            <TextView
+                android:id="@+id/tvFolderMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="13sp"
+                tools:text="📁 5 рецептов" />
+
+        </LinearLayout>
+
+        <!-- Стрелка «открыть» -->
+        <ImageView
+            android:id="@+id/ivArrow"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginEnd="12dp"
+            android:src="@android:drawable/ic_media_play"
+            android:alpha="0.5"
+            android:contentDescription="Открыть"
+            app:tint="?attr/colorControlNormal" />
+
+    </LinearLayout>
+
+</androidx.cardview.widget.CardView>
