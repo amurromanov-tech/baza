@@ -6,6 +6,8 @@ import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.ProcessedChangelogEntity
+import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.Logger
 import com.google.gson.Gson
@@ -14,35 +16,19 @@ import com.google.gson.JsonSyntaxException
 /**
  * Применяет входящий пакет changelog к локальной БД.
  *
- * Правила:
- *  1. Свои пакеты (deviceId == наш) НЕ применяем — только фиксируем в processed_changelogs.
- *  2. Разрешение конфликтов по updatedAt / updatedDate:
- *       - если remote новее локального → применяем;
- *       - если локальный новее → пропускаем (наш выигрыш).
- *  3. При применении принудительно ставим syncStatus = "synced",
- *     чтобы не зациклить пересылку (иначе получим ping-pong между устройствами).
- *  4. 🆕 v19 (№10): удаления приходят как tombstones (isDeleted = true).
- *     Для старых клиентов, которые шлют ACTION_DELETE — переводим их
- *     в tombstone локально (не hard-delete), чтобы удаление
- *     не «воскресло» при следующем merge.
- *     Локальный tombstone с более новым updatedAt побеждает —
- *     живая remote-запись его не перезаписывает.
- *  5. Для history — append-only, просто INSERT IGNORE по id.
- *     Никаких merge: если запись с таким id уже есть, пропускаем.
- *  6. Пакет фиксируется в processed_changelogs всегда (кроме явных ошибок).
+ * 🆕 v21.1.0 (Шаг 1.6-5): рецепты и медиа рецептов.
+ *  - applyRecipeEntry: INSERT/UPDATE/tombstone для recipes.
+ *  - applyRecipeMediaEntry: INSERT/UPDATE/tombstone для recipe_media.
+ *  - Защита от воскрешения: локальный tombstone с updatedAt >= remote
+ *    не перезаписывается живой remote-записью.
+ *  - При применении принудительно syncStatus = "synced" (иначе ping-pong).
+ *  - Tombstone с Диска = уже разошёлся → deleteConfirmed = true.
  *
- * Парсер НЕ пишет в outbox — входящие изменения не надо отправлять обратно.
- * deleteConfirmed = 1 у применённых tombstones ставим сразу: раз запись
- * пришла с Диска, значит PUSH уже прошёл, и cleanup может её удалить
- * через CLEANUP_RETENTION_MS (1 год).
- *
- * 🆕 v18.2.0 (шаг 2): TaskEntity получил поля remindAt и autoRemindEnabled.
- * При applyTaskEntry(...) payload парсится через
- * gson.fromJson(entry.payloadJson, TaskEntity::class.java) — новые поля
- * подхватываются автоматически (их сериализует OutboxHelper.logTask на
- * стороне-отправителе). Никаких ручных копирований полей в этом файле
- * делать НЕ нужно: remoteSynced = remote.copy(syncStatus=...) сохраняет
- * remindAt и autoRemindEnabled как есть.
+ * Правила (общие):
+ *  1. Свои пакеты не применяем — только processed_changelogs.
+ *  2. Конфликты по updatedAt / updatedDate.
+ *  3. ACTION_DELETE (старый формат) → tombstone локально, не hard-delete.
+ *  4. History — append-only.
  */
 class ChangelogParser(
     private val db: AppDatabase,
@@ -52,9 +38,6 @@ class ChangelogParser(
     private val gson = Gson()
     private val TAG = "ChangelogParser"
 
-    /**
-     * Результат применения одного пакета.
-     */
     data class ApplyResult(
         val batchId: String,
         val totalEntries: Int,
@@ -69,11 +52,6 @@ class ChangelogParser(
     // ПУБЛИЧНЫЙ ВХОД
     // ============================================================
 
-    /**
-     * Применить один пакет.
-     * Возвращает ApplyResult. Никогда не бросает исключение —
-     * ошибки логируются и возвращаются в errorsCount.
-     */
     suspend fun apply(batch: ChangelogBatch): ApplyResult {
         val isOwn = batch.deviceId == deviceId
 
@@ -138,6 +116,9 @@ class ChangelogParser(
             OutboxEntity.ENTITY_FOLDER -> applyFolderEntry(entry)
             OutboxEntity.ENTITY_TASK -> applyTaskEntry(entry)
             OutboxEntity.ENTITY_HISTORY -> applyHistoryEntry(entry)
+            // 🆕 1.6-5: рецепты и медиа.
+            OutboxEntity.ENTITY_RECIPE -> applyRecipeEntry(entry)
+            OutboxEntity.ENTITY_RECIPE_MEDIA -> applyRecipeMediaEntry(entry)
             else -> {
                 Logger.log(TAG, "applyEntry: unknown entityType '${entry.entityType}', skipping")
                 false
@@ -152,12 +133,8 @@ class ChangelogParser(
     private suspend fun applyItemEntry(entry: ChangelogEntry): Boolean {
         val local = db.itemDao().getItemById(entry.entityId)
 
-        // ── ACTION_DELETE (старый формат: hard-delete с удалённого устройства) ──
-        // Переводим в tombstone локально, не hard-delete. Иначе при следующем
-        // merge remote-запись с третьего устройства «воскресит» предмет.
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
-                // Локально записи нет — удалять нечего.
                 Logger.log(TAG, "applyItem DELETE: id=${entry.entityId} not found locally, skip")
                 return false
             }
@@ -173,13 +150,11 @@ class ChangelogParser(
                 return false
             }
             db.itemDao().markItemDeleted(entry.entityId, entry.changedAt, entry.changedBy)
-            // Раз tombstone пришёл с Диска — он уже разошёлся, подтверждаем.
             db.itemDao().confirmItemDeleted(entry.entityId)
             Logger.log(TAG, "applyItem DELETE → tombstone: id=${entry.entityId} '${local.name}'")
             return true
         }
 
-        // ── PARSE PAYLOAD ──
         val remote: ItemEntity = try {
             gson.fromJson(entry.payloadJson, ItemEntity::class.java)
         } catch (e: Exception) {
@@ -187,7 +162,6 @@ class ChangelogParser(
             return false
         }
 
-        // Tombstone пришёл с Диска → он уже разошёлся, ставим deleteConfirmed = true.
         val remoteSynced = if (remote.isDeleted) {
             remote.copy(
                 syncStatus = ItemEntity.SYNC_STATUS_SYNCED,
@@ -197,7 +171,6 @@ class ChangelogParser(
             remote.copy(syncStatus = ItemEntity.SYNC_STATUS_SYNCED)
         }
 
-        // ── INSERT (локально нет) ──
         if (local == null) {
             db.itemDao().insertItem(remoteSynced)
             Logger.log(
@@ -208,8 +181,6 @@ class ChangelogParser(
             return true
         }
 
-        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
-        // Локальный tombstone + remote живой + локальный не старше → skip.
         if (local.isDeleted && !remoteSynced.isDeleted && local.updatedDate >= remoteSynced.updatedDate) {
             Logger.log(
                 TAG,
@@ -219,7 +190,6 @@ class ChangelogParser(
             return false
         }
 
-        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedDate > local.updatedDate) {
             val merged = remoteSynced.copy(
                 imageUrl = remoteSynced.imageUrl ?: local.imageUrl,
@@ -249,7 +219,6 @@ class ChangelogParser(
     private suspend fun applyFolderEntry(entry: ChangelogEntry): Boolean {
         val local = db.folderDao().getFolderById(entry.entityId)
 
-        // ── ACTION_DELETE (старый формат) → tombstone локально ──
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyFolder DELETE: id=${entry.entityId} not found locally, skip")
@@ -276,7 +245,6 @@ class ChangelogParser(
             return true
         }
 
-        // ── PARSE PAYLOAD ──
         val remote: FolderEntity = try {
             gson.fromJson(entry.payloadJson, FolderEntity::class.java)
         } catch (e: Exception) {
@@ -293,7 +261,6 @@ class ChangelogParser(
             remote.copy(syncStatus = FolderEntity.SYNC_STATUS_SYNCED)
         }
 
-        // ── INSERT ──
         if (local == null) {
             db.folderDao().insertFolder(remoteSynced)
             Logger.log(
@@ -304,13 +271,11 @@ class ChangelogParser(
             return true
         }
 
-        // ── ЗАЩИТА СИСТЕМНОЙ ПАПКИ ──
         if (local.isSystem && remoteSynced.isDeleted) {
             Logger.log(TAG, "applyFolder SKIP: cannot tombstone system folder ${entry.entityId}")
             return false
         }
 
-        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
         if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
             Logger.log(
                 TAG,
@@ -320,7 +285,6 @@ class ChangelogParser(
             return false
         }
 
-        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedAt > local.updatedAt) {
             val merged = if (local.isSystem || remoteSynced.isSystem) {
                 remoteSynced.copy(
@@ -358,24 +322,9 @@ class ChangelogParser(
     // TASK
     // ============================================================
 
-    /**
-     * Применить входящее изменение задачи.
-     *
-     * 🆕 v18.2.0 (шаг 2): TaskEntity получил remindAt и autoRemindEnabled.
-     * Парсинг через gson.fromJson(payloadJson, TaskEntity::class.java)
-     * подхватывает новые поля автоматически. remoteSynced = remote.copy(...)
-     * сохраняет remindAt и autoRemindEnabled как есть — никаких ручных
-     * копирований полей в этом методе не требуется.
-     *
-     * Важно: при UPDATE задача с Диска перезаписывает локальную ЦЕЛИКОМ
-     * (включая remindAt и autoRemindEnabled). Это правильно: если на другом
-     * устройстве пользователь поменял «Когда напомнить» или выключил умный
-     * пинг, это должно разойтись.
-     */
     private suspend fun applyTaskEntry(entry: ChangelogEntry): Boolean {
         val local = db.taskDao().getById(entry.entityId)
 
-        // ── ACTION_DELETE (старый формат) → tombstone локально ──
         if (entry.action == OutboxEntity.ACTION_DELETE) {
             if (local == null) {
                 Logger.log(TAG, "applyTask DELETE: id=${entry.entityId} not found locally, skip")
@@ -398,7 +347,6 @@ class ChangelogParser(
             return true
         }
 
-        // ── PARSE PAYLOAD ──
         val remote: TaskEntity = try {
             gson.fromJson(entry.payloadJson, TaskEntity::class.java)
         } catch (e: Exception) {
@@ -415,7 +363,6 @@ class ChangelogParser(
             remote.copy(syncStatus = TaskEntity.SYNC_STATUS_SYNCED)
         }
 
-        // ── INSERT ──
         if (local == null) {
             db.taskDao().insert(remoteSynced)
             Logger.log(
@@ -427,7 +374,6 @@ class ChangelogParser(
             return true
         }
 
-        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
         if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
             Logger.log(
                 TAG,
@@ -437,7 +383,6 @@ class ChangelogParser(
             return false
         }
 
-        // ── UPDATE (remote новее) ──
         if (remoteSynced.updatedAt > local.updatedAt) {
             db.taskDao().update(remoteSynced)
             Logger.log(
@@ -461,15 +406,6 @@ class ChangelogParser(
     // HISTORY (append-only)
     // ============================================================
 
-    /**
-     * История — append-only.
-     *
-     * Правила:
-     *  - Только "create" (update / delete для истории не бывает).
-     *  - Если запись с таким id уже есть — пропускаем (INSERT IGNORE).
-     *  - Никакого merge по времени: у HistoryEntry нет updatedAt.
-     *  - Поля oldValue / newValue / itemName приходят полностью из payload.
-     */
     private suspend fun applyHistoryEntry(entry: ChangelogEntry): Boolean {
         if (entry.action != OutboxEntity.ACTION_CREATE) {
             Logger.log(
@@ -498,6 +434,232 @@ class ChangelogParser(
             "applyHistory INSERT: id=${remote.id}, action=${remote.action}, itemId=${remote.itemId}, by=${remote.changedBy}"
         )
         return true
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-5): RECIPE
+    // ============================================================
+
+    /**
+     * Применить входящее изменение рецепта.
+     *
+     * Логика идентична item/folder:
+     *  - ACTION_DELETE (старый формат) → tombstone локально;
+     *  - парсим payload в RecipeEntity;
+     *  - tombstone → deleteConfirmed = true;
+     *  - INSERT если локально нет;
+     *  - защита от воскрешения (локальный tombstone новее);
+     *  - UPDATE если remote.updatedAt > local.updatedAt.
+     *
+     * ⚠️ RecipeEntity.source ("ai"/"user") и createdBy приходят из payload
+     * как есть — не переписываем их. Если на другом устройстве рецепт
+     * создан в «Моих», он и здесь попадёт в «Мои».
+     */
+    private suspend fun applyRecipeEntry(entry: ChangelogEntry): Boolean {
+        val local = db.recipeDao().getRecipeById(entry.entityId)
+
+        // ── ACTION_DELETE (старый формат) → tombstone локально ──
+        if (entry.action == OutboxEntity.ACTION_DELETE) {
+            if (local == null) {
+                Logger.log(TAG, "applyRecipe DELETE: id=${entry.entityId} not found locally, skip")
+                return false
+            }
+            if (entry.changedAt < local.updatedAt) {
+                Logger.log(
+                    TAG,
+                    "applyRecipe DELETE SKIP: local newer (local=${local.updatedAt}, remote=${entry.changedAt})"
+                )
+                return false
+            }
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyRecipe DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.recipeDao().markRecipeDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            db.recipeDao().confirmRecipeDeleted(entry.entityId)
+            Logger.log(TAG, "applyRecipe DELETE → tombstone: id=${entry.entityId} '${local.title}'")
+            return true
+        }
+
+        // ── PARSE PAYLOAD ──
+        val remote: RecipeEntity = try {
+            gson.fromJson(entry.payloadJson, RecipeEntity::class.java)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyRecipe: cannot parse payload for id=${entry.entityId}: ${e.message}")
+            return false
+        }
+
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = RecipeEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = RecipeEntity.SYNC_STATUS_SYNCED)
+        }
+
+        // ── INSERT ──
+        if (local == null) {
+            db.recipeDao().insertRecipe(remoteSynced)
+            Logger.log(
+                TAG,
+                "applyRecipe INSERT: id=${entry.entityId} '${remoteSynced.title}' " +
+                    "(action=${entry.action}, source=${remoteSynced.source}, " +
+                    "isDeleted=${remoteSynced.isDeleted})"
+            )
+            return true
+        }
+
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
+            Logger.log(
+                TAG,
+                "applyRecipe SKIP: local tombstone wins (local.updatedAt=${local.updatedAt} " +
+                    ">= remote.updatedAt=${remoteSynced.updatedAt}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее) ──
+        if (remoteSynced.updatedAt > local.updatedAt) {
+            val merged = remoteSynced.copy(
+                // description не мержим — это свободный текст, remote побеждает целиком
+                description = remoteSynced.description,
+                // source не перетираем, если remote пустой (на всякий случай)
+                source = remoteSynced.source.ifBlank { local.source },
+                // createdBy/createdAt — история, не мержим, remote побеждает
+            )
+            db.recipeDao().updateRecipe(merged)
+            Logger.log(
+                TAG,
+                "applyRecipe UPDATE: id=${entry.entityId} '${merged.title}' " +
+                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, " +
+                    "isDeleted=${merged.isDeleted})"
+            )
+            return true
+        } else {
+            Logger.log(
+                TAG,
+                "applyRecipe UPDATE SKIP: local newer (local=${local.updatedAt} >= remote=${remoteSynced.updatedAt})"
+            )
+            return false
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-5): RECIPE_MEDIA
+    // ============================================================
+
+    /**
+     * Применить входящее изменение медиа рецепта.
+     *
+     * Логика идентична recipe:
+     *  - ACTION_DELETE → tombstone локально;
+     *  - парсим payload в RecipeMediaEntity;
+     *  - tombstone → deleteConfirmed = true;
+     *  - INSERT если локально нет;
+     *  - защита от воскрешения;
+     *  - UPDATE если remote.updatedAt > local.updatedAt.
+     *
+     * ⚠️ imageSynced: если с Диска пришло imageSynced = true — значит,
+     * файл уже залит (с другого устройства). Ставим как есть, чтобы
+     * uploadUnsyncedRecipeMedia не пытался заливать повторно.
+     * Если imageSynced = false — оставляем false, uploadUnsyncedRecipeMedia
+     * подхватит, если локальный файл есть.
+     *
+     * ⚠️ Если imageUrl = null и imageSynced = false — это «медиа без файла»
+     * (например, рецепт пришёл, а файл ещё не залит). Такое медиа
+     * в UI покажется с ic_item_default. После того как файл зальётся
+     * (или скачается), imageUrl обновится.
+     *
+     * У RecipeMediaEntity нет поля updatedAt (только createdAt).
+     * Для разрешения конфликтов используем createdAt: remote побеждает,
+     * если remote.createdAt > local.createdAt. Если equal — оставляем local
+     * (стабильность).
+     */
+    private suspend fun applyRecipeMediaEntry(entry: ChangelogEntry): Boolean {
+        val local = db.recipeMediaDao().getMediaById(entry.entityId)
+
+        // ── ACTION_DELETE (старый формат) → tombstone локально ──
+        if (entry.action == OutboxEntity.ACTION_DELETE) {
+            if (local == null) {
+                Logger.log(TAG, "applyRecipeMedia DELETE: id=${entry.entityId} not found locally, skip")
+                return false
+            }
+            if (entry.changedAt < local.createdAt) {
+                Logger.log(
+                    TAG,
+                    "applyRecipeMedia DELETE SKIP: local newer (local=${local.createdAt}, remote=${entry.changedAt})"
+                )
+                return false
+            }
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyRecipeMedia DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.recipeMediaDao().markMediaDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            db.recipeMediaDao().confirmMediaDeleted(entry.entityId)
+            Logger.log(TAG, "applyRecipeMedia DELETE → tombstone: id=${entry.entityId}")
+            return true
+        }
+
+        // ── PARSE PAYLOAD ──
+        val remote: RecipeMediaEntity = try {
+            gson.fromJson(entry.payloadJson, RecipeMediaEntity::class.java)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyRecipeMedia: cannot parse payload for id=${entry.entityId}: ${e.message}")
+            return false
+        }
+
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = RecipeMediaEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = RecipeMediaEntity.SYNC_STATUS_SYNCED)
+        }
+
+        // ── INSERT ──
+        if (local == null) {
+            db.recipeMediaDao().insertMedia(remoteSynced)
+            Logger.log(
+                TAG,
+                "applyRecipeMedia INSERT: id=${entry.entityId} recipeId=${remoteSynced.recipeId} " +
+                    "type=${remoteSynced.mediaType} (action=${entry.action}, " +
+                    "isDeleted=${remoteSynced.isDeleted}, imageSynced=${remoteSynced.imageSynced})"
+            )
+            return true
+        }
+
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        if (local.isDeleted && !remoteSynced.isDeleted && local.createdAt >= remoteSynced.createdAt) {
+            Logger.log(
+                TAG,
+                "applyRecipeMedia SKIP: local tombstone wins (local.createdAt=${local.createdAt} " +
+                    ">= remote.createdAt=${remoteSynced.createdAt}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее по createdAt) ──
+        if (remoteSynced.createdAt > local.createdAt) {
+            db.recipeMediaDao().updateMedia(remoteSynced)
+            Logger.log(
+                TAG,
+                "applyRecipeMedia UPDATE: id=${entry.entityId} recipeId=${remoteSynced.recipeId} " +
+                    "(remote newer: ${remoteSynced.createdAt} > ${local.createdAt}, " +
+                    "isDeleted=${remoteSynced.isDeleted}, imageSynced=${remoteSynced.imageSynced})"
+            )
+            return true
+        } else {
+            Logger.log(
+                TAG,
+                "applyRecipeMedia UPDATE SKIP: local newer/equal (local=${local.createdAt} " +
+                    ">= remote=${remoteSynced.createdAt})"
+            )
+            return false
+        }
     }
 
     // ============================================================
