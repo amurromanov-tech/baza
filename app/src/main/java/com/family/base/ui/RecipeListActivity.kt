@@ -7,32 +7,43 @@ import android.text.TextWatcher
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.Config
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.databinding.ActivityRecipeListBinding
-import com.family.base.ui.adapter.RecipeAdapter
+import com.family.base.ui.adapter.RecipeCatalogAdapter
 import com.family.base.ui.viewmodel.RecipeViewModel
 import com.family.base.util.Logger
 
 /**
  * 🆕 v21.1.0 (Шаг 1.3 + 1.4a + 1.4b-1 + 1.4b-2): экран «Рецепты».
  *
- * Что делает на этом шаге:
+ * 🆕 Шаг 1.7-3: ДВУХУРОВНЕВЫЙ СПИСОК (папки + рецепты).
+ *
+ * Что делает:
  *  - Принимает EXTRA_SOURCE ("ai" | "user" | "all"), ставит заголовок;
- *  - Подключает RecipeViewModel + RecipeAdapter + RecyclerView;
- *  - Поиск: клик по btnSearch разворачивает searchLayout/etSearch,
- *    ввод с debounce 250 мс → ViewModel.setSearchQuery;
- *  - Сортировка: чипы 🕐 Новые / 🔤 А-Я → ViewModel.setSort;
- *  - FAB «+» (для "ai" / "user") открывает RecipeEditActivity;
- *  - Тап по emptyState (для "ai" / "user") — то же самое;
- *  - По возврату из RecipeEditActivity перезагружает список;
- *  - 🆕 Клик по карточке — открывает RecipeDetailActivity (1.4b-2);
- *  - 🆕 По возврату из RecipeDetailActivity, если рецепт менялся/удалён
- *    (RESULT_OK + EXTRA_RESULT_CHANGED=true), перезагружает список.
+ *  - Подключает RecipeViewModel + RecipeCatalogAdapter + RecyclerView;
+ *  - В корне «Моих рецептов»: сверху папки, снизу рецепты без папки;
+ *  - Внутри папки: её подпапки (если есть) + её рецепты;
+ *  - В «Рецептах ИИ»: только рецепты (папок нет);
+ *  - Поиск (debounce 250 мс) — ищет рецепты на текущем уровне;
+ *  - Сортировка 🕐 Новые / 🔤 А-Я — папки и рецепты;
+ *  - FAB «+» — создать рецепт (в текущей папке, если открыта);
+ *  - FAB «📁» — создать папку (только source = "user");
+ *  - Клик по папке → ViewModel.openFolder(id) (внутрь);
+ *  - Клик по рецепту → RecipeDetailActivity;
+ *  - Долгий клик по папке → «Переименовать» / «Удалить»;
+ *  - Кнопка «назад» (системная или в тулбаре): если внутри папки —
+ *    в корень, иначе — finish().
  *
  * ВАЖНО (правило проекта):
  *  - Заголовок ставим через supportActionBar?.title = ..., а НЕ через
@@ -59,21 +70,28 @@ class RecipeListActivity : AppCompatActivity() {
 
     private var source: String = EXTRA_SOURCE_ALL
 
-    private lateinit var adapter: RecipeAdapter
+    private lateinit var adapter: RecipeCatalogAdapter
 
     private var searchVisible = false
 
     private var searchRunnable: Runnable? = null
 
+    /**
+     * Счётчики рецептов в папках — заполняются асинхронно при загрузке
+     * списка папок. Нужны для подписи «📁 N рецептов» в карточке папки.
+     * Ключ — folderId, значение — количество «живых» рецептов.
+     */
+    private val folderRecipeCounts = mutableMapOf<String, Int>()
+
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Logger.log(TAG, "editLauncher result: ${result.resultCode}")
-        viewModel.loadRecipes()
+        viewModel.loadContent()
     }
 
     /**
-     * 🆕 1.4b-2: возврат из RecipeDetailActivity.
+     * Возврат из RecipeDetailActivity.
      * Если рецепт менялся/удалён (RESULT_OK + EXTRA_RESULT_CHANGED=true) —
      * перезагружаем список. Иначе ничего не делаем.
      */
@@ -86,7 +104,7 @@ class RecipeListActivity : AppCompatActivity() {
         ) ?: false
         Logger.log(TAG, "detailLauncher result: code=${result.resultCode}, changed=$changed")
         if (result.resultCode == RESULT_OK && changed) {
-            viewModel.loadRecipes()
+            viewModel.loadContent()
         }
     }
 
@@ -113,14 +131,15 @@ class RecipeListActivity : AppCompatActivity() {
         setupSearch()
         setupSortChips()
         setupEmptyState()
-        setupFab()
+        setupFabs()
+        setupBackHandler()
         observeViewModel()
 
-        viewModel.loadRecipes()
+        viewModel.loadContent()
     }
 
     // ============================================================
-    // ТУЛБАР
+    // ТУЛБАР + ЗАГОЛОВОК
     // ============================================================
 
     private fun setupToolbar() {
@@ -130,20 +149,25 @@ class RecipeListActivity : AppCompatActivity() {
 
         binding.toolbar.setNavigationOnClickListener {
             Logger.log(TAG, "toolbar up clicked")
-            finish()
+            handleBack()
         }
 
-        val title = when (source) {
-            RecipeEntity.SOURCE_AI -> FolderTitle.AI
-            RecipeEntity.SOURCE_USER -> FolderTitle.MY
-            else -> FolderTitle.ALL
-        }
-        // ВАЖНО: через supportActionBar?.title, а не binding.toolbar.title.
-        supportActionBar?.title = title.text
+        updateTitle(null)
+    }
 
-        binding.btnSearch.setOnClickListener {
-            toggleSearch()
+    /**
+     * Обновить заголовок ActionBar.
+     * null → базовый заголовок по source (🤖 / 📝 / 🍳).
+     * не null → имя открытой папки.
+     */
+    private fun updateTitle(folderName: String?) {
+        val title = when {
+            folderName != null -> folderName
+            source == RecipeEntity.SOURCE_AI -> "🤖 Рецепты ИИ"
+            source == RecipeEntity.SOURCE_USER -> "📝 Мои рецепты"
+            else -> "🍳 Рецепты"
         }
+        supportActionBar?.title = title
     }
 
     // ============================================================
@@ -151,11 +175,18 @@ class RecipeListActivity : AppCompatActivity() {
     // ============================================================
 
     private fun setupRecycler() {
-        adapter = RecipeAdapter(
+        adapter = RecipeCatalogAdapter(
+            onFolderClick = { folder ->
+                Logger.log(TAG, "folder clicked: id=${folder.id}, name='${folder.name}'")
+                viewModel.openFolder(folder.id)
+            },
             onRecipeClick = { recipe ->
-                // 🆕 1.4b-2: открываем экран просмотра рецепта.
                 Logger.log(TAG, "recipe clicked: id=${recipe.id}, title='${recipe.title}'")
                 openRecipeDetail(recipe.id)
+            },
+            onFolderLongClick = { folder ->
+                Logger.log(TAG, "folder longClicked: id=${folder.id}, name='${folder.name}'")
+                showFolderActionsDialog(folder)
             },
             onRecipeLongClick = { recipe ->
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}")
@@ -195,6 +226,10 @@ class RecipeListActivity : AppCompatActivity() {
             } else {
                 false
             }
+        }
+
+        binding.btnSearch.setOnClickListener {
+            toggleSearch()
         }
     }
 
@@ -264,16 +299,34 @@ class RecipeListActivity : AppCompatActivity() {
     // ============================================================
 
     private fun setupEmptyState() {
-        val (icon, title, subtitle) = when (source) {
-            RecipeEntity.SOURCE_AI -> Triple(
+        binding.emptyState.setOnClickListener {
+            // Тап по пустому состоянию — создать рецепт (только для ai/user).
+            if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
+                openCreateRecipe()
+            }
+        }
+        updateEmptyStateText(null)
+    }
+
+    /**
+     * Тексты пустого состояния зависят от source и от того, в папке мы или в корне.
+     */
+    private fun updateEmptyStateText(folderName: String?) {
+        val (icon, title, subtitle) = when {
+            source == RecipeEntity.SOURCE_AI -> Triple(
                 "🤖",
                 "Рецептов ИИ пока нет",
                 "Скажи, что хочешь приготовить, — и ИИ предложит рецепт.\n(Появится на Шаге 2)"
             )
-            RecipeEntity.SOURCE_USER -> Triple(
+            folderName != null -> Triple(
+                "📁",
+                "В папке «$folderName» пока пусто",
+                "Нажми «+», чтобы добавить рецепт в эту папку,\nили «📁», чтобы создать подпапку."
+            )
+            source == RecipeEntity.SOURCE_USER -> Triple(
                 "📝",
                 "Здесь пока пусто",
-                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео."
+                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео.\nИли «📁», чтобы создать папку."
             )
             else -> Triple(
                 "🍳",
@@ -285,19 +338,14 @@ class RecipeListActivity : AppCompatActivity() {
         binding.tvEmptyIcon.text = icon
         binding.tvEmptyTitle.text = title
         binding.tvEmptySubtitle.text = subtitle
-
-        binding.emptyState.setOnClickListener {
-            if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
-                openCreateRecipe()
-            }
-        }
     }
 
     // ============================================================
-    // FAB
+    // FAB'ы
     // ============================================================
 
-    private fun setupFab() {
+    private fun setupFabs() {
+        // FAB «+» (создать рецепт).
         if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
             binding.fabAddRecipe.visibility = View.VISIBLE
             binding.fabAddRecipe.setOnClickListener {
@@ -307,14 +355,175 @@ class RecipeListActivity : AppCompatActivity() {
             binding.fabAddRecipe.visibility = View.GONE
             binding.fabAddRecipe.setOnClickListener(null)
         }
+
+        // FAB «📁» (создать папку) — только в «Моих рецептах».
+        if (viewModel.isFolderModeAvailable()) {
+            binding.fabCreateFolder.visibility = View.VISIBLE
+            binding.fabCreateFolder.setOnClickListener {
+                showCreateFolderDialog()
+            }
+        } else {
+            binding.fabCreateFolder.visibility = View.GONE
+            binding.fabCreateFolder.setOnClickListener(null)
+        }
     }
 
     private fun openCreateRecipe() {
-        Logger.log(TAG, "openCreateRecipe: source=$source")
+        Logger.log(TAG, "openCreateRecipe: source=$source, folderId=${viewModel.currentFolderIdLive.value}")
         val intent = Intent(this, RecipeEditActivity::class.java).apply {
             putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
+            // Папку передаём, чтобы новый рецепт сразу попал в открытую папку.
+            viewModel.currentFolderIdLive.value?.let {
+                putExtra(RecipeEditActivity.EXTRA_FOLDER_ID, it)
+            }
         }
         editLauncher.launch(intent)
+    }
+
+    // ============================================================
+    // ДИАЛОГИ ПАПОК
+    // ============================================================
+
+    /**
+     * Создать папку на текущем уровне (в корне или в открытой папке).
+     * Простой диалог с EditText.
+     */
+    private fun showCreateFolderDialog() {
+        val editText = EditText(this).apply {
+            hint = "Название папки"
+            setSingleLine(true)
+        }
+
+        val container = FrameLayout(this).apply {
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("📁 Новая папка")
+            .setView(container)
+            .setPositiveButton("Создать") { _, _ ->
+                val name = editText.text?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "Введите название папки", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val currentUser = Config.getCurrentUser(this)
+                viewModel.createFolder(name, currentUser) { error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            Toast.makeText(this, error, Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this, "Папка «$name» создана", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Долгий клик по папке: «Переименовать» / «Удалить».
+     */
+    private fun showFolderActionsDialog(folder: RecipeFolderEntity) {
+        val options = arrayOf("✏️ Переименовать", "🗑️ Удалить папку")
+
+        AlertDialog.Builder(this)
+            .setTitle(folder.name)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showRenameFolderDialog(folder)
+                    1 -> confirmDeleteFolder(folder)
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showRenameFolderDialog(folder: RecipeFolderEntity) {
+        val editText = EditText(this).apply {
+            setText(folder.name)
+            setSelection(folder.name.length)
+            setSingleLine(true)
+        }
+
+        val container = FrameLayout(this).apply {
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("✏️ Переименовать папку")
+            .setView(container)
+            .setPositiveButton("Сохранить") { _, _ ->
+                val newName = editText.text?.toString()?.trim().orEmpty()
+                if (newName.isEmpty()) {
+                    Toast.makeText(this, "Введите название папки", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (newName == folder.name) return@setPositiveButton
+                val currentUser = Config.getCurrentUser(this)
+                viewModel.renameFolder(folder.id, newName, currentUser) { error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            Toast.makeText(this, error, Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this, "Папка переименована", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun confirmDeleteFolder(folder: RecipeFolderEntity) {
+        AlertDialog.Builder(this)
+            .setTitle("🗑️ Удалить папку?")
+            .setMessage("Папка «${folder.name}» будет удалена. Это возможно, только если в ней нет рецептов и подпапок.")
+            .setPositiveButton("Удалить") { _, _ ->
+                val currentUser = Config.getCurrentUser(this)
+                viewModel.deleteFolder(folder.id, currentUser) { error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this, "Папка удалена", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ============================================================
+    // НАВИГАЦИЯ НАЗАД
+    // ============================================================
+
+    private fun setupBackHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleBack()
+            }
+        })
+    }
+
+    /**
+     * Обработка «назад»:
+     *  - если внутри папки — вернуться в корень;
+     *  - иначе — finish().
+     */
+    private fun handleBack() {
+        if (viewModel.goBack()) {
+            Logger.log(TAG, "handleBack: went to root")
+        } else {
+            Logger.log(TAG, "handleBack: finish")
+            finish()
+        }
     }
 
     // ============================================================
@@ -322,10 +531,24 @@ class RecipeListActivity : AppCompatActivity() {
     // ============================================================
 
     private fun observeViewModel() {
-        viewModel.recipes.observe(this) { list ->
-            Logger.log(TAG, "recipes observer: count=${list.size}")
-            adapter.submitList(list)
-            updateUiState(isEmpty = list.isEmpty())
+        // Папки уровня.
+        viewModel.folders.observe(this) { folders ->
+            Logger.log(TAG, "folders observer: count=${folders.size}")
+            rebuildList()
+            loadFolderRecipeCounts(folders)
+        }
+
+        // Рецепты уровня.
+        viewModel.recipes.observe(this) { recipes ->
+            Logger.log(TAG, "recipes observer: count=${recipes.size}")
+            rebuildList()
+        }
+
+        // Имя текущей папки (для заголовка и текстов пустого состояния).
+        viewModel.currentFolderName.observe(this) { name ->
+            Logger.log(TAG, "currentFolderName observer: '$name'")
+            updateTitle(name)
+            updateEmptyStateText(name)
         }
 
         viewModel.isEmpty.observe(this) { empty ->
@@ -338,25 +561,80 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Склеить папки и рецепты в один список для RecipeCatalogAdapter:
+     * сначала все папки, потом все рецепты.
+     */
+    private fun rebuildList() {
+        val folders = viewModel.folders.value ?: emptyList()
+        val recipes = viewModel.recipes.value ?: emptyList()
+
+        val list = ArrayList<RecipeCatalogAdapter.RecipeCatalogItem>(
+            folders.size + recipes.size
+        )
+
+        folders.forEach { folder ->
+            list.add(
+                RecipeCatalogAdapter.RecipeCatalogItem.Folder(
+                    folder = folder,
+                    recipesCount = folderRecipeCounts[folder.id] ?: 0
+                )
+            )
+        }
+
+        recipes.forEach { item ->
+            list.add(
+                RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
+                    recipe = item.recipe,
+                    photoFile = item.photoFile
+                )
+            )
+        }
+
+        adapter.submitList(list)
+    }
+
+    /**
+     * Асинхронно подгрузить количество рецептов в каждой папке
+     * и обновить карточки папок. Нужно для подписи «📁 N рецептов».
+     *
+     * Использует тот же RecipesRepository через ViewModel? Нет — чтобы
+     * не плодить методы в ViewModel, читаем прямо из БД через
+     * AppDatabase (лёгкий count-запрос).
+     */
+    private fun loadFolderRecipeCounts(folders: List<RecipeFolderEntity>) {
+        if (folders.isEmpty()) return
+
+        val db = com.family.base.data.local.AppDatabase.getInstance(applicationContext)
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                var changed = false
+                folders.forEach { folder ->
+                    val count = db.recipeDao().countByFolder(folder.id)
+                    if (folderRecipeCounts[folder.id] != count) {
+                        folderRecipeCounts[folder.id] = count
+                        changed = true
+                    }
+                }
+                if (changed) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        rebuildList()
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadFolderRecipeCounts ERROR: ${e.message}", e)
+            }
+        }
+    }
+
     private fun updateUiState(isEmpty: Boolean) {
         val loading = viewModel.isLoading.value ?: false
         val hasItems = !isEmpty
 
-        // RecyclerView показываем, если есть элементы.
         binding.rvRecipes.visibility = if (hasItems) View.VISIBLE else View.GONE
-
-        // EmptyState показываем, только если пусто И не идёт загрузка.
         binding.emptyState.visibility =
             if (isEmpty && !loading) View.VISIBLE else View.GONE
-
-        // Чипы сортировки — только когда есть элементы.
         binding.sortChipsScroll.visibility =
             if (hasItems) View.VISIBLE else View.GONE
-    }
-
-    private enum class FolderTitle(val text: String) {
-        AI("🤖 Рецепты ИИ"),
-        MY("📝 Мои рецепты"),
-        ALL("🍳 Рецепты")
     }
 }
