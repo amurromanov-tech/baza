@@ -21,9 +21,10 @@ import com.family.base.data.local.entity.*
         OutboxEntity::class,
         ProcessedChangelogEntity::class,
         RecipeEntity::class,
-        RecipeMediaEntity::class
+        RecipeMediaEntity::class,
+        RecipeFolderEntity::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun processedChangelogDao(): ProcessedChangelogDao
     abstract fun recipeDao(): RecipeDao
     abstract fun recipeMediaDao(): RecipeMediaDao
+    abstract fun recipeFolderDao(): RecipeFolderDao
 
     companion object {
         @Volatile
@@ -504,6 +506,62 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_recipe_media_deleteConfirmed_deletedAt " +
                         "ON recipe_media(deleteConfirmed, deletedAt)"
+                )
+            }
+        }
+
+        // ============================================================
+        // 🆕 v22 → v23: ПАПКИ РЕЦЕПТОВ (Шаг 1.7-1)
+        //
+        // Новое:
+        //   - таблица recipe_folders (вложенность через parentId);
+        //   - поле recipes.folderId (nullable TEXT) — ссылка на папку.
+        //
+        // ⚠️ Схема @Entity должна точно совпадать с этим SQL (Правило №34):
+        //   recipe_folders:
+        //     - syncStatus      TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
+        //     - isDeleted       INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //     - deleteConfirmed INTEGER NOT NULL DEFAULT 0     → @ColumnInfo(defaultValue = "0")
+        //   recipes:
+        //     - folderId        TEXT (nullable, без DEFAULT)   → без @ColumnInfo(defaultValue)
+        // ============================================================
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                // ---------- recipe_folders ----------
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS recipe_folders (
+                        id TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        parentId TEXT,
+                        createdBy TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedBy TEXT,
+                        updatedAt INTEGER NOT NULL,
+                        syncStatus TEXT NOT NULL DEFAULT 'synced',
+                        isDeleted INTEGER NOT NULL DEFAULT 0,
+                        deletedAt INTEGER,
+                        deletedBy TEXT,
+                        deleteConfirmed INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(id)
+                    )
+                """.trimIndent())
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_folders_parentId ON recipe_folders(parentId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_folders_createdAt ON recipe_folders(createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_folders_isDeleted ON recipe_folders(isDeleted)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_recipe_folders_deleteConfirmed_deletedAt " +
+                        "ON recipe_folders(deleteConfirmed, deletedAt)"
+                )
+
+                // ---------- recipes.folderId ----------
+                db.execSQL("ALTER TABLE recipes ADD COLUMN folderId TEXT")
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_folderId ON recipes(folderId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_recipes_source_folderId_createdAt " +
+                        "ON recipes(source, folderId, createdAt)"
                 )
             }
         }
@@ -2194,6 +2252,156 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
+        // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 22 (сразу в 23)
+        //
+        // Нужны, если на устройстве осталась БД версии 22 (только что
+        // обновились с v21.1.0) или восстановили бэкап v22.
+        //
+        // Практически основной будет MIGRATION_22_23. Остальные — страховка.
+        // ============================================================
+        private val MIGRATION_22_23_DIRECT = MIGRATION_22_23
+
+        private val MIGRATION_2_23 = object : Migration(2, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_3_23 = object : Migration(3, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_4_23 = object : Migration(4, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_4_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_5_23 = object : Migration(5, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_5_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_6_23 = object : Migration(6, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_6_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_7_23 = object : Migration(7, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_8_23 = object : Migration(8, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_8_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_9_23 = object : Migration(9, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_10_23 = object : Migration(10, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_11_23 = object : Migration(11, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_12_23 = object : Migration(12, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_13_23 = object : Migration(13, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_14_23 = object : Migration(14, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_15_23 = object : Migration(15, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_15_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_16_23 = object : Migration(16, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_16_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_17_23 = object : Migration(17, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_17_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_18_23 = object : Migration(18, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_18_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_19_23 = object : Migration(19, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_19_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_20_23 = object : Migration(20, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_20_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        private val MIGRATION_21_23 = object : Migration(21, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_21_22.migrate(db)
+                MIGRATION_22_23.migrate(db)
+            }
+        }
+
+        // ============================================================
         // СБОРКА ЭКЗЕМПЛЯРА
         // ============================================================
         fun getInstance(context: Context): AppDatabase {
@@ -2392,7 +2600,32 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_17_22,
                         MIGRATION_18_22,
                         MIGRATION_19_22,
-                        MIGRATION_20_22
+                        MIGRATION_20_22,
+
+                        // 🆕 v22 → v23: recipe_folders + recipes.folderId
+                        MIGRATION_22_23_DIRECT,
+
+                        // 🆕 Цепочки с пропуском 22 (сразу в 23)
+                        MIGRATION_2_23,
+                        MIGRATION_3_23,
+                        MIGRATION_4_23,
+                        MIGRATION_5_23,
+                        MIGRATION_6_23,
+                        MIGRATION_7_23,
+                        MIGRATION_8_23,
+                        MIGRATION_9_23,
+                        MIGRATION_10_23,
+                        MIGRATION_11_23,
+                        MIGRATION_12_23,
+                        MIGRATION_13_23,
+                        MIGRATION_14_23,
+                        MIGRATION_15_23,
+                        MIGRATION_16_23,
+                        MIGRATION_17_23,
+                        MIGRATION_18_23,
+                        MIGRATION_19_23,
+                        MIGRATION_20_23,
+                        MIGRATION_21_23
                     )
                     .build()
                     .also { INSTANCE = it }
