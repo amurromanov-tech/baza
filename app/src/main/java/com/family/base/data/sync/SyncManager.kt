@@ -6,6 +6,8 @@ import com.family.base.data.local.DeviceIdProvider
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
+import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
@@ -15,35 +17,15 @@ import com.google.gson.JsonSyntaxException
 /**
  * Главный класс синхронизации через changelog.
  *
- * Задача №2: локальная база — источник правды, Яндекс.Диск — транспорт
- * для пакетов изменений.
+ * 🆕 v21.1.0 (Шаг 1.6-4): рецепты и медиа рецептов.
+ *  - markEntitiesSynced: добавить ENTITY_RECIPE / ENTITY_RECIPE_MEDIA;
+ *  - confirmTombstones: добавить ветки для рецептов и медиа;
+ *  - cleanupConfirmedTombstones: удалять рецепты и медиа (локальные файлы +
+ *    файлы на Диске через SyncManagerApi.deleteRecipeMediaFile).
  *
- * Алгоритм:
- *  1. PUSH: сформировать пакет из outbox → залить на Диск → пометить synced.
- *  2. PULL: список файлов в /BAZA/changelog/ → отфильтровать уже обработанные →
- *     скачать новые → применить через ChangelogParser.
- *  3. CLEANUP: удалить synced-записи старше N дней и устаревшие processed_changelogs.
- *
- * SyncManager НЕ трогает items.json / folders.json / tasks.json / history.json —
- * они продолжают работать параллельно как fallback для обратной совместимости.
- *
- * 🆕 v17.3.0 (cleanup): блок 3 cleanup теперь удаляет с Диска не только
- * свои старые файлы (OWN_BATCH_TTL_MS = 7 дней), но и чужие —
- * если их batchId уже есть в processed_changelogs и обработан
- * раньше PROCESSED_TTL_MS (30 дней). Раньше чужие копились вечно.
- *
- * 🆕 B3: прямых путей в этом классе нет — вся работа с путями
- * делегирована SyncManagerApi, который использует DiskPaths.
- *
- * 🆕 v19 (№10): tombstones.
- *  - После успешного PUSH вызываем confirmItemDeleted / confirmFolderDeleted /
- *    confirmTaskDeleted для всех сущностей, которые сейчас isDeleted = true.
- *    Это значит: удаление разошлось по всем устройствам, можно через год
- *    физически удалить.
- *  - В cleanup добавлен блок 4: физическое удаление подтверждённых
- *    tombstones старше TOMBSTONE_RETENTION_MS (365 дней). Вместе с ними
- *    удаляются фото на локальном диске и на Яндекс.Диске, чтобы база
- *    и облако не раздувались.
+ *  Рецепты и медиа приходят через changelog PULL (ChangelogParser —
+ *  файл 5/5). mergeData для них НЕ используется (items.json/folders.json
+ *  их не содержат).
  */
 class SyncManager(
     private val db: AppDatabase,
@@ -64,18 +46,10 @@ class SyncManager(
         /** Записи outbox со статусом synced старше этого возраста чистим */
         private const val OUTBOX_SYNCED_TTL_MS = 7L * 24 * 60 * 60 * 1000 // 7 дней
 
-        /**
-         * 🆕 v19 (№10): сколько хранить подтверждённые tombstones перед
-         * физическим удалением. 1 год — с большим запасом: даже если
-         * какое-то устройство не выходило в сеть год, оно получит
-         * пакет с tombstone из changelog раньше, чем мы удалим запись.
-         */
-        private const val TOMBSTONE_RETENTION_MS = 365L * 24 * 60 * 60 * 1000 // 1 год
+        /** Сколько хранить подтверждённые tombstones перед физическим удалением. 1 год. */
+        private const val TOMBSTONE_RETENTION_MS = 365L * 24 * 60 * 60 * 1000
     }
 
-    /**
-     * Результат одного цикла синхронизации.
-     */
     data class SyncResult(
         val pushedBatches: Int,
         val pushedEntries: Int,
@@ -93,20 +67,6 @@ class SyncManager(
     // ГЛАВНЫЙ ВХОД
     // ============================================================
 
-    /**
-     * Полный цикл синхронизации changelog.
-     * Возвращает SyncResult. Не бросает исключений.
-     *
-     * 🆕 B1.3: при неудачном ensureChangelogFolder больше НЕ прерываем
-     * весь синк. Логика:
-     *  - папка не готова → PUSH откладываем (pushFailed = true),
-     *    outbox НЕ чистим (попробуем в следующий раз);
-     *  - PULL всё равно пробуем (вдруг папка есть, просто getResources мигнул);
-     *  - CLEANUP тоже пробуем — не критичен.
-     *
-     * Так пользователь хотя бы получает чужие изменения и не залипает
-     * на 30+ секунд из-за одного 500 от Яндекса.
-     */
     suspend fun syncChangelogs(): SyncResult {
         val deviceId: String = try {
             val ctx = BaseApplication.getAppContext()
@@ -118,8 +78,6 @@ class SyncManager(
 
         Logger.log(TAG, "syncChangelogs: START, deviceId=$deviceId")
 
-        // Проверяем, готова ли папка changelog.
-        // Если нет — не abort, а помечаем push как failed и идём дальше.
         val folderReady = try {
             api.ensureChangelogFolder()
         } catch (e: Exception) {
@@ -131,19 +89,14 @@ class SyncManager(
             Logger.log(TAG, "syncChangelogs: changelog folder not ready, push will be skipped")
         }
 
-        // 1. PUSH — только если папка готова.
         val pushResult: Triple<Int, Int, Boolean> = if (folderReady) {
             pushPendingChanges(deviceId)
         } else {
             Triple(0, 0, true)
         }
 
-        // 2. PULL — пробуем в любом случае.
-        // Если папки нет, listChangelogFiles вернёт emptyList (404 → empty),
-        // и это корректно: просто нечего тянуть.
         val pullResult = pullIncomingChanges(deviceId)
 
-        // 3. CLEANUP — не критичен, но пусть работает.
         cleanup(deviceId)
 
         val result = SyncResult(
@@ -171,12 +124,6 @@ class SyncManager(
     // PUSH
     // ============================================================
 
-    /**
-     * Формирует один пакет из всех несинхронизированных outbox-записей
-     * и заливает его на Диск.
-     *
-     * @return Triple(batchesCount, entriesCount, failed)
-     */
     private suspend fun pushPendingChanges(deviceId: String): Triple<Int, Int, Boolean> {
         val pending = try {
             db.outboxDao().getPending()
@@ -196,10 +143,8 @@ class SyncManager(
         val batchId = "${deviceId}_$now"
         val fileName = "$batchId.json"
 
-        // Определяем changedBy: берём из первой записи.
         val changedBy = pending.firstOrNull()?.changedBy ?: "unknown"
 
-        // Формируем entries
         val entries = pending.map { out ->
             ChangelogEntry(
                 entityType = out.entityType,
@@ -229,7 +174,6 @@ class SyncManager(
             return Triple(0, 0, true)
         }
 
-        // Помечаем outbox-записи как synced
         try {
             val ids = pending.map { it.id }
             db.outboxDao().markSyncedBatch(ids, now, batchId)
@@ -237,10 +181,8 @@ class SyncManager(
             Logger.log(TAG, "pushPendingChanges: markSyncedBatch failed: ${e.message}")
         }
 
-        // Помечаем сущности как synced
         markEntitiesSynced(pending)
 
-        // 🆕 v19 (№10): подтверждаем tombstones — PUSH прошёл, удаление разошлось.
         confirmTombstones(pending)
 
         Logger.log(TAG, "pushPendingChanges: uploaded $fileName with ${entries.size} entries")
@@ -249,12 +191,15 @@ class SyncManager(
 
     /**
      * Помечает синхронизированные сущности как synced в БД.
-     * Группирует по типам для эффективности.
+     *
+     * 🆕 v21.1.0 (Шаг 1.6-4): добавлены ENTITY_RECIPE / ENTITY_RECIPE_MEDIA.
      */
     private suspend fun markEntitiesSynced(entries: List<OutboxEntity>) {
         val itemIds = entries.filter { it.entityType == OutboxEntity.ENTITY_ITEM }.map { it.entityId }
         val folderIds = entries.filter { it.entityType == OutboxEntity.ENTITY_FOLDER }.map { it.entityId }
         val taskIds = entries.filter { it.entityType == OutboxEntity.ENTITY_TASK }.map { it.entityId }
+        val recipeIds = entries.filter { it.entityType == OutboxEntity.ENTITY_RECIPE }.map { it.entityId }
+        val recipeMediaIds = entries.filter { it.entityType == OutboxEntity.ENTITY_RECIPE_MEDIA }.map { it.entityId }
 
         try {
             if (itemIds.isNotEmpty()) {
@@ -266,9 +211,21 @@ class SyncManager(
             if (taskIds.isNotEmpty()) {
                 db.taskDao().markTasksSynced(taskIds)
             }
+            // 🆕 1.6-4: рецепты и медиа.
+            if (recipeIds.isNotEmpty()) {
+                for (id in recipeIds) {
+                    db.recipeDao().updateSyncStatus(id, RecipeEntity.SYNC_STATUS_SYNCED)
+                }
+            }
+            if (recipeMediaIds.isNotEmpty()) {
+                for (id in recipeMediaIds) {
+                    db.recipeMediaDao().updateSyncStatus(id, RecipeMediaEntity.SYNC_STATUS_SYNCED)
+                }
+            }
             Logger.log(
                 TAG,
-                "markEntitiesSynced: items=${itemIds.size}, folders=${folderIds.size}, tasks=${taskIds.size}"
+                "markEntitiesSynced: items=${itemIds.size}, folders=${folderIds.size}, tasks=${taskIds.size}, " +
+                    "recipes=${recipeIds.size}, recipeMedia=${recipeMediaIds.size}"
             )
         } catch (e: Exception) {
             Logger.log(TAG, "markEntitiesSynced error: ${e.message}")
@@ -276,22 +233,16 @@ class SyncManager(
     }
 
     /**
-     * 🆕 v19 (№10): после успешного PUSH подтверждаем tombstones.
+     * После успешного PUSH подтверждаем tombstones.
      *
-     * Для каждой outbox-записи читаем сущность из БД. Если она сейчас
-     * в состоянии tombstone (isDeleted = true) — ставим deleteConfirmed = 1.
-     * Это значит: PUSH уже прошёл, удаление разошлось по всем устройствам,
-     * cleanup может физически удалить запись через TOMBSTONE_RETENTION_MS.
-     *
-     * Внимание: читаем именно из БД (а не из outbox payload), потому что
-     * сущность могли обновить ещё раз между формированием outbox и PUSH
-     * (например, пользователь после удаления нажал «отменить» — но у нас
-     * отмены нет; тем не менее, читать актуальную версию правильнее).
+     * 🆕 v21.1.0 (Шаг 1.6-4): добавлены ветки для рецептов и медиа.
      */
     private suspend fun confirmTombstones(entries: List<OutboxEntity>) {
         var itemsConfirmed = 0
         var foldersConfirmed = 0
         var tasksConfirmed = 0
+        var recipesConfirmed = 0
+        var recipeMediaConfirmed = 0
 
         try {
             for (out in entries) {
@@ -317,12 +268,31 @@ class SyncManager(
                             tasksConfirmed++
                         }
                     }
+                    // 🆕 1.6-4: рецепты и медиа.
+                    OutboxEntity.ENTITY_RECIPE -> {
+                        val recipe = db.recipeDao().getRecipeById(out.entityId)
+                        if (recipe != null && recipe.isDeleted && !recipe.deleteConfirmed) {
+                            db.recipeDao().confirmRecipeDeleted(out.entityId)
+                            recipesConfirmed++
+                        }
+                    }
+                    OutboxEntity.ENTITY_RECIPE_MEDIA -> {
+                        val media = db.recipeMediaDao().getMediaById(out.entityId)
+                        if (media != null && media.isDeleted && !media.deleteConfirmed) {
+                            db.recipeMediaDao().confirmMediaDeleted(out.entityId)
+                            recipeMediaConfirmed++
+                        }
+                    }
                 }
             }
-            if (itemsConfirmed + foldersConfirmed + tasksConfirmed > 0) {
+            if (itemsConfirmed + foldersConfirmed + tasksConfirmed +
+                recipesConfirmed + recipeMediaConfirmed > 0
+            ) {
                 Logger.log(
                     TAG,
-                    "confirmTombstones: items=$itemsConfirmed, folders=$foldersConfirmed, tasks=$tasksConfirmed"
+                    "confirmTombstones: items=$itemsConfirmed, folders=$foldersConfirmed, " +
+                        "tasks=$tasksConfirmed, recipes=$recipesConfirmed, " +
+                        "recipeMedia=$recipeMediaConfirmed"
                 )
             }
         } catch (e: Exception) {
@@ -342,9 +312,6 @@ class SyncManager(
         val failed: Boolean
     )
 
-    /**
-     * Скачивает все новые пакеты из /BAZA/changelog/ и применяет их.
-     */
     private suspend fun pullIncomingChanges(deviceId: String): PullResult {
         val files = api.listChangelogFiles()
         if (files == null) {
@@ -359,7 +326,6 @@ class SyncManager(
 
         Logger.log(TAG, "pullIncomingChanges: ${files.size} files on disk")
 
-        // Получаем уже обработанные batchId
         val processedIds: Set<String> = try {
             db.processedChangelogDao().getAllBatchIds().toSet()
         } catch (e: Exception) {
@@ -367,7 +333,6 @@ class SyncManager(
             return PullResult(0, 0, 0, 0, failed = true)
         }
 
-        // Фильтруем: имя файла = "{batchId}.json".
         val candidates: List<String> = files.filter { fileName ->
             val id = fileName.removeSuffix(".json")
             !processedIds.contains(id)
@@ -431,14 +396,10 @@ class SyncManager(
         return PullResult(batches, applied, skipped, errors, failed = false)
     }
 
-    /**
-     * Помечает битый пакет как обработанный, чтобы не пытаться снова.
-     */
     private suspend fun markProcessedBad(fileName: String, reason: String) {
         try {
             val batchId = fileName.removeSuffix(".json")
             val now = System.currentTimeMillis()
-            // deviceId берём из имени файла: "{deviceId}_{timestamp}"
             val deviceIdGuess = batchId.substringBeforeLast('_', batchId)
             db.processedChangelogDao().insert(
                 com.family.base.data.local.entity.ProcessedChangelogEntity(
@@ -462,19 +423,6 @@ class SyncManager(
     // CLEANUP
     // ============================================================
 
-    /**
-     * Чистит устаревшие данные:
-     *  - outbox (synced старше 7 дней);
-     *  - processed_changelogs (старше 30 дней);
-     *  - свои файлы changelog на Диске (старше 7 дней);
-     *  - чужие файлы changelog на Диске (старше 30 дней, уже обработанные);
-     *  - 🆕 v19 (№10): физически удаляет подтверждённые tombstones
-     *    старше TOMBSTONE_RETENTION_MS (365 дней) вместе с их фото
-     *    (локально и на Диске).
-     *
-     * ⚠️ Переписано без `continue` внутри лямбд, чтобы не упасть
-     * на экспериментальной фиче Kotlin.
-     */
     private suspend fun cleanup(deviceId: String) {
         val now = System.currentTimeMillis()
 
@@ -501,8 +449,6 @@ class SyncManager(
                 val ownCutoff = now - OWN_BATCH_TTL_MS
                 val foreignCutoff = now - PROCESSED_TTL_MS
 
-                // 🆕 v17.3.0: batchId чужих файлов, уже обработанных нами
-                // и достаточно старых, чтобы их можно было удалить с Диска.
                 val oldProcessedBatchIds: Set<String> = try {
                     db.processedChangelogDao()
                         .getProcessedOlderThan(foreignCutoff)
@@ -543,23 +489,24 @@ class SyncManager(
             Logger.log(TAG, "cleanup disk files error: ${e.message}")
         }
 
-        // 4. 🆕 v19 (№10): физическое удаление подтверждённых tombstones
+        // 4. 🆕 1.6-4: физическое удаление подтверждённых tombstones
+        //    (items, folders, tasks + recipes, recipe_media).
         cleanupConfirmedTombstones(now)
     }
 
     /**
-     * 🆕 v19 (№10): физически удаляет подтверждённые tombstones
-     * старше TOMBSTONE_RETENTION_MS.
+     * 🆕 1.6-4: физически удаляет подтверждённые tombstones рецептов
+     * и медиа вместе с items/folders/tasks.
      *
-     * Для каждой сущности:
-     *  1. Удаляем фото с Яндекс.Диска (через SyncManagerApi).
-     *  2. Удаляем фото с локального диска (через ImageUtils).
-     *  3. Удаляем запись из Room.
-     *
-     * Если удаление с Диска не удалось — всё равно удаляем локально.
-     * Файл на Диске можно попробовать удалить в следующий раз (но id
-     * уже не будет в БД, поэтому повторно мы его не тронем — это
-     * осознанный компромисс: не залипаем на сетевых ошибках).
+     * Для рецептов и медиа:
+     *  1. Удаляем файлы с Диска (/BAZA/data/recipe_media/<recipeId>/...):
+     *     - для медиа: <mediaId>.jpg / <mediaId>.mp4 + <mediaId>_thumb.jpg;
+     *     - для рецепта: папку /BAZA/data/recipe_media/<recipeId> — но проще
+     *       удалить по одному файлу, т.к. list папки требует отдельного API.
+     *       Поэтому: удаляем известные файлы (imageUrl, thumbnailUrl)
+     *       для каждого медиа перед hardDelete.
+     *  2. Локальные файлы удалит SyncViewModel.cleanupRecipeTombstonesLocal.
+     *  3. hardDeleteConfirmedMedia / hardDeleteConfirmedRecipes.
      */
     private suspend fun cleanupConfirmedTombstones(now: Long) {
         val cutoff = now - TOMBSTONE_RETENTION_MS
@@ -629,6 +576,52 @@ class SyncManager(
             }
         } catch (e: Exception) {
             Logger.log(TAG, "cleanupConfirmedTombstones tasks error: ${e.message}")
+        }
+
+        // --- 🆕 1.6-4: RECIPE MEDIA ---
+        try {
+            val mediaIds = db.recipeMediaDao().getConfirmedMediaOlderThan(cutoff)
+            if (mediaIds.isNotEmpty()) {
+                val allMedia = db.recipeMediaDao().getAllRaw()
+                val byId = allMedia.associateBy { it.id }
+                var diskDeleted = 0
+                var diskFailed = 0
+                for (id in mediaIds) {
+                    val m = byId[id] ?: continue
+                    // Удаляем основной файл с Диска.
+                    val mainName = m.imageUrl
+                    if (!mainName.isNullOrBlank()) {
+                        if (api.deleteRecipeMediaFile(m.recipeId, mainName)) diskDeleted++ else diskFailed++
+                    }
+                    // Удаляем thumb с Диска.
+                    val thumbName = m.thumbnailUrl
+                    if (!thumbName.isNullOrBlank()) {
+                        if (api.deleteRecipeMediaFile(m.recipeId, thumbName)) diskDeleted++ else diskFailed++
+                    }
+                    // Локальные файлы удалим в SyncViewModel.cleanupRecipeTombstonesLocal.
+                }
+                db.recipeMediaDao().hardDeleteConfirmedMedia(mediaIds)
+                Logger.log(
+                    TAG,
+                    "cleanupConfirmedTombstones: removed ${mediaIds.size} recipe media " +
+                        "(disk files: deleted=$diskDeleted, failed=$diskFailed)"
+                )
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones recipe media error: ${e.message}")
+        }
+
+        // --- 🆕 1.6-4: RECIPES ---
+        try {
+            val recipeIds = db.recipeDao().getConfirmedRecipesOlderThan(cutoff)
+            if (recipeIds.isNotEmpty()) {
+                // Медиа этих рецептов (если ещё не удалены выше) — тоже hard-delete.
+                db.recipeMediaDao().hardDeleteByRecipeIds(recipeIds)
+                db.recipeDao().hardDeleteConfirmedRecipes(recipeIds)
+                Logger.log(TAG, "cleanupConfirmedTombstones: removed ${recipeIds.size} recipes (with their media)")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones recipes error: ${e.message}")
         }
     }
 }
