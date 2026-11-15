@@ -5,6 +5,7 @@ import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.Logger
@@ -15,7 +16,7 @@ import com.google.gson.Gson
  *
  * Вызывается из MainViewModel / TaskRepository / RecipesRepository
  * при каждом локальном изменении Item / Folder / Task / History /
- * Recipe / RecipeMedia.
+ * Recipe / RecipeMedia / RecipeFolder.
  *
  * Отвечает за:
  *  - Сериализацию entity в JSON.
@@ -144,9 +145,9 @@ object OutboxHelper {
      * Записать изменение рецепта в outbox.
      *
      * RecipeEntity сериализуется целиком (title, description, source,
-     * syncStatus, isDeleted, deletedAt, deletedBy, deleteConfirmed и т.д.)
-     * — значит новые поля уезжают в changelog автоматически, если
-     * завтра добавим что-то ещё в сущность. Не переписывать payload
+     * folderId, syncStatus, isDeleted, deletedAt, deletedBy, deleteConfirmed
+     * и т.д.) — значит новые поля уезжают в changelog автоматически,
+     * если завтра добавим что-то ещё в сущность. Не переписывать payload
      * вручную — потеряются поля.
      */
     suspend fun logRecipe(
@@ -207,6 +208,43 @@ object OutboxHelper {
             )
         } catch (e: Exception) {
             Logger.log(TAG, "logRecipeMedia ERROR: action=$action, id=${media.id}, ${e.message}")
+        }
+    }
+
+    /**
+     * 🆕 v21.1.0+ (Шаг 1.7-1): Записать изменение папки рецептов в outbox.
+     *
+     * RecipeFolderEntity сериализуется целиком (name, parentId,
+     * syncStatus, isDeleted, deletedAt, deletedBy, deleteConfirmed
+     * и т.д.). Одна папка = одна запись в changelog.
+     *
+     * Вызывается из RecipesRepository при createFolder / renameFolder /
+     * deleteFolder (soft-delete).
+     */
+    suspend fun logRecipeFolder(
+        db: AppDatabase,
+        folder: RecipeFolderEntity,
+        action: String,
+        changedBy: String
+    ) {
+        try {
+            val json = gson.toJson(folder)
+            val entry = OutboxEntity(
+                entityType = OutboxEntity.ENTITY_RECIPE_FOLDER,
+                entityId = folder.id,
+                action = action,
+                payloadJson = json,
+                changedBy = changedBy,
+                createdAt = System.currentTimeMillis()
+            )
+            db.outboxDao().insert(entry)
+            Logger.log(
+                TAG,
+                "logRecipeFolder: action=$action, id=${folder.id}, " +
+                    "name='${folder.name}', parentId=${folder.parentId}"
+            )
+        } catch (e: Exception) {
+            Logger.log(TAG, "logRecipeFolder ERROR: action=$action, id=${folder.id}, ${e.message}")
         }
     }
 
