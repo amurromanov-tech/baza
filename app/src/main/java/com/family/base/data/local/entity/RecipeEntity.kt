@@ -22,18 +22,32 @@ import java.util.UUID
  * Хранить JSON-массив в этой таблице — плохо для changelog (при
  * добавлении одного фото перезаливался бы весь рецепт + все файлы).
  *
+ * 🆕 v21.1.0+ (Шаг 1.7-1, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
+ * Добавлено поле folderId — ссылка на RecipeFolderEntity.
+ *  - folderId = null  → рецепт лежит в корне «Моих рецептов»
+ *    (рядом с папками);
+ *  - folderId != null → рецепт внутри папки (RecipeFolderEntity.id).
+ * Папки есть ТОЛЬКО у «Моих рецептов» (source = "user").
+ * У «Рецептов ИИ» (source = "ai") folderId всегда null.
+ *
  * ПОИСК/СОРТИРОВКА:
  *  - index_recipes_title        — быстрый поиск по названию (LIKE тоже работает);
  *  - index_recipes_createdAt    — сортировка «сначала новые»;
  *  - index_recipes_source_createdAt — фильтр по source + сортировка;
+ *  - index_recipes_folderId     — выборка рецептов в папке (getByFolder,
+ *    countByFolder, getRootRecipes);
+ *  - index_recipes_source_folderId_createdAt — фильтр по source + папке +
+ *    сортировка (корень «Моих рецептов», список внутри папки);
  *  - index_recipes_isDeleted    — фильтр tombstones;
  *  - index_recipes_deleteConfirmed_deletedAt — cleanup tombstones.
  *
- * ⚠️ Правило №34: схема @Entity должна точно совпадать с SQL в MIGRATION_21_22.
+ * ⚠️ Правило №34: схема @Entity должна точно совпадать с SQL в MIGRATION_21_22
+ * (и в MIGRATION_22_23 для folderId).
  *  - source: TEXT NOT NULL DEFAULT 'user' → @ColumnInfo(defaultValue = "user")
  *  - syncStatus: TEXT NOT NULL DEFAULT 'synced' → @ColumnInfo(defaultValue = "synced")
  *  - isDeleted: INTEGER NOT NULL DEFAULT 0 → @ColumnInfo(defaultValue = "0")
  *  - deleteConfirmed: INTEGER NOT NULL DEFAULT 0 → @ColumnInfo(defaultValue = "0")
+ *  - folderId: TEXT (nullable, без DEFAULT) → без @ColumnInfo(defaultValue)
  */
 @Entity(
     tableName = "recipes",
@@ -41,6 +55,11 @@ import java.util.UUID
         Index(value = ["title"], name = "index_recipes_title"),
         Index(value = ["createdAt"], name = "index_recipes_createdAt"),
         Index(value = ["source", "createdAt"], name = "index_recipes_source_createdAt"),
+        Index(value = ["folderId"], name = "index_recipes_folderId"),
+        Index(
+            value = ["source", "folderId", "createdAt"],
+            name = "index_recipes_source_folderId_createdAt"
+        ),
         Index(value = ["isDeleted"], name = "index_recipes_isDeleted"),
         Index(
             value = ["deleteConfirmed", "deletedAt"],
@@ -77,6 +96,21 @@ data class RecipeEntity(
      */
     @ColumnInfo(defaultValue = "user")
     val source: String = SOURCE_USER,
+
+    /**
+     * 🆕 v21.1.0+ (Шаг 1.7-1, миграция 22→23): папка рецепта.
+     *
+     * null      — рецепт в корне «Моих рецептов» (рядом с папками);
+     * не null   — рецепт внутри папки (RecipeFolderEntity.id).
+     *
+     * Папки есть только у «Моих рецептов» (source = "user").
+     * У «Рецептов ИИ» (source = "ai") folderId всегда null.
+     *
+     * ⚠️ Колонка nullable, без DEFAULT. В MIGRATION_22_23 добавляется
+     * через ALTER TABLE recipes ADD COLUMN folderId TEXT — без NOT NULL.
+     * Room валидирует схему и ожидает именно nullable TEXT без default.
+     */
+    val folderId: String? = null,
 
     val createdBy: String,
     val createdAt: Long = System.currentTimeMillis(),
