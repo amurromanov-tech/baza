@@ -25,16 +25,23 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.UnknownHostException
 
 /**
- * 🆕 v20.7.5 (миграция 20→21):
- *  - uploadItemImage: при успешной заливке ставит imageSynced = true
- *    (не только imageUrl, как раньше). Теперь uploadUnsyncedImages
- *    не будет повторно грузить этот предмет — фильтр по imageSynced.
- *  - uploadFolderImage: при успешной заливке ставит iconSynced = true.
- *    Раньше вызывающий код (SyncViewModel) сам писал iconUrl после
- *    upload, теперь флаг ставится внутри репозитория — единая точка
- *    правды, не зависит от вызывающего кода.
- *  - itemImageExistsOnDisk / folderImageExistsOnDisk оставлены как есть
- *    (пригодятся для диагностики «файла на Диске нет, а флаг true»).
+ * 🆕 v20.7.5 (миграция 20→21): uploadItemImage / uploadFolderImage ставят
+ * imageSynced / iconSynced = true при успехе.
+ *
+ * 🆕 v21.1.0 (Шаг 1.6-2): медиа рецептов.
+ *  - uploadRecipeMedia(recipeId, fileName, bytes) — заливка файла
+ *    на Диск в /BAZA/data/recipe_media/<recipeId>/<fileName>.
+ *    При успехе ставит imageSynced = true у RecipeMediaEntity
+ *    (по id = имя файла без расширения — см. RecipeMediaController).
+ *  - downloadRecipeMediaBytes(recipeId, fileName) — скачивание файла
+ *    с Диска в память (для сохранения локально в SyncViewModel).
+ *  - recipeMediaExistsOnDisk(recipeId, fileName): Boolean? — есть ли
+ *    файл на Диске (200 → true, 404 → false, иначе → null).
+ *
+ *  Всё по образцу uploadItemImage / downloadItemImageBytes / itemImageExistsOnDisk:
+ *   - DNS-abort: при UnknownHostException — noteDnsFailure();
+ *   - ретраи не делаем (это задача SyncViewModel);
+ *   - URL/mediaType — из mimeType файла (image/jpeg или video/mp4).
  */
 class CatalogRepository(private val db: AppDatabase) {
 
@@ -101,17 +108,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return folder
     }
 
-    /**
-     * Удаление папки — tombstone (№10 v19).
-     *
-     * ⚠️ Системные папки (isSystem = true) удалять НЕЛЬЗЯ.
-     * Физически запись не стирается: isDeleted = 1, syncStatus = 'pending',
-     * deleteConfirmed = 0. Уедет через changelog, чтобы удаление
-     * разошлось по всем устройствам и не воскресло при merge.
-     *
-     * @param folderId  id удаляемой папки.
-     * @param deletedBy кто удалил (AppUser.name).
-     */
     suspend fun deleteFolder(folderId: String, deletedBy: String) {
         val folder = db.folderDao().getFolderById(folderId)
         if (folder == null) {
@@ -140,20 +136,10 @@ class CatalogRepository(private val db: AppDatabase) {
         Logger.log(TAG, "deleteFolder: tombstone set for $folderId by $deletedBy")
     }
 
-    /**
-     * Подтвердить tombstone папки после успешного PUSH.
-     * Вызывается из SyncManager.
-     */
     suspend fun confirmFolderDeleted(folderId: String) {
         db.folderDao().confirmFolderDeleted(folderId)
     }
 
-    /**
-     * Физическое удаление подтверждённых tombstones папок старше thresholdMs.
-     * Вызывается из cleanup.
-     *
-     * @return количество физически удалённых записей.
-     */
     suspend fun cleanupOldFolderTombstones(thresholdMs: Long): Int {
         val ids = db.folderDao().getConfirmedFoldersOlderThan(thresholdMs)
         if (ids.isEmpty()) return 0
@@ -162,11 +148,6 @@ class CatalogRepository(private val db: AppDatabase) {
         return ids.size
     }
 
-    /**
-     * Обновление папки.
-     * ⚠️ Системные папки можно обновлять только внутри (updatedAt),
-     * но НЕ менять name / parentId / isSystem.
-     */
     suspend fun updateFolderSafe(updated: FolderEntity) {
         val existing = db.folderDao().getFolderById(updated.id)
         if (existing?.isSystem == true) {
@@ -208,20 +189,6 @@ class CatalogRepository(private val db: AppDatabase) {
         db.itemDao().updateQuantity(itemId, newQty)
     }
 
-    /**
-     * Удаление предмета — tombstone (№10 v19).
-     *
-     * Физически запись не стирается: isDeleted = 1, syncStatus = 'pending',
-     * deleteConfirmed = 0. Уедет через changelog, чтобы удаление
-     * разошлось по всем устройствам и не воскресло при merge.
-     *
-     * Архив (isArchived = 1) — НЕ tombstone. Архивные предметы остаются
-     * в базе навсегда. Tombstone ставится только на ошибочно
-     * занесённые данные, которые пользователь хочет удалить.
-     *
-     * @param itemId    id удаляемого предмета.
-     * @param deletedBy кто удалил (AppUser.name).
-     */
     suspend fun deleteItem(itemId: String, deletedBy: String) {
         val item = db.itemDao().getItemById(itemId)
         if (item == null) {
@@ -246,20 +213,10 @@ class CatalogRepository(private val db: AppDatabase) {
         Logger.log(TAG, "deleteItem: tombstone set for $itemId by $deletedBy")
     }
 
-    /**
-     * Подтвердить tombstone предмета после успешного PUSH.
-     * Вызывается из SyncManager.
-     */
     suspend fun confirmItemDeleted(itemId: String) {
         db.itemDao().confirmItemDeleted(itemId)
     }
 
-    /**
-     * Физическое удаление подтверждённых tombstones предметов старше thresholdMs.
-     * Вызывается из cleanup.
-     *
-     * @return количество физически удалённых записей.
-     */
     suspend fun cleanupOldItemTombstones(thresholdMs: Long): Int {
         val ids = db.itemDao().getConfirmedItemsOlderThan(thresholdMs)
         if (ids.isEmpty()) return 0
@@ -652,14 +609,6 @@ class CatalogRepository(private val db: AppDatabase) {
     // ФОТО ПАПОК
     // ============================================================
 
-    /**
-     * 🆕 v20.7.5 (миграция 20→21):
-     *  При успешной заливке иконки на Диск ставим iconSynced = true
-     *  в FolderEntity. Раньше это делал вызывающий код (SyncViewModel)
-     *  через updateFolder — теперь единая точка правды здесь.
-     *
-     *  Возвращает true только если файл реально улетел на Диск.
-     */
     suspend fun uploadFolderImage(folderId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -679,8 +628,6 @@ class CatalogRepository(private val db: AppDatabase) {
                 val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
-                    // 🆕 v20.7.5: успешная заливка — ставим iconSynced = true.
-                    // iconUrl тоже ставим (для UI), если ещё не стоит.
                     val folder = db.folderDao().getFolderById(folderId)
                     folder?.let {
                         val url = it.iconUrl ?: "folder_${folderId}.jpg"
@@ -977,17 +924,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * 🆕 v20.7.5 (миграция 20→21):
-     *  При успешной заливке фото на Диск ставим imageSynced = true
-     *  в ItemEntity. Раньше здесь писался только imageUrl, а флага не было —
-     *  из-за чего повторный синк не мог отличить «уже на Диске» от
-     *  «локально проставлено, но не залито». Теперь это единая точка
-     *  правды: imageSynced = true выставляется ТОЛЬКО здесь, после
-     *  успешного ответа Диска.
-     *
-     *  Возвращает true только если файл реально улетел на Диск.
-     */
     suspend fun uploadItemImage(itemId: String, imageBytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -1007,8 +943,6 @@ class CatalogRepository(private val db: AppDatabase) {
                 val href = urlResponse.body()?.href ?: return@withContext false
                 val uploadResponse = api.uploadFileToUrl(href, body)
                 if (uploadResponse.isSuccessful) {
-                    // 🆕 v20.7.5: успешная заливка — ставим imageSynced = true.
-                    // imageUrl тоже ставим (для UI), если ещё не стоит.
                     val item = db.itemDao().getItemById(itemId)
                     item?.let {
                         val url = it.imageUrl ?: "images/$itemId.jpg"
@@ -1107,6 +1041,181 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext null
                 }
                 Logger.log(TAG, "downloadItemImageBytes error for $itemId: ${e.message}")
+                null
+            }
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-2): МЕДИА РЕЦЕПТОВ
+    // ============================================================
+
+    /**
+     * Залить файл медиа рецепта на Яндекс.Диск.
+     *
+     * Путь: /BAZA/data/recipe_media/<recipeId>/<fileName>.
+     * При успехе ставит imageSynced = true у RecipeMediaEntity
+     * (id = имя файла без расширения, см. RecipeMediaController).
+     *
+     * @param recipeId  id рецепта (папка на Диске).
+     * @param fileName  имя файла: "<mediaId>.jpg" / "<mediaId>.mp4" / "<mediaId>_thumb.jpg".
+     * @param bytes     содержимое файла.
+     * @param mimeType  "image/jpeg" / "video/mp4" / ... (по умолчанию image/jpeg).
+     * @return true только если файл реально улетел на Диск.
+     */
+    suspend fun uploadRecipeMedia(
+        recipeId: String,
+        fileName: String,
+        bytes: ByteArray,
+        mimeType: String? = null
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "uploadRecipeMedia: DNS blocked, skip $recipeId/$fileName")
+                    return@withContext false
+                }
+                val auth = getAuthHeader() ?: return@withContext false
+                val api = YandexDiskApi.getInstance()
+                val folderPath = DiskPaths.recipeMediaFolder(recipeId)
+                val path = DiskPaths.recipeMediaFile(recipeId, fileName)
+
+                createFolderIfNotExists(DiskPaths.RECIPE_MEDIA)
+                createFolderIfNotExists(folderPath)
+
+                val type = mimeType?.takeIf { it.isNotBlank() } ?: "image/jpeg"
+                val body = bytes.toRequestBody(type.toMediaType())
+
+                val urlResponse = api.getUploadUrl(auth, path, true)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadRecipeMedia: failed to get upload URL for $path: code=${urlResponse.code()}")
+                    return@withContext false
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "uploadRecipeMedia: href null for $path")
+                    return@withContext false
+                }
+                val uploadResponse = api.uploadFileToUrl(href, body)
+                if (!uploadResponse.isSuccessful) {
+                    Logger.log(TAG, "uploadRecipeMedia: upload failed for $path: code=${uploadResponse.code()}")
+                    return@withContext false
+                }
+
+                // Ставим imageSynced = true. id медиа = имя файла без расширения
+                // (RecipeMediaController генерирует mediaId == baseName).
+                val mediaId = fileName.substringBeforeLast('.', fileName)
+                val media = db.recipeMediaDao().getMediaById(mediaId)
+                if (media != null) {
+                    val updated = media.copy(imageSynced = true)
+                    db.recipeMediaDao().updateMedia(updated)
+                    Logger.log(
+                        TAG,
+                        "uploadRecipeMedia: OK $recipeId/$fileName (mediaId=$mediaId, imageSynced=true)"
+                    )
+                } else {
+                    Logger.log(
+                        TAG,
+                        "uploadRecipeMedia: file uploaded, but media row not found for mediaId=$mediaId " +
+                            "(file=$fileName)"
+                    )
+                }
+                return@withContext true
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "uploadRecipeMedia: DNS failure for $recipeId/$fileName: ${e.message}")
+                    return@withContext false
+                }
+                Logger.log(TAG, "uploadRecipeMedia error for $recipeId/$fileName: ${e.message}")
+                false
+            }
+        }
+    }
+
+    /**
+     * Скачать файл медиа рецепта с Диска в память.
+     *
+     * @return ByteArray или null при ошибке / отсутствии файла.
+     */
+    suspend fun downloadRecipeMediaBytes(recipeId: String, fileName: String): ByteArray? {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) {
+                    Logger.log(TAG, "downloadRecipeMediaBytes: DNS blocked, skip $recipeId/$fileName")
+                    return@withContext null
+                }
+                val auth = getAuthHeader()
+                if (auth == null) {
+                    Logger.log(TAG, "downloadRecipeMediaBytes: no auth, skip $recipeId/$fileName")
+                    return@withContext null
+                }
+                val api = YandexDiskApi.getInstance()
+                val path = DiskPaths.recipeMediaFile(recipeId, fileName)
+
+                val urlResponse = api.getDiskDownloadUrl(auth, path)
+                if (!urlResponse.isSuccessful) {
+                    Logger.log(
+                        TAG,
+                        "downloadRecipeMediaBytes: no file on disk for $recipeId/$fileName (code=${urlResponse.code()})"
+                    )
+                    return@withContext null
+                }
+                val href = urlResponse.body()?.href
+                if (href == null) {
+                    Logger.log(TAG, "downloadRecipeMediaBytes: href null for $recipeId/$fileName")
+                    return@withContext null
+                }
+                val downloadResponse = api.downloadFile(href)
+                if (!downloadResponse.isSuccessful) {
+                    Logger.log(
+                        TAG,
+                        "downloadRecipeMediaBytes: download failed for $recipeId/$fileName (code=${downloadResponse.code()})"
+                    )
+                    return@withContext null
+                }
+                val bytes = downloadResponse.body()?.bytes()
+                if (bytes == null || bytes.isEmpty()) {
+                    Logger.log(TAG, "downloadRecipeMediaBytes: empty bytes for $recipeId/$fileName")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadRecipeMediaBytes: OK $recipeId/$fileName (${bytes.size} bytes)")
+                return@withContext bytes
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    Logger.log(TAG, "downloadRecipeMediaBytes: DNS failure for $recipeId/$fileName: ${e.message}")
+                    return@withContext null
+                }
+                Logger.log(TAG, "downloadRecipeMediaBytes error for $recipeId/$fileName: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Проверить, есть ли файл медиа рецепта на Диске.
+     *
+     * @return true — есть (200), false — нет (404), null — сетевая ошибка/DNS.
+     */
+    suspend fun recipeMediaExistsOnDisk(recipeId: String, fileName: String): Boolean? {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isDnsBlocked()) return@withContext null
+                val auth = getAuthHeader() ?: return@withContext null
+                val api = YandexDiskApi.getInstance()
+                val path = DiskPaths.recipeMediaFile(recipeId, fileName)
+                val response = api.getDiskDownloadUrl(auth, path)
+                when (response.code()) {
+                    200 -> true
+                    404 -> false
+                    else -> null
+                }
+            } catch (e: Exception) {
+                if (isDnsError(e)) {
+                    noteDnsFailure()
+                    return@withContext null
+                }
                 null
             }
         }
