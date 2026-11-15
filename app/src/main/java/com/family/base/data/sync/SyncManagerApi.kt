@@ -15,60 +15,20 @@ import java.net.UnknownHostException
 /**
  * Тонкий сетевой слой для SyncManager.
  *
- * Отвечает только за работу с папкой /BAZA/changelog/ и с файлами фото
- * (нужны для cleanup tombstones):
- *  - список файлов;
- *  - загрузка одного файла;
- *  - скачивание одного файла;
- *  - удаление одного файла.
- *
- * Всё общение с Яндекс.Диском — через YandexDiskApi.
- *
- * 🆕 v17.0.7: при запросе списка файлов явно передаём `limit = 1000`.
- * Яндекс.Диск по умолчанию отдаёт только 20 элементов, из-за чего
- * новые changelog-файлы были невидимыми, и синк «залипал».
- *
- * 🆕 v17.3.0 (хвост №8): downloadChangelogFile теперь делает до 2 попыток
- * с задержкой 500 мс при 5xx / DNS / timeout.
- *
- * 🆕 v17.4.0 (хвост №3): deleteChangelogFile теперь тоже делает до 2 попыток
- * с задержкой 500 мс при 5xx / 429 / DNS / timeout.
- *
- * 🆕 B3: пути changelog и фото берутся из DiskPaths — никаких магических строк.
- *
- * 🆕 v19 (№10): deleteItemImageFile / deleteFolderImageFile — для cleanup
- * tombstones, чтобы Диск не раздувался фотографиями удалённых предметов.
+ * 🆕 v21.1.0 (Шаг 1.6-4): deleteRecipeMediaFile(recipeId, fileName) —
+ * удаление файла медиа рецепта с Диска при cleanup tombstones
+ * (/BAZA/data/recipe_media/<recipeId>/<fileName>).
  */
 class SyncManagerApi {
 
     private val TAG = "SyncManagerApi"
 
-    /**
-     * Максимум файлов в одном ответе list.
-     * У Яндекса допустимо до 10000. 1000 — с огромным запасом.
-     */
     private val LIST_LIMIT = 1000
 
-    /**
-     * 🆕 v17.3.0: сколько раз пробуем скачать один changelog-файл
-     * при 5xx/DNS/timeout. 2 попытки = 1 retry через 500 мс.
-     */
     private val DOWNLOAD_MAX_ATTEMPTS = 2
-
-    /**
-     * 🆕 v17.3.0: пауза между попытками downloadChangelogFile.
-     */
     private val DOWNLOAD_RETRY_DELAY_MS = 500L
 
-    /**
-     * 🆕 v17.4.0: сколько раз пробуем удалить один changelog-файл
-     * при 5xx/429/DNS/timeout. 2 попытки = 1 retry через 500 мс.
-     */
     private val DELETE_MAX_ATTEMPTS = 2
-
-    /**
-     * 🆕 v17.4.0: пауза между попытками deleteChangelogFile.
-     */
     private val DELETE_RETRY_DELAY_MS = 500L
 
     private fun getAuth(): String? {
@@ -96,17 +56,6 @@ class SyncManagerApi {
     // ENSURE FOLDER
     // ============================================================
 
-    /**
-     * Гарантирует существование /BAZA/changelog/.
-     *
-     * Обёрнуто в NetworkCallExecutor с 2 попытками.
-     *  - 5xx/DNS/timeout → один retry через 500 мс;
-     *  - 4xx (кроме 404) → без retry, сразу false;
-     *  - 404 → создаём папку (это не ошибка).
-     *
-     * 🆕 v17.0.7: явно передаём limit в getDiskResources.
-     * 🆕 B3: пути — из DiskPaths.
-     */
     suspend fun ensureChangelogFolder(): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
@@ -172,14 +121,6 @@ class SyncManagerApi {
     // LIST FILES
     // ============================================================
 
-    /**
-     * Возвращает список имён файлов в /BAZA/changelog/ (без пути).
-     * Пустой список — если папки нет, или она пуста.
-     * null — если сетевая ошибка (важно: НЕ пустой список!).
-     *
-     * 🆕 v17.0.7: явно передаём limit = 1000.
-     * 🆕 B3: путь — из DiskPaths.
-     */
     suspend fun listChangelogFiles(): List<String>? {
         val auth = getAuth() ?: return null
         val api = YandexDiskApi.getInstance()
@@ -224,11 +165,6 @@ class SyncManagerApi {
     // UPLOAD
     // ============================================================
 
-    /**
-     * Заливает JSON-пакет на Диск.
-     * fileName — только имя (например, "abc-123_1730000000000.json").
-     * 🆕 B3: путь — из DiskPaths.changelogFile().
-     */
     suspend fun uploadChangelogFile(fileName: String, jsonBytes: ByteArray): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
@@ -266,15 +202,6 @@ class SyncManagerApi {
     // DOWNLOAD
     // ============================================================
 
-    /**
-     * Скачивает JSON-пакет с Диска.
-     * fileName — только имя. null — если ошибка или файла нет.
-     *
-     * 🆕 v17.3.0 (хвост №8): до DOWNLOAD_MAX_ATTEMPTS попыток
-     * с паузой DOWNLOAD_RETRY_DELAY_MS при 5xx / DNS / timeout.
-     *
-     * 🆕 B3: путь — из DiskPaths.changelogFile().
-     */
     suspend fun downloadChangelogFile(fileName: String): ByteArray? {
         val auth = getAuth() ?: return null
         val api = YandexDiskApi.getInstance()
@@ -375,65 +302,38 @@ class SyncManagerApi {
     }
 
     // ============================================================
-    // DELETE — CHANGELOG
+    // DELETE — CHANGELOG / ФОТО / МЕДИА РЕЦЕПТОВ
     // ============================================================
 
-    /**
-     * Удаляет файл changelog с Диска.
-     *
-     * 🆕 v17.4.0 (хвост №3): до DELETE_MAX_ATTEMPTS попыток
-     * с паузой DELETE_RETRY_DELAY_MS при 5xx / 429 / DNS / timeout.
-     * 404 считается успехом (файла нет — цель достигнута).
-     *
-     * 🆕 B3: путь — из DiskPaths.changelogFile().
-     */
     suspend fun deleteChangelogFile(fileName: String): Boolean {
         val path = DiskPaths.changelogFile(fileName)
         return deleteFileByPathInternal(path, label = "deleteChangelogFile($fileName)")
     }
 
-    // ============================================================
-    // 🆕 v19 (№10): DELETE — ФОТО (для cleanup tombstones)
-    // ============================================================
-
-    /**
-     * Удаляет файл фото предмета с Диска.
-     * Используется при физическом удалении подтверждённого tombstone
-     * (cleanup старше 1 года), чтобы Диск не раздувался.
-     *
-     * 404 = успех (файла нет — цель достигнута).
-     * 🆕 B3: путь — из DiskPaths.itemImage().
-     */
     suspend fun deleteItemImageFile(itemId: String): Boolean {
         val path = DiskPaths.itemImage(itemId)
         return deleteFileByPathInternal(path, label = "deleteItemImageFile($itemId)")
     }
 
-    /**
-     * Удаляет файл иконки папки с Диска.
-     * Используется при физическом удалении подтверждённого tombstone.
-     *
-     * 🆕 B3: путь — из DiskPaths.folderImage().
-     */
     suspend fun deleteFolderImageFile(folderId: String): Boolean {
         val path = DiskPaths.folderImage(folderId)
         return deleteFileByPathInternal(path, label = "deleteFolderImageFile($folderId)")
+    }
+
+    /**
+     * 🆕 v21.1.0 (Шаг 1.6-4): удаляет файл медиа рецепта с Диска.
+     * Путь: /BAZA/data/recipe_media/<recipeId>/<fileName>.
+     * 404 = успех (файла нет — цель достигнута).
+     */
+    suspend fun deleteRecipeMediaFile(recipeId: String, fileName: String): Boolean {
+        val path = DiskPaths.recipeMediaFile(recipeId, fileName)
+        return deleteFileByPathInternal(path, label = "deleteRecipeMediaFile($recipeId/$fileName)")
     }
 
     // ============================================================
     // УНИВЕРСАЛЬНОЕ УДАЛЕНИЕ ПО ПУТИ (с retry)
     // ============================================================
 
-    /**
-     * Внутренний метод: удаляет файл по абсолютному пути на Диске
-     * с теми же правилами, что и deleteChangelogFile:
-     *  - 200/204 — успех;
-     *  - 404 — успех (файла нет);
-     *  - 4xx (кроме 429) — false без retry;
-     *  - 429 / 5xx / DNS / timeout / исключение — retry до DELETE_MAX_ATTEMPTS.
-     *
-     * label — для логов (какой именно файл удаляем).
-     */
     private suspend fun deleteFileByPathInternal(path: String, label: String): Boolean {
         val auth = getAuth() ?: return false
         val api = YandexDiskApi.getInstance()
