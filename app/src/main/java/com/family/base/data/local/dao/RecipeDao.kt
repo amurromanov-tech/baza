@@ -16,24 +16,34 @@ import com.family.base.data.local.entity.RecipeEntity
  *    НЕ фильтруют isDeleted — changelog должен видеть tombstones;
  *  - markRecipeDeleted — soft-delete для синка (tombstone).
  *
+ * 🆕 v21.1.0+ (Шаг 1.7-1, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
+ * Добавлены методы для работы с папками:
+ *  - getByFolder(folderId, sortOrder) — рецепты в папке;
+ *  - getRootRecipes(source) — рецепты без папки (folderId IS NULL);
+ *  - searchInFolder(folderId, query) — поиск внутри папки;
+ *  - countByFolder(folderId) — для запрета удаления непустой папки;
+ *  - moveRecipeToFolder(recipeId, folderId, ...) — перемещение.
+ *
  * Поиск и сортировка:
- *  - searchByTitle(query) — LIKE '%query%' COLLATE NOCASE по title и description.
- *    Возвращает List<RecipeEntity> (Room не умеет Flow в этом проекте — везде suspend).
- *  - getBySource(source, sortOrder) — фильтр по source + сортировка.
- *    sortOrder: "new" (createdAt DESC), "name" (title COLLATE NOCASE ASC).
- *    Вместо динамического ORDER BY — два отдельных запроса (Room не любит
+ *  - searchBySource(query) — LIKE '%query%' COLLATE NOCASE по title и description
+ *    (в корне «Моих рецептов» или в «Рецептах ИИ»).
+ *  - Вместо динамического ORDER BY — отдельные запросы (Room не любит
  *    подстановку имён колонок, и это безопаснее).
  */
 @Dao
 interface RecipeDao {
 
     // ============================================================
-    // ЧТЕНИЕ
+    // ЧТЕНИЕ — ОБЩИЕ (без папок)
     // ============================================================
 
     /**
      * Все «живые» рецепты по source, сортировка «сначала новые».
      * Для экрана «Рецепты ИИ» (source = "ai") и «Мои рецепты» (source = "user").
+     *
+     * ⚠️ Для «Моих рецептов» этот запрос возвращает ВСЕ рецепты,
+     * включая лежащие в папках. Для корня «Моих рецептов» использовать
+     * getRootRecipes(source). См. ниже.
      */
     @Query("""
         SELECT * FROM recipes
@@ -64,10 +74,14 @@ interface RecipeDao {
     suspend fun getAllNewest(): List<RecipeEntity>
 
     /**
-     * Поиск по названию И описанию (LIKE, case-insensitive).
+     * Поиск по названию И описанию (LIKE, case-insensitive) в рамках source.
      * Если query пустой — вернёт все живые рецепты по source,
      * отсортированные «сначала новые». Это удобно для единого
      * пути в RecipeListActivity (пустой поиск = все).
+     *
+     * ⚠️ Для «Моих рецептов» этот запрос ищет по ВСЕМ рецептам source = "user",
+     * включая лежащие в папках. Для поиска в корне «Моих рецептов» —
+     * searchRootRecipes(source, query). См. ниже.
      */
     @Query("""
         SELECT * FROM recipes
@@ -107,6 +121,104 @@ interface RecipeDao {
     suspend fun countBySource(source: String): Int
 
     // ============================================================
+    // 🆕 ШАГ 1.7-1: ЧТЕНИЕ — ПАПКИ РЕЦЕПТОВ
+    // ============================================================
+
+    /**
+     * Рецепты в указанной папке, сортировка «сначала новые».
+     * folderId — id папки рецептов (RecipeFolderEntity.id).
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE folderId = :folderId AND isDeleted = 0
+        ORDER BY createdAt DESC
+    """)
+    suspend fun getByFolderNewest(folderId: String): List<RecipeEntity>
+
+    /**
+     * Рецепты в указанной папке, сортировка «по алфавиту».
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE folderId = :folderId AND isDeleted = 0
+        ORDER BY title COLLATE NOCASE ASC
+    """)
+    suspend fun getByFolderAlphabetical(folderId: String): List<RecipeEntity>
+
+    /**
+     * Рецепты БЕЗ папки (в корне «Моих рецептов») по source,
+     * сортировка «сначала новые».
+     *
+     * Для «Моих рецептов»: source = "user", folderId IS NULL —
+     * это то, что показываем в корне рядом с папками.
+     * Для «Рецептов ИИ»: source = "ai", folderId IS NULL —
+     * у ИИ-рецептов папок нет, вернутся все живые.
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE source = :source
+          AND folderId IS NULL
+          AND isDeleted = 0
+        ORDER BY createdAt DESC
+    """)
+    suspend fun getRootRecipesNewest(source: String): List<RecipeEntity>
+
+    /**
+     * Рецепты БЕЗ папки по source, сортировка «по алфавиту».
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE source = :source
+          AND folderId IS NULL
+          AND isDeleted = 0
+        ORDER BY title COLLATE NOCASE ASC
+    """)
+    suspend fun getRootRecipesAlphabetical(source: String): List<RecipeEntity>
+
+    /**
+     * Поиск по названию И описанию среди рецептов БЕЗ папки (корень «Моих рецептов»).
+     * Пустой query = все рецепты корня (см. getRootRecipesNewest).
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE source = :source
+          AND folderId IS NULL
+          AND isDeleted = 0
+          AND (
+              title LIKE '%' || :query || '%' COLLATE NOCASE
+              OR (description IS NOT NULL AND description LIKE '%' || :query || '%' COLLATE NOCASE)
+          )
+        ORDER BY createdAt DESC
+    """)
+    suspend fun searchRootRecipes(source: String, query: String): List<RecipeEntity>
+
+    /**
+     * Поиск по названию И описанию среди рецептов В ПАПКЕ.
+     * Пустой query = все рецепты папки (см. getByFolderNewest).
+     */
+    @Query("""
+        SELECT * FROM recipes
+        WHERE folderId = :folderId
+          AND isDeleted = 0
+          AND (
+              title LIKE '%' || :query || '%' COLLATE NOCASE
+              OR (description IS NOT NULL AND description LIKE '%' || :query || '%' COLLATE NOCASE)
+          )
+        ORDER BY createdAt DESC
+    """)
+    suspend fun searchInFolder(folderId: String, query: String): List<RecipeEntity>
+
+    /**
+     * Сколько «живых» рецептов в папке.
+     * Для запрета удаления непустой папки (см. RecipesRepository.deleteFolder).
+     */
+    @Query("""
+        SELECT COUNT(*) FROM recipes
+        WHERE folderId = :folderId AND isDeleted = 0
+    """)
+    suspend fun countByFolder(folderId: String): Int
+
+    // ============================================================
     // ЗАПИСЬ
     // ============================================================
 
@@ -124,6 +236,21 @@ interface RecipeDao {
 
     @Query("UPDATE recipes SET syncStatus = :status WHERE id = :recipeId")
     suspend fun updateSyncStatus(recipeId: String, status: String)
+
+    /**
+     * 🆕 Шаг 1.7-1: переместить рецепт в папку (или в корень, если folderId = null).
+     * Обновляет folderId, updatedAt, updatedBy и ставит syncStatus = 'pending',
+     * чтобы изменение уехало через outbox.
+     */
+    @Query("""
+        UPDATE recipes SET
+            folderId = :folderId,
+            updatedAt = :date,
+            updatedBy = :user,
+            syncStatus = 'pending'
+        WHERE id = :recipeId
+    """)
+    suspend fun moveRecipeToFolder(recipeId: String, folderId: String?, date: Long, user: String?)
 
     // ============================================================
     // TOMBSTONE (soft-delete)
