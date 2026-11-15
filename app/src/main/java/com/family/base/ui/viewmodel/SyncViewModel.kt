@@ -6,6 +6,8 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.HistoryEntry
 import com.family.base.data.local.entity.ItemEntity
+import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.data.repository.CatalogRepository
 import com.family.base.data.sync.ChangelogParser
@@ -22,41 +24,29 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Делегат MainViewModel: вся синхронизация с Яндекс.Диском.
  *
- * 🆕 v20.7.5 (миграция 20→21) — ГЛАВНОЕ ИСПРАВЛЕНИЕ:
- *   - uploadUnsyncedImages / uploadUnsyncedFolderImages теперь фильтруют
- *     по imageSynced == false / iconSynced == false, а НЕ по
- *     imageUrl.isNullOrEmpty() / iconUrl.isNullOrEmpty().
+ * 🆕 v20.7.5: uploadUnsyncedImages / uploadUnsyncedFolderImages фильтруют
+ * по imageSynced == false / iconSynced == false (а не по imageUrl).
  *
- *     Причина: CatalogViewModel.createItem (v20.6.7) проставляет imageUrl
- *     локально ещё до синка. Старый фильтр imageUrl.isNullOrEmpty() отсекал
- *     все новые фото → на Диск они не уходили НИКОГДА (баг v20.6.13–20.7.4,
- *     виден в логе: 19 добавленных за вечер фото — ушло 1).
+ * 🆕 v21.1.0 (Шаг 1.6-3): медиа рецептов.
+ *  - uploadUnsyncedRecipeMedia(): фильтр imageSynced == false + локальный
+ *    файл есть → CatalogRepository.uploadRecipeMedia() → imageSynced=true
+ *    выставляется внутри репозитория. DNS-abort как у items.
+ *  - downloadRecipeMedia(): фильтр imageSynced == true + локального файла
+ *    нет → CatalogRepository.downloadRecipeMediaBytes() → сохраняем в
+ *    filesDir/recipe_media/<recipeId>/<fileName> (ImageUtils).
+ *  - Вызовы в syncWithDisk() рядом с uploadUnsyncedImages / syncImages.
+ *  - cleanupConfirmedTombstones: удаление рецептов и их медиа
+ *    (локальные файлы + файлы на Диске через api.deleteFile).
  *
- *     Теперь флаг imageSynced ставится в true ТОЛЬКО в
- *     CatalogRepository.uploadItemImage после успешного ответа Диска.
- *     Всё, что false и имеет локальный файл — грузим.
- *
- *   - DNS-abort сохранён: если сеть пропала (itemImageExistsOnDisk вернул
- *     null / upload упал при isNetworkAvailable()==false) — break цикла,
- *     не молотим остальные. failed — только реальные ошибки сервера.
- *
- *   - mergeData: при merge с Диска подтягиваем imageSynced / iconSynced
- *     из disk-версии, если она новее. Это защищает от перезалива фото,
- *     которые уже лежат на Диске (например, залитые с другого устройства).
- *
- * 🆕 v20.6.14: DNS-abort в uploadUnsyncedImages/uploadUnsyncedFolderImages.
- * 🆕 v20.6.13: фильтр по imageUrl/iconUrl — но он и был багом.
- * 🆕 v20.6.12: прогресс-логи каждые 25 файлов и финальные строки.
- * 🆕 v17.2.7: foldersAreMissing блокирует весь merge, diskItemsAreOlder.
- * 🆕 v19: tombstones.
- * 🆕 v20.4.4: защита от неполного/старого диска.
- * 🆕 v18.2.0: mergeData → remindAt/autoRemindEnabled.
- *
- * ⚠️ Оригинал базы — Алексей. Рима и Дима только списывают (canDelete=false).
+ *  mergeData для рецептов/медиа НЕ нужен: они приходят через changelog
+ *  (ChangelogParser.applyRecipeEntry / applyRecipeMediaEntry — файл 5/5).
+ *  items.json / folders.json / tasks.json / history.json — только для
+ *  старых сущностей.
  */
 class SyncViewModel(
     private val db: AppDatabase,
@@ -198,6 +188,7 @@ class SyncViewModel(
                     val tPhotoBlock = System.currentTimeMillis()
                     syncImages()
                     syncFolderImages()
+                    syncRecipeMedia()
                     Logger.log(TAG, "TIMING: photo block (first launch) took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
                     if (diskLastModified != null && diskLastModified > 0L) {
@@ -291,6 +282,11 @@ class SyncViewModel(
                     val tUploadFolderImages = System.currentTimeMillis()
                     uploadUnsyncedFolderImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
+
+                    // 🆕 1.6-3: медиа рецептов.
+                    val tUploadRecipeMedia = System.currentTimeMillis()
+                    uploadUnsyncedRecipeMedia()
+                    Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia took ${System.currentTimeMillis() - tUploadRecipeMedia}ms")
                 }
                 val tSyncImages = System.currentTimeMillis()
                 syncImages()
@@ -299,6 +295,11 @@ class SyncViewModel(
                 val tSyncFolderImages = System.currentTimeMillis()
                 syncFolderImages()
                 Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
+
+                // 🆕 1.6-3: скачивание медиа рецептов.
+                val tSyncRecipeMedia = System.currentTimeMillis()
+                syncRecipeMedia()
+                Logger.log(TAG, "TIMING: syncRecipeMedia took ${System.currentTimeMillis() - tSyncRecipeMedia}ms")
 
                 Logger.log(TAG, "TIMING: photo block total took ${System.currentTimeMillis() - tPhotoBlock}ms")
 
@@ -391,28 +392,6 @@ class SyncViewModel(
     // ФОТО ПРЕДМЕТОВ — UPLOAD
     // ============================================================
 
-    /**
-     * 🆕 v20.7.5 (миграция 20→21) — ГЛАВНЫЙ ФИКС.
-     *
-     * Фильтр «что грузить»: imageSynced == false И есть локальный файл.
-     * imageUrl НЕ смотрим вообще — он проставляется локально в createItem
-     * ещё до синка, из-за чего старый фильтр imageUrl.isNullOrEmpty()
-     * отсекал все новые фото (баг v20.6.13–20.7.4).
-     *
-     * После успешной заливки CatalogRepository.uploadItemImage сам
-     * ставит imageSynced = true — повторно грузить не будем.
-     *
-     * DNS-abort: если itemImageExistsOnDisk вернул null (сеть/DNS)
-     * или upload упал при isNetworkAvailable()==false — break цикла.
-     * failed — только реальные ошибки сервера.
-     *
-     * itemImageExistsOnDisk больше НЕ вызываем: imageSynced — единая
-     * точка правды. Если на Диске файла нет, а флаг true (repair-кейс) —
-     * это не в зоне ответственности uploadUnsyncedImages, для него
-     * будет отдельный repair в будущем (см. хвосты в бэкапе).
-     * Зато больше нет ~1805 запросов itemImageExistsOnDisk и синк
-     * секунды, как и было в v20.6.13.
-     */
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
 
@@ -424,7 +403,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
 
-        // 🆕 v20.7.5: фильтр по imageSynced (а не по imageUrl!).
         val itemsWithLocalPhoto = allItems.filter { item ->
             if (item.imageSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -476,11 +454,9 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadItemImage(item.id, bytes)
                 if (success) {
-                    // uploadItemImage сам проставил imageSynced = true.
                     uploadedCount++
                 } else {
                     if (!repository.isNetworkAvailable()) {
-                        // 🆕 v20.6.14: upload упал из-за сети — abort.
                         val elapsed = System.currentTimeMillis() - t0
                         Logger.log(
                             TAG,
@@ -514,15 +490,6 @@ class SyncViewModel(
         Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - t0}ms")
     }
 
-    /**
-     * 🆕 v20.7.5 (миграция 20→21): фильтр по iconSynced (а не по iconUrl).
-     * Симметрично uploadUnsyncedImages. iconUrl проставляется локально
-     * в CatalogViewModel.createFolder (и при сохранении иконки), поэтому
-     * фильтр iconUrl.isNullOrEmpty() отсекал новые иконки.
-     *
-     * После успешной заливки CatalogRepository.uploadFolderImage сам
-     * ставит iconSynced = true.
-     */
     private suspend fun uploadUnsyncedFolderImages() {
         val t0 = System.currentTimeMillis()
 
@@ -534,7 +501,6 @@ class SyncViewModel(
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
 
-        // 🆕 v20.7.5: фильтр по iconSynced (а не по iconUrl!).
         val foldersWithLocalIcon = allFolders.filter { folder ->
             if (folder.iconSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
@@ -586,7 +552,6 @@ class SyncViewModel(
                 val bytes = localFile.readBytes()
                 val success = repository.uploadFolderImage(folder.id, bytes)
                 if (success) {
-                    // uploadFolderImage сам проставил iconSynced = true.
                     uploadedCount++
                 } else {
                     if (!repository.isNetworkAvailable()) {
@@ -621,6 +586,147 @@ class SyncViewModel(
                 "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
         )
         Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - t0}ms")
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-3): МЕДИА РЕЦЕПТОВ — UPLOAD
+    // ============================================================
+
+    /**
+     * Заливка медиа рецептов на Диск.
+     *
+     * Фильтр: imageSynced == false И локальный файл существует и не пустой.
+     * imageUrl НЕ смотрим (как у items) — imageSynced единая точка правды.
+     *
+     * CatalogRepository.uploadRecipeMedia при успехе ставит imageSynced = true.
+     *
+     * DNS-abort: если upload вернул false при isNetworkAvailable()==false — break.
+     */
+    private suspend fun uploadUnsyncedRecipeMedia() {
+        val t0 = System.currentTimeMillis()
+
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "uploadUnsyncedRecipeMedia: network blocked, skipping")
+            return
+        }
+
+        val appContext = appContext()
+        val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
+
+        val mediaWithLocalFile = allMedia.filter { media ->
+            if (media.imageSynced) return@filter false
+            if (media.isDeleted) return@filter false
+            val name = media.imageUrl
+            if (name.isNullOrBlank()) return@filter false
+            val f = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, name)
+            f.exists() && f.length() > 0L
+        }
+
+        if (mediaWithLocalFile.isEmpty()) {
+            Logger.log(TAG, "uploadUnsyncedRecipeMedia: nothing to upload (all imageSynced=true or no local file)")
+            Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia (empty) took ${System.currentTimeMillis() - t0}ms")
+            return
+        }
+
+        Logger.log(TAG, "uploadUnsyncedRecipeMedia: ${mediaWithLocalFile.size} files to upload")
+
+        var uploadedCount = 0
+        var skippedCount = 0
+        var failedCount = 0
+        val total = mediaWithLocalFile.size
+
+        for (index in mediaWithLocalFile.indices) {
+            val media = mediaWithLocalFile[index]
+
+            if (index == 0 || (index + 1) % 10 == 0) {
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.log(
+                    TAG,
+                    "Recipe media progress: ${index + 1}/$total, uploaded=$uploadedCount, " +
+                        "skipped=$skippedCount, failed=$failedCount, elapsed=${elapsed}ms"
+                )
+            }
+
+            onSyncProgressChanged(
+                SyncProgress(
+                    SyncPhase.UPLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Загрузка медиа рецепта…"
+                )
+            )
+
+            val fileName = media.imageUrl
+            if (fileName.isNullOrBlank()) {
+                skippedCount++
+                continue
+            }
+            val localFile = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, fileName)
+            if (!localFile.exists() || localFile.length() == 0L) {
+                skippedCount++
+                continue
+            }
+
+            try {
+                val bytes = localFile.readBytes()
+                val success = repository.uploadRecipeMedia(
+                    recipeId = media.recipeId,
+                    fileName = fileName,
+                    bytes = bytes,
+                    mimeType = media.mimeType
+                )
+                if (success) {
+                    uploadedCount++
+                    // Также заливаем thumb (для видео), если есть и ещё не залит.
+                    val thumbName = media.thumbnailUrl
+                    if (!thumbName.isNullOrBlank()) {
+                        val thumbFile = ImageUtils.getRecipeThumbFile(appContext, media.recipeId, thumbName)
+                        if (thumbFile.exists() && thumbFile.length() > 0L) {
+                            val thumbBytes = thumbFile.readBytes()
+                            val thumbOk = repository.uploadRecipeMedia(
+                                recipeId = media.recipeId,
+                                fileName = thumbName,
+                                bytes = thumbBytes,
+                                mimeType = "image/jpeg"
+                            )
+                            Logger.log(
+                                TAG,
+                                "uploadUnsyncedRecipeMedia: thumb for media=${media.id} ($thumbName) " +
+                                    "uploaded=$thumbOk"
+                            )
+                        }
+                    }
+                } else {
+                    if (!repository.isNetworkAvailable()) {
+                        Logger.log(
+                            TAG,
+                            "uploadUnsyncedRecipeMedia: network error at ${index + 1}/$total, aborting " +
+                                "(uploaded=$uploadedCount, skipped=$skippedCount, failed=$failedCount)"
+                        )
+                        break
+                    }
+                    failedCount++
+                }
+            } catch (e: Exception) {
+                if (!repository.isNetworkAvailable()) {
+                    Logger.log(
+                        TAG,
+                        "uploadUnsyncedRecipeMedia: network error at ${index + 1}/$total, aborting: ${e.message}"
+                    )
+                    break
+                }
+                failedCount++
+                Logger.log(TAG, "Failed to upload recipe media ${media.id}: ${e.message}")
+            }
+        }
+
+        val elapsed = System.currentTimeMillis() - t0
+        Logger.log(
+            TAG,
+            "Recipe media upload: uploaded=$uploadedCount, skipped=$skippedCount, " +
+                "failed=$failedCount, total=$total, elapsed=${elapsed}ms"
+        )
+        Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia took ${System.currentTimeMillis() - t0}ms")
     }
 
     // ============================================================
@@ -713,8 +819,6 @@ class SyncViewModel(
                     val bytes = ImageUtils.bitmapToJpegBytes(bitmap, 85)
                     if (bytes != null) {
                         ImageUtils.saveImageLocally(appContext, "folder_${folder.id}", bytes)
-                        // 🆕 v20.7.5: скачали с Диска — значит, файл на Диске
-                        // есть. Ставим iconSynced = true, чтобы не перезаливать.
                         if (folder.iconUrl.isNullOrEmpty() || !folder.iconSynced) {
                             val updated = folder.copy(
                                 iconUrl = folder.iconUrl ?: "folder_${folder.id}.jpg",
@@ -730,6 +834,102 @@ class SyncViewModel(
             }
         }
         Logger.log(TAG, "Folder images downloaded: $downloadedCount")
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-3): МЕДИА РЕЦЕПТОВ — DOWNLOAD
+    // ============================================================
+
+    /**
+     * Скачивание медиа рецептов с Диска.
+     *
+     * Фильтр: imageSynced == true (значит, файл точно есть на Диске)
+     * И локального файла нет (или он пустой).
+     *
+     * Скачанный файл кладём в filesDir/recipe_media/<recipeId>/<fileName>
+     * через ImageUtils.ensureRecipeMediaDir.
+     *
+     * Также (для видео) скачиваем thumb, если thumbnailUrl != null
+     * и локального thumb нет.
+     */
+    private suspend fun syncRecipeMedia() {
+        if (!repository.isNetworkAvailable()) {
+            Logger.log(TAG, "syncRecipeMedia: network blocked, skipping")
+            return
+        }
+
+        val appContext = appContext()
+        val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
+
+        val toDownload = allMedia.filter { media ->
+            if (!media.imageSynced) return@filter false
+            if (media.isDeleted) return@filter false
+            val name = media.imageUrl
+            if (name.isNullOrBlank()) return@filter false
+            val f = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, name)
+            !f.exists() || f.length() == 0L
+        }
+
+        if (toDownload.isEmpty()) {
+            Logger.log(TAG, "syncRecipeMedia: nothing to download")
+            return
+        }
+
+        Logger.log(TAG, "syncRecipeMedia: ${toDownload.size} files to download")
+
+        var downloadedCount = 0
+        var failedCount = 0
+        val total = toDownload.size
+
+        toDownload.forEachIndexed { index, media ->
+            onSyncProgressChanged(
+                SyncProgress(
+                    SyncPhase.DOWNLOADING_PHOTOS,
+                    index + 1,
+                    total,
+                    "Скачивание медиа рецепта…"
+                )
+            )
+
+            val fileName = media.imageUrl
+            if (fileName.isNullOrBlank()) return@forEachIndexed
+
+            try {
+                val dir = ImageUtils.ensureRecipeMediaDir(appContext, media.recipeId)
+                if (dir == null) {
+                    failedCount++
+                    return@forEachIndexed
+                }
+
+                val bytes = repository.downloadRecipeMediaBytes(media.recipeId, fileName)
+                if (bytes == null) {
+                    failedCount++
+                    return@forEachIndexed
+                }
+                val localFile = File(dir, fileName)
+                localFile.outputStream().use { it.write(bytes) }
+                downloadedCount++
+                Logger.log(TAG, "syncRecipeMedia: OK ${media.recipeId}/$fileName (${bytes.size} bytes)")
+
+                // Thumb (для видео).
+                val thumbName = media.thumbnailUrl
+                if (!thumbName.isNullOrBlank()) {
+                    val thumbFile = ImageUtils.getRecipeThumbFile(appContext, media.recipeId, thumbName)
+                    if (!thumbFile.exists() || thumbFile.length() == 0L) {
+                        val thumbBytes = repository.downloadRecipeMediaBytes(media.recipeId, thumbName)
+                        if (thumbBytes != null) {
+                            thumbFile.outputStream().use { it.write(thumbBytes) }
+                            Logger.log(TAG, "syncRecipeMedia: thumb OK ${media.recipeId}/$thumbName")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                failedCount++
+                Logger.log(TAG, "syncRecipeMedia: error for ${media.id}: ${e.message}", e)
+            }
+        }
+
+        Logger.log(TAG, "syncRecipeMedia: downloaded=$downloadedCount, failed=$failedCount, total=$total")
     }
 
     // ============================================================
@@ -770,7 +970,8 @@ class SyncViewModel(
     }
 
     // ============================================================
-    // MERGE
+    // MERGE (items / folders / history / tasks — БЕЗ рецептов;
+    //        рецепты и медиа идут через changelog PULL)
     // ============================================================
 
     private companion object {
@@ -888,9 +1089,7 @@ class SyncViewModel(
                     }
 
                     if (diskFolder.isDeleted) {
-                        val mergedTombstone = diskFolder.copy(
-                            deleteConfirmed = true
-                        )
+                        val mergedTombstone = diskFolder.copy(deleteConfirmed = true)
                         if (local == null) {
                             db.folderDao().insertFolder(mergedTombstone)
                             Logger.log(TAG, "mergeData: folder INSERT tombstone ${diskFolder.id}")
@@ -904,11 +1103,6 @@ class SyncViewModel(
                     if (local == null) {
                         db.folderDao().insertFolder(diskFolder)
                     } else if (diskFolder.updatedAt > local.updatedAt) {
-                        // 🆕 v20.7.5: iconSynced берём из disk-версии, если она новее.
-                        // Если с Диска пришло iconSynced=true — значит, иконка
-                        // уже залита (с другого устройства), повторно не грузим.
-                        // Если с Диска iconSynced=false — тоже берём, чтобы
-                        // uploadUnsyncedFolderImages подхватил, если есть файл локально.
                         val merged = diskFolder.copy(
                             iconUrl = diskFolder.iconUrl ?: local.iconUrl,
                             iconSynced = diskFolder.iconSynced,
@@ -963,9 +1157,7 @@ class SyncViewModel(
                     }
 
                     if (diskItem.isDeleted) {
-                        val mergedTombstone = diskItem.copy(
-                            deleteConfirmed = true
-                        )
+                        val mergedTombstone = diskItem.copy(deleteConfirmed = true)
                         if (local == null) {
                             db.itemDao().insertItem(mergedTombstone)
                             Logger.log(TAG, "mergeData: item INSERT tombstone ${diskItem.id}")
@@ -979,11 +1171,6 @@ class SyncViewModel(
                     if (local == null) {
                         db.itemDao().insertItem(diskItem)
                     } else if (diskItem.updatedDate > local.updatedDate) {
-                        // 🆕 v20.7.5: imageSynced берём из disk-версии, если она новее.
-                        // С Диска пришло imageSynced=true — фото уже залито
-                        // (с другого устройства), не грузим повторно.
-                        // imageSynced=false — не залито, uploadUnsyncedImages
-                        // подхватит, если локальный файл есть.
                         val merged = diskItem.copy(
                             imageUrl = diskItem.imageUrl ?: local.imageUrl,
                             imageSynced = diskItem.imageSynced,
@@ -1057,9 +1244,7 @@ class SyncViewModel(
                     }
 
                     if (diskTask.isDeleted) {
-                        val mergedTombstone = diskTask.copy(
-                            deleteConfirmed = true
-                        )
+                        val mergedTombstone = diskTask.copy(deleteConfirmed = true)
                         if (local == null) {
                             db.taskDao().insert(mergedTombstone)
                             tombstonedCount++
@@ -1100,6 +1285,63 @@ class SyncViewModel(
             if (diskIsNewer) {
                 syncInfoDao.setLastModified(diskLastModified)
             }
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0 (Шаг 1.6-3): cleanup рецептов и медиа
+    // (вызывается из SyncManager.cleanup через cleanupConfirmedTombstones)
+    // ============================================================
+
+    /**
+     * Удаляет подтверждённые tombstones рецептов и их медиа старше cutoff.
+     * Вызывается из SyncManager.cleanupConfirmedTombstones (файл 4/5).
+     *
+     * Здесь только подготовка: чистим локальные файлы recipe_media
+     * (файлы на Диске удалит SyncManagerApi.deleteFile в SyncManager).
+     */
+    suspend fun cleanupRecipeTombstonesLocal(cutoff: Long) {
+        val appContext = appContext()
+
+        // Медиа: удаляем локальные файлы + hard-delete строк
+        try {
+            val mediaIds = db.recipeMediaDao().getConfirmedMediaOlderThan(cutoff)
+            if (mediaIds.isNotEmpty()) {
+                val allMedia = db.recipeMediaDao().getAllRaw()
+                val byId = allMedia.associateBy { it.id }
+                for (id in mediaIds) {
+                    val m = byId[id] ?: continue
+                    try {
+                        ImageUtils.deleteRecipeMediaFile(appContext, m.recipeId, m.imageUrl)
+                        ImageUtils.deleteRecipeMediaFile(appContext, m.recipeId, m.thumbnailUrl)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "cleanupRecipeTombstonesLocal: local media delete error for $id: ${e.message}")
+                    }
+                }
+                db.recipeMediaDao().hardDeleteConfirmedMedia(mediaIds)
+                Logger.log(TAG, "cleanupRecipeTombstonesLocal: removed ${mediaIds.size} media rows")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupRecipeTombstonesLocal: media error: ${e.message}")
+        }
+
+        // Рецепты: удаляем папки recipe_media целиком + hard-delete строк
+        try {
+            val recipeIds = db.recipeDao().getConfirmedRecipesOlderThan(cutoff)
+            if (recipeIds.isNotEmpty()) {
+                for (rid in recipeIds) {
+                    try {
+                        ImageUtils.deleteRecipeMediaDir(appContext, rid)
+                    } catch (e: Exception) {
+                        Logger.log(TAG, "cleanupRecipeTombstonesLocal: dir delete error for $rid: ${e.message}")
+                    }
+                }
+                db.recipeMediaDao().hardDeleteByRecipeIds(recipeIds)
+                db.recipeDao().hardDeleteConfirmedRecipes(recipeIds)
+                Logger.log(TAG, "cleanupRecipeTombstonesLocal: removed ${recipeIds.size} recipes")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupRecipeTombstonesLocal: recipes error: ${e.message}")
         }
     }
 }
