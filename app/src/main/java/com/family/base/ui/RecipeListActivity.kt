@@ -16,7 +16,6 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.family.base.Config
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.databinding.ActivityRecipeListBinding
@@ -51,6 +50,11 @@ import com.family.base.util.Logger
  *    android:label из манифеста (= "BAZA").
  *  - Корневая «🍳 Рецепты» (source = "all") этот экран НЕ открывает —
  *    она открывается как обычная папка (MainActivity.navigateToFolder).
+ *
+ * 🆕 Шаг 1.7-3 (финал): счётчики рецептов в папках берутся из
+ *  RecipeViewModel.folderRecipeCounts (LiveData<Map<String,Int>>),
+ *  а не считаются через GlobalScope. Текущий пользователь — из
+ *  viewModel.currentUserName (TokenStorage внутри ViewModel).
  */
 class RecipeListActivity : AppCompatActivity() {
 
@@ -77,11 +81,10 @@ class RecipeListActivity : AppCompatActivity() {
     private var searchRunnable: Runnable? = null
 
     /**
-     * Счётчики рецептов в папках — заполняются асинхронно при загрузке
-     * списка папок. Нужны для подписи «📁 N рецептов» в карточке папки.
-     * Ключ — folderId, значение — количество «живых» рецептов.
+     * 🆕 Шаг 1.7-3: счётчики рецептов в папках (folderId → count).
+     * Приходят из RecipeViewModel.folderRecipeCounts.
      */
-    private val folderRecipeCounts = mutableMapOf<String, Int>()
+    private var folderRecipeCounts: Map<String, Int> = emptyMap()
 
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -409,7 +412,7 @@ class RecipeListActivity : AppCompatActivity() {
                     Toast.makeText(this, "Введите название папки", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                val currentUser = Config.getCurrentUser(this)
+                val currentUser = viewModel.currentUserName
                 viewModel.createFolder(name, currentUser) { error ->
                     runOnUiThread {
                         if (error != null) {
@@ -465,7 +468,7 @@ class RecipeListActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 if (newName == folder.name) return@setPositiveButton
-                val currentUser = Config.getCurrentUser(this)
+                val currentUser = viewModel.currentUserName
                 viewModel.renameFolder(folder.id, newName, currentUser) { error ->
                     runOnUiThread {
                         if (error != null) {
@@ -485,7 +488,7 @@ class RecipeListActivity : AppCompatActivity() {
             .setTitle("🗑️ Удалить папку?")
             .setMessage("Папка «${folder.name}» будет удалена. Это возможно, только если в ней нет рецептов и подпапок.")
             .setPositiveButton("Удалить") { _, _ ->
-                val currentUser = Config.getCurrentUser(this)
+                val currentUser = viewModel.currentUserName
                 viewModel.deleteFolder(folder.id, currentUser) { error ->
                     runOnUiThread {
                         if (error != null) {
@@ -535,7 +538,13 @@ class RecipeListActivity : AppCompatActivity() {
         viewModel.folders.observe(this) { folders ->
             Logger.log(TAG, "folders observer: count=${folders.size}")
             rebuildList()
-            loadFolderRecipeCounts(folders)
+        }
+
+        // 🆕 Шаг 1.7-3: счётчики рецептов в папках.
+        viewModel.folderRecipeCounts.observe(this) { counts ->
+            Logger.log(TAG, "folderRecipeCounts observer: size=${counts.size}")
+            folderRecipeCounts = counts
+            rebuildList()
         }
 
         // Рецепты уровня.
@@ -592,39 +601,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
 
         adapter.submitList(list)
-    }
-
-    /**
-     * Асинхронно подгрузить количество рецептов в каждой папке
-     * и обновить карточки папок. Нужно для подписи «📁 N рецептов».
-     *
-     * Использует тот же RecipesRepository через ViewModel? Нет — чтобы
-     * не плодить методы в ViewModel, читаем прямо из БД через
-     * AppDatabase (лёгкий count-запрос).
-     */
-    private fun loadFolderRecipeCounts(folders: List<RecipeFolderEntity>) {
-        if (folders.isEmpty()) return
-
-        val db = com.family.base.data.local.AppDatabase.getInstance(applicationContext)
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                var changed = false
-                folders.forEach { folder ->
-                    val count = db.recipeDao().countByFolder(folder.id)
-                    if (folderRecipeCounts[folder.id] != count) {
-                        folderRecipeCounts[folder.id] = count
-                        changed = true
-                    }
-                }
-                if (changed) {
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        rebuildList()
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "loadFolderRecipeCounts ERROR: ${e.message}", e)
-            }
-        }
     }
 
     private fun updateUiState(isEmpty: Boolean) {
