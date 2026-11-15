@@ -9,8 +9,9 @@ import java.util.UUID
  * Очередь исходящих изменений для синхронизации через changelog.
  *
  * Каждое локальное изменение Item / Folder / Task / History / Recipe /
- * RecipeMedia кладёт сюда запись. SyncManager читает несинхронизированные
- * записи, формирует JSON-пакет changelog и отправляет на Яндекс.Диск.
+ * RecipeMedia / RecipeFolder кладёт сюда запись. SyncManager читает
+ * несинхронизированные записи, формирует JSON-пакет changelog
+ * и отправляет на Яндекс.Диск.
  *
  * После успешной отправки — record помечается isSynced = true.
  */
@@ -30,15 +31,17 @@ data class OutboxEntity(
      *  - "item"
      *  - "folder"
      *  - "task"
-     *  - "history"       🆕 v16.2
-     *  - "recipe"        🆕 v21.1.0
-     *  - "recipe_media"  🆕 v21.1.0
+     *  - "history"         🆕 v16.2
+     *  - "recipe"          🆕 v21.1.0
+     *  - "recipe_media"    🆕 v21.1.0
+     *  - "recipe_folder"   🆕 v21.1.0+ (Шаг 1.7-1)
      */
     val entityType: String,
 
     /**
      * ID изменённой сущности
-     * (item.id / folder.id / task.id / history.id / recipe.id / recipe_media.id).
+     * (item.id / folder.id / task.id / history.id / recipe.id /
+     *  recipe_media.id / recipe_folder.id).
      */
     val entityId: String,
 
@@ -96,6 +99,9 @@ data class OutboxEntity(
         // 🆕 v21.1.0: рецепты и их медиа
         const val ENTITY_RECIPE = "recipe"
         const val ENTITY_RECIPE_MEDIA = "recipe_media"
+
+        // 🆕 v21.1.0+ (Шаг 1.7-1): папки рецептов
+        const val ENTITY_RECIPE_FOLDER = "recipe_folder"
 
         const val ACTION_CREATE = "create"
         const val ACTION_UPDATE = "update"
