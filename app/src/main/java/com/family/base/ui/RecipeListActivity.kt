@@ -159,6 +159,15 @@ class RecipeListActivity : AppCompatActivity() {
     }
 
     private fun setupSearch() {
+        // 🔧 В корне «🍳 Рецепты» (source = all) поиск не нужен —
+        // там только две системные папки. Скрываем кнопку и строку поиска.
+        if (source == EXTRA_SOURCE_ALL) {
+            binding.btnSearch.visibility = View.GONE
+            binding.searchLayout.visibility = View.GONE
+            binding.btnSearch.setOnClickListener(null)
+            return
+        }
+
         binding.etSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -228,8 +237,6 @@ class RecipeListActivity : AppCompatActivity() {
     }
 
     private fun setupSortChips() {
-        // 🔧 Синхронизируем визуальное состояние чипов с текущей сортировкой ViewModel.
-        // По умолчанию в RecipeViewModel sortNewest = false (А-Я).
         binding.chipSortNewest.isChecked = viewModel.isSortNewest()
         binding.chipSortAlphabetical.isChecked = !viewModel.isSortNewest()
 
@@ -296,8 +303,6 @@ class RecipeListActivity : AppCompatActivity() {
             binding.fabAddRecipe.setOnClickListener(null)
         }
 
-        // 🔧 Кнопка «Добавить папку» теперь в строке фильтров (справа).
-        // Показываем только в «Моих рецептах».
         if (viewModel.isFolderModeAvailable()) {
             binding.btnAddFolder.visibility = View.VISIBLE
             binding.btnAddFolder.setOnClickListener {
