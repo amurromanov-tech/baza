@@ -167,6 +167,40 @@
             android:layout_marginBottom="24dp" />
 
         <!-- ============================================================ -->
+        <!-- 🆕 СЕКЦИЯ: РЕВИЗИЯ -->
+        <!-- ============================================================ -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="РЕВИЗИЯ"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="?android:attr/textColorSecondary"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Через сколько после последней ревизии помечать предмет как «давно не проверялся»"
+            android:textSize="13sp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Spinner
+            android:id="@+id/spinnerRevisionThreshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="В списке предметов: 🔴 — ревизия не проводилась, 🟡 — прошло больше выбранного срока. Если ревизия была недавно — строка не показывается."
+            android:textSize="12sp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ============================================================ -->
         <!-- СЕКЦИЯ: СОРТИРОВКА -->
         <!-- ============================================================ -->
         <TextView
