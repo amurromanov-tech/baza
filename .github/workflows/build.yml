@@ -44,7 +44,6 @@ jobs:
     # 🆕 v14.1.0: СБОРКА RELEASE APK
     # Передаём секреты в переменные окружения для build.gradle.kts
     # ============================================================
-   
     - name: Build Release APK
       env:
         KEYSTORE_PATH: ${{ github.workspace }}/app/baza-upload-key.jks
@@ -66,12 +65,15 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # ============================================================
+    # Загрузка APK как артефакта (хранится 3 дня)
+    # ============================================================
     - name: Upload APK
-  uses: actions/upload-artifact@v4
-  with:
-    name: app-release
-    path: app/build/outputs/apk/release/app-release.apk
-    retention-days: 3  # Хранить всего 7 дней вместо 90
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release
+        path: app/build/outputs/apk/release/app-release.apk
+        retention-days: 3
 
     - name: Read version from build.gradle.kts
       id: version
