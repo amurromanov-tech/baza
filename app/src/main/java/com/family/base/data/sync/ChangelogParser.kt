@@ -7,6 +7,7 @@ import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.ProcessedChangelogEntity
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.Logger
@@ -23,6 +24,12 @@ import com.google.gson.JsonSyntaxException
  *    не перезаписывается живой remote-записью.
  *  - При применении принудительно syncStatus = "synced" (иначе ping-pong).
  *  - Tombstone с Диска = уже разошёлся → deleteConfirmed = true.
+ *
+ * 🆕 v21.1.0+ (Шаг 1.7-5): папки рецептов.
+ *  - applyRecipeFolderEntry: INSERT/UPDATE/tombstone для recipe_folders.
+ *  - Логика идентична applyFolderEntry, но без isSystem (у папок рецептов
+ *    системных нет — только пользовательские).
+ *  - Защита от воскрешения по updatedAt (как у папок каталога).
  *
  * Правила (общие):
  *  1. Свои пакеты не применяем — только processed_changelogs.
@@ -119,6 +126,8 @@ class ChangelogParser(
             // 🆕 1.6-5: рецепты и медиа.
             OutboxEntity.ENTITY_RECIPE -> applyRecipeEntry(entry)
             OutboxEntity.ENTITY_RECIPE_MEDIA -> applyRecipeMediaEntry(entry)
+            // 🆕 1.7-5: папки рецептов.
+            OutboxEntity.ENTITY_RECIPE_FOLDER -> applyRecipeFolderEntry(entry)
             else -> {
                 Logger.log(TAG, "applyEntry: unknown entityType '${entry.entityType}', skipping")
                 false
@@ -454,6 +463,14 @@ class ChangelogParser(
      * ⚠️ RecipeEntity.source ("ai"/"user") и createdBy приходят из payload
      * как есть — не переписываем их. Если на другом устройстве рецепт
      * создан в «Моих», он и здесь попадёт в «Мои».
+     *
+     * 🆕 Шаг 1.7-5: folderId приходит из payload. Если рецепт перенесли
+     * в папку на другом устройстве — folderId обновится здесь.
+     * Если папка ещё не пришла (её пакет позже) — рецепт будет с folderId,
+     * указывающим на несуществующую папку. UI покажет его в корне
+     * (getRootRecipes фильтрует folderId IS NULL — такой рецепт не покажется
+     * ни в корне, ни в папке, пока папка не приедет). Это редкий случай
+     * (порядок пакетов), лечится следующим PULL.
      */
     private suspend fun applyRecipeEntry(entry: ChangelogEntry): Boolean {
         val local = db.recipeDao().getRecipeById(entry.entityId)
@@ -505,7 +522,7 @@ class ChangelogParser(
                 TAG,
                 "applyRecipe INSERT: id=${entry.entityId} '${remoteSynced.title}' " +
                     "(action=${entry.action}, source=${remoteSynced.source}, " +
-                    "isDeleted=${remoteSynced.isDeleted})"
+                    "folderId=${remoteSynced.folderId}, isDeleted=${remoteSynced.isDeleted})"
             )
             return true
         }
@@ -527,14 +544,16 @@ class ChangelogParser(
                 description = remoteSynced.description,
                 // source не перетираем, если remote пустой (на всякий случай)
                 source = remoteSynced.source.ifBlank { local.source },
-                // createdBy/createdAt — история, не мержим, remote побеждает
+                // 🆕 1.7-5: folderId приходит из payload как есть.
+                // null — значит, рецепт в корне (или его вынули из папки).
+                folderId = remoteSynced.folderId,
             )
             db.recipeDao().updateRecipe(merged)
             Logger.log(
                 TAG,
                 "applyRecipe UPDATE: id=${entry.entityId} '${merged.title}' " +
                     "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, " +
-                    "isDeleted=${merged.isDeleted})"
+                    "folderId=${merged.folderId}, isDeleted=${merged.isDeleted})"
             )
             return true
         } else {
@@ -559,23 +578,14 @@ class ChangelogParser(
      *  - tombstone → deleteConfirmed = true;
      *  - INSERT если локально нет;
      *  - защита от воскрешения;
-     *  - UPDATE если remote.updatedAt > local.updatedAt.
+     *  - UPDATE если remote.createdAt > local.createdAt.
      *
      * ⚠️ imageSynced: если с Диска пришло imageSynced = true — значит,
      * файл уже залит (с другого устройства). Ставим как есть, чтобы
      * uploadUnsyncedRecipeMedia не пытался заливать повторно.
-     * Если imageSynced = false — оставляем false, uploadUnsyncedRecipeMedia
-     * подхватит, если локальный файл есть.
-     *
-     * ⚠️ Если imageUrl = null и imageSynced = false — это «медиа без файла»
-     * (например, рецепт пришёл, а файл ещё не залит). Такое медиа
-     * в UI покажется с ic_item_default. После того как файл зальётся
-     * (или скачается), imageUrl обновится.
      *
      * У RecipeMediaEntity нет поля updatedAt (только createdAt).
-     * Для разрешения конфликтов используем createdAt: remote побеждает,
-     * если remote.createdAt > local.createdAt. Если equal — оставляем local
-     * (стабильность).
+     * Для разрешения конфликтов используем createdAt.
      */
     private suspend fun applyRecipeMediaEntry(entry: ChangelogEntry): Boolean {
         val local = db.recipeMediaDao().getMediaById(entry.entityId)
@@ -657,6 +667,114 @@ class ChangelogParser(
                 TAG,
                 "applyRecipeMedia UPDATE SKIP: local newer/equal (local=${local.createdAt} " +
                     ">= remote=${remoteSynced.createdAt})"
+            )
+            return false
+        }
+    }
+
+    // ============================================================
+    // 🆕 v21.1.0+ (Шаг 1.7-5): RECIPE_FOLDER
+    // ============================================================
+
+    /**
+     * Применить входящее изменение папки рецептов.
+     *
+     * Логика идентична applyFolderEntry, но:
+     *  - у папок рецептов НЕТ isSystem (только пользовательские);
+     *  - нет iconUrl/iconThumbnailUrl/parentItemId/path;
+     *  - есть parentId (вложенность) — приходит из payload как есть.
+     *
+     *  - ACTION_DELETE (старый формат) → tombstone локально;
+     *  - парсим payload в RecipeFolderEntity;
+     *  - tombstone → deleteConfirmed = true;
+     *  - INSERT если локально нет;
+     *  - защита от воскрешения (локальный tombstone новее);
+     *  - UPDATE если remote.updatedAt > local.updatedAt.
+     *
+     * ⚠️ parentId: если папка приехала с parentId, указывающим на ещё
+     * не приехавшую папку, — она будет висеть «в воздухе» (не видна
+     * ни в корне, ни в родителе). Лечится следующим PULL, когда
+     * родитель приедет. Это редкий случай (порядок пакетов).
+     */
+    private suspend fun applyRecipeFolderEntry(entry: ChangelogEntry): Boolean {
+        val local = db.recipeFolderDao().getFolderById(entry.entityId)
+
+        // ── ACTION_DELETE (старый формат) → tombstone локально ──
+        if (entry.action == OutboxEntity.ACTION_DELETE) {
+            if (local == null) {
+                Logger.log(TAG, "applyRecipeFolder DELETE: id=${entry.entityId} not found locally, skip")
+                return false
+            }
+            if (entry.changedAt < local.updatedAt) {
+                Logger.log(
+                    TAG,
+                    "applyRecipeFolder DELETE SKIP: local newer (local=${local.updatedAt}, remote=${entry.changedAt})"
+                )
+                return false
+            }
+            if (local.isDeleted) {
+                Logger.log(TAG, "applyRecipeFolder DELETE SKIP: already tombstone ${entry.entityId}")
+                return false
+            }
+            db.recipeFolderDao().markFolderDeleted(entry.entityId, entry.changedAt, entry.changedBy)
+            db.recipeFolderDao().confirmFolderDeleted(entry.entityId)
+            Logger.log(TAG, "applyRecipeFolder DELETE → tombstone: id=${entry.entityId} '${local.name}'")
+            return true
+        }
+
+        // ── PARSE PAYLOAD ──
+        val remote: RecipeFolderEntity = try {
+            gson.fromJson(entry.payloadJson, RecipeFolderEntity::class.java)
+        } catch (e: Exception) {
+            Logger.log(TAG, "applyRecipeFolder: cannot parse payload for id=${entry.entityId}: ${e.message}")
+            return false
+        }
+
+        val remoteSynced = if (remote.isDeleted) {
+            remote.copy(
+                syncStatus = RecipeFolderEntity.SYNC_STATUS_SYNCED,
+                deleteConfirmed = true
+            )
+        } else {
+            remote.copy(syncStatus = RecipeFolderEntity.SYNC_STATUS_SYNCED)
+        }
+
+        // ── INSERT ──
+        if (local == null) {
+            db.recipeFolderDao().insertFolder(remoteSynced)
+            Logger.log(
+                TAG,
+                "applyRecipeFolder INSERT: id=${entry.entityId} '${remoteSynced.name}' " +
+                    "(action=${entry.action}, parentId=${remoteSynced.parentId}, " +
+                    "isDeleted=${remoteSynced.isDeleted})"
+            )
+            return true
+        }
+
+        // ── ЗАЩИТА ОТ ВОСКРЕШЕНИЯ ──
+        if (local.isDeleted && !remoteSynced.isDeleted && local.updatedAt >= remoteSynced.updatedAt) {
+            Logger.log(
+                TAG,
+                "applyRecipeFolder SKIP: local tombstone wins (local.updatedAt=${local.updatedAt} " +
+                    ">= remote.updatedAt=${remoteSynced.updatedAt}) for id=${entry.entityId}"
+            )
+            return false
+        }
+
+        // ── UPDATE (remote новее) ──
+        if (remoteSynced.updatedAt > local.updatedAt) {
+            db.recipeFolderDao().updateFolder(remoteSynced)
+            Logger.log(
+                TAG,
+                "applyRecipeFolder UPDATE: id=${entry.entityId} '${remoteSynced.name}' " +
+                    "(remote newer: ${remoteSynced.updatedAt} > ${local.updatedAt}, " +
+                    "parentId=${remoteSynced.parentId}, isDeleted=${remoteSynced.isDeleted})"
+            )
+            return true
+        } else {
+            Logger.log(
+                TAG,
+                "applyRecipeFolder UPDATE SKIP: local newer (local=${local.updatedAt} >= remote=${remoteSynced.updatedAt})"
             )
             return false
         }
