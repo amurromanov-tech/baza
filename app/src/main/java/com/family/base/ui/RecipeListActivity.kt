@@ -266,12 +266,12 @@ class RecipeListActivity : AppCompatActivity() {
             folderName != null -> Triple(
                 "📁",
                 "В папке «$folderName» пока пусто",
-                "Нажми «+», чтобы добавить рецепт в эту папку,\nили «📁», чтобы создать подпапку."
+                "Нажми «+», чтобы добавить рецепт в эту папку,\nили «Добавить папку» сверху, чтобы создать подпапку."
             )
             source == RecipeEntity.SOURCE_USER -> Triple(
                 "📝",
                 "Здесь пока пусто",
-                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео.\nИли «📁», чтобы создать папку."
+                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео.\nИли «Добавить папку» сверху, чтобы создать папку."
             )
             else -> Triple(
                 "🍳",
@@ -296,14 +296,16 @@ class RecipeListActivity : AppCompatActivity() {
             binding.fabAddRecipe.setOnClickListener(null)
         }
 
+        // 🔧 Кнопка «Добавить папку» теперь в строке фильтров (справа).
+        // Показываем только в «Моих рецептах».
         if (viewModel.isFolderModeAvailable()) {
-            binding.fabCreateFolder.visibility = View.VISIBLE
-            binding.fabCreateFolder.setOnClickListener {
+            binding.btnAddFolder.visibility = View.VISIBLE
+            binding.btnAddFolder.setOnClickListener {
                 showCreateFolderDialog()
             }
         } else {
-            binding.fabCreateFolder.visibility = View.GONE
-            binding.fabCreateFolder.setOnClickListener(null)
+            binding.btnAddFolder.visibility = View.GONE
+            binding.btnAddFolder.setOnClickListener(null)
         }
     }
 
@@ -465,7 +467,7 @@ class RecipeListActivity : AppCompatActivity() {
             if (ordered.isEmpty()) {
                 Toast.makeText(
                     this@RecipeListActivity,
-                    "Нет папок. Создайте папку кнопкой «📁».",
+                    "Нет папок. Создайте папку кнопкой «Добавить папку».",
                     Toast.LENGTH_LONG
                 ).show()
                 return@launch
