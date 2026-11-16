@@ -7,6 +7,7 @@ import com.family.base.data.local.entity.FolderEntity
 import com.family.base.data.local.entity.ItemEntity
 import com.family.base.data.local.entity.OutboxEntity
 import com.family.base.data.local.entity.RecipeEntity
+import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.local.entity.TaskEntity
 import com.family.base.util.ImageUtils
@@ -23,9 +24,15 @@ import com.google.gson.JsonSyntaxException
  *  - cleanupConfirmedTombstones: удалять рецепты и медиа (локальные файлы +
  *    файлы на Диске через SyncManagerApi.deleteRecipeMediaFile).
  *
- *  Рецепты и медиа приходят через changelog PULL (ChangelogParser —
- *  файл 5/5). mergeData для них НЕ используется (items.json/folders.json
- *  их не содержат).
+ * 🆕 v21.1.0+ (Шаг 1.7-5): папки рецептов.
+ *  - markEntitiesSynced: добавить ENTITY_RECIPE_FOLDER;
+ *  - confirmTombstones: добавить ветку для папок рецептов;
+ *  - cleanupConfirmedTombstones: физическое удаление подтверждённых
+ *    tombstones папок рецептов (без файлов на Диске — папки живут
+ *    только в БД + changelog, см. DiskPaths: RECIPE_MEDIA не для папок).
+ *
+ *  Рецепты, медиа и папки приходят через changelog PULL (ChangelogParser).
+ *  mergeData для них НЕ используется (items.json/folders.json их не содержат).
  */
 class SyncManager(
     private val db: AppDatabase,
@@ -193,6 +200,7 @@ class SyncManager(
      * Помечает синхронизированные сущности как synced в БД.
      *
      * 🆕 v21.1.0 (Шаг 1.6-4): добавлены ENTITY_RECIPE / ENTITY_RECIPE_MEDIA.
+     * 🆕 v21.1.0+ (Шаг 1.7-5): добавлен ENTITY_RECIPE_FOLDER.
      */
     private suspend fun markEntitiesSynced(entries: List<OutboxEntity>) {
         val itemIds = entries.filter { it.entityType == OutboxEntity.ENTITY_ITEM }.map { it.entityId }
@@ -200,6 +208,8 @@ class SyncManager(
         val taskIds = entries.filter { it.entityType == OutboxEntity.ENTITY_TASK }.map { it.entityId }
         val recipeIds = entries.filter { it.entityType == OutboxEntity.ENTITY_RECIPE }.map { it.entityId }
         val recipeMediaIds = entries.filter { it.entityType == OutboxEntity.ENTITY_RECIPE_MEDIA }.map { it.entityId }
+        // 🆕 1.7-5: папки рецептов.
+        val recipeFolderIds = entries.filter { it.entityType == OutboxEntity.ENTITY_RECIPE_FOLDER }.map { it.entityId }
 
         try {
             if (itemIds.isNotEmpty()) {
@@ -222,10 +232,17 @@ class SyncManager(
                     db.recipeMediaDao().updateSyncStatus(id, RecipeMediaEntity.SYNC_STATUS_SYNCED)
                 }
             }
+            // 🆕 1.7-5: папки рецептов.
+            if (recipeFolderIds.isNotEmpty()) {
+                for (id in recipeFolderIds) {
+                    db.recipeFolderDao().updateSyncStatus(id, RecipeFolderEntity.SYNC_STATUS_SYNCED)
+                }
+            }
             Logger.log(
                 TAG,
                 "markEntitiesSynced: items=${itemIds.size}, folders=${folderIds.size}, tasks=${taskIds.size}, " +
-                    "recipes=${recipeIds.size}, recipeMedia=${recipeMediaIds.size}"
+                    "recipes=${recipeIds.size}, recipeMedia=${recipeMediaIds.size}, " +
+                    "recipeFolders=${recipeFolderIds.size}"
             )
         } catch (e: Exception) {
             Logger.log(TAG, "markEntitiesSynced error: ${e.message}")
@@ -236,6 +253,7 @@ class SyncManager(
      * После успешного PUSH подтверждаем tombstones.
      *
      * 🆕 v21.1.0 (Шаг 1.6-4): добавлены ветки для рецептов и медиа.
+     * 🆕 v21.1.0+ (Шаг 1.7-5): добавлена ветка для папок рецептов.
      */
     private suspend fun confirmTombstones(entries: List<OutboxEntity>) {
         var itemsConfirmed = 0
@@ -243,6 +261,7 @@ class SyncManager(
         var tasksConfirmed = 0
         var recipesConfirmed = 0
         var recipeMediaConfirmed = 0
+        var recipeFoldersConfirmed = 0
 
         try {
             for (out in entries) {
@@ -283,16 +302,24 @@ class SyncManager(
                             recipeMediaConfirmed++
                         }
                     }
+                    // 🆕 1.7-5: папки рецептов.
+                    OutboxEntity.ENTITY_RECIPE_FOLDER -> {
+                        val folder = db.recipeFolderDao().getFolderById(out.entityId)
+                        if (folder != null && folder.isDeleted && !folder.deleteConfirmed) {
+                            db.recipeFolderDao().confirmFolderDeleted(out.entityId)
+                            recipeFoldersConfirmed++
+                        }
+                    }
                 }
             }
             if (itemsConfirmed + foldersConfirmed + tasksConfirmed +
-                recipesConfirmed + recipeMediaConfirmed > 0
+                recipesConfirmed + recipeMediaConfirmed + recipeFoldersConfirmed > 0
             ) {
                 Logger.log(
                     TAG,
                     "confirmTombstones: items=$itemsConfirmed, folders=$foldersConfirmed, " +
                         "tasks=$tasksConfirmed, recipes=$recipesConfirmed, " +
-                        "recipeMedia=$recipeMediaConfirmed"
+                        "recipeMedia=$recipeMediaConfirmed, recipeFolders=$recipeFoldersConfirmed"
                 )
             }
         } catch (e: Exception) {
@@ -490,23 +517,23 @@ class SyncManager(
         }
 
         // 4. 🆕 1.6-4: физическое удаление подтверждённых tombstones
-        //    (items, folders, tasks + recipes, recipe_media).
+        //    (items, folders, tasks + recipes, recipe_media + recipe_folders).
         cleanupConfirmedTombstones(now)
     }
 
     /**
      * 🆕 1.6-4: физически удаляет подтверждённые tombstones рецептов
      * и медиа вместе с items/folders/tasks.
+     * 🆕 1.7-5: удаляет подтверждённые tombstones папок рецептов.
      *
      * Для рецептов и медиа:
      *  1. Удаляем файлы с Диска (/BAZA/data/recipe_media/<recipeId>/...):
      *     - для медиа: <mediaId>.jpg / <mediaId>.mp4 + <mediaId>_thumb.jpg;
-     *     - для рецепта: папку /BAZA/data/recipe_media/<recipeId> — но проще
-     *       удалить по одному файлу, т.к. list папки требует отдельного API.
-     *       Поэтому: удаляем известные файлы (imageUrl, thumbnailUrl)
-     *       для каждого медиа перед hardDelete.
      *  2. Локальные файлы удалит SyncViewModel.cleanupRecipeTombstonesLocal.
      *  3. hardDeleteConfirmedMedia / hardDeleteConfirmedRecipes.
+     *
+     * Для папок рецептов: файлов на Диске НЕТ (папки живут только
+     * в БД + changelog). Поэтому только hardDeleteConfirmedFolders.
      */
     private suspend fun cleanupConfirmedTombstones(now: Long) {
         val cutoff = now - TOMBSTONE_RETENTION_MS
@@ -622,6 +649,20 @@ class SyncManager(
             }
         } catch (e: Exception) {
             Logger.log(TAG, "cleanupConfirmedTombstones recipes error: ${e.message}")
+        }
+
+        // --- 🆕 1.7-5: RECIPE FOLDERS ---
+        try {
+            val folderIds = db.recipeFolderDao().getConfirmedFoldersOlderThan(cutoff)
+            if (folderIds.isNotEmpty()) {
+                // Файлов на Диске у папок рецептов НЕТ — только БД.
+                // Локальных файлов тоже нет (в отличие от папок каталога,
+                // у которых есть иконки folder_<id>.jpg).
+                db.recipeFolderDao().hardDeleteConfirmedFolders(folderIds)
+                Logger.log(TAG, "cleanupConfirmedTombstones: removed ${folderIds.size} recipe folders")
+            }
+        } catch (e: Exception) {
+            Logger.log(TAG, "cleanupConfirmedTombstones recipe folders error: ${e.message}")
         }
     }
 }
