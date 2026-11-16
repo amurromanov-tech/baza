@@ -138,7 +138,7 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:contentDescription="Добавить рецепт"
-        android:src="@drawable/ic_add"
+        android:src="@android:drawable/ic_menu_add"
         app:tint="?attr/colorOnPrimary"
         app:backgroundTint="?attr/colorPrimary" />
 
