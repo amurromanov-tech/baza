@@ -1,5 +1,6 @@
 package com.family.base.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.text.TextUtils
@@ -28,6 +29,14 @@ import kotlinx.coroutines.withContext
 /**
  * 🆕 v21.1.0 (Шаг 1.4a + 1.5-2): создание / редактирование рецепта.
  *
+ * 🆕 Шаг 1.7-4: ПАПКА ПРИ СОЗДАНИИ.
+ *  - При создании рецепта из открытой папки RecipeListActivity передаёт
+ *    EXTRA_FOLDER_ID — новый рецепт сразу попадает в эту папку.
+ *  - Для «Рецептов ИИ» (source = "ai") EXTRA_FOLDER_ID игнорируется
+ *    (у ИИ папок нет).
+ *  - Блок «Папка» в этом экране НЕ показываем (решение пользователя:
+ *    перемещение — через долгий клик в RecipeListActivity, Шаг 1.7-4).
+ *
  * Режимы:
  *  - Создание: extra EXTRA_RECIPE_ID НЕ передан.
  *              extra EXTRA_SOURCE обязателен: "ai" или "user".
@@ -45,7 +54,6 @@ import kotlinx.coroutines.withContext
  *  - В режиме СОЗДАНИЯ медиа-блок скрыт с подсказкой
  *    «Сначала сохраните рецепт…».
  *  - ВСЁ РАБОТАЕТ ОФЛАЙН: файлы пишутся в filesDir/recipe_media/<recipeId>/.
- *    Синк на Диск — Шаг 1.6.
  */
 class RecipeEditActivity : AppCompatActivity() {
 
@@ -54,6 +62,13 @@ class RecipeEditActivity : AppCompatActivity() {
 
         const val EXTRA_RECIPE_ID = "recipe_id"
         const val EXTRA_SOURCE = "recipe_source"
+
+        /**
+         * 🆕 Шаг 1.7-4: id папки, в которую нужно положить новый рецепт.
+         * Передаётся из RecipeListActivity, если создание идёт из открытой папки.
+         * Для source = "ai" игнорируется.
+         */
+        const val EXTRA_FOLDER_ID = "recipe_folder_id"
     }
 
     private lateinit var binding: ActivityRecipeEditBinding
@@ -65,6 +80,12 @@ class RecipeEditActivity : AppCompatActivity() {
 
     /** source рецепта: "ai" или "user". Для создания обязателен. */
     private var source: String = RecipeEntity.SOURCE_USER
+
+    /**
+     * 🆕 Шаг 1.7-4: папка, в которую нужно положить новый рецепт.
+     * null — корень «Моих рецептов». Для source = "ai" игнорируется.
+     */
+    private var targetFolderId: String? = null
 
     /** Текущий пользователь (для createdBy / audit). */
     private val currentUser: String
@@ -122,6 +143,9 @@ class RecipeEditActivity : AppCompatActivity() {
         editingRecipeId = intent.getStringExtra(EXTRA_RECIPE_ID)
         val extraSource = intent.getStringExtra(EXTRA_SOURCE)
 
+        // 🆕 Шаг 1.7-4: папка для нового рецепта (только для "user").
+        val extraFolderId = intent.getStringExtra(EXTRA_FOLDER_ID)
+
         if (editingRecipeId == null) {
             if (extraSource != RecipeEntity.SOURCE_AI && extraSource != RecipeEntity.SOURCE_USER) {
                 Logger.log(TAG, "onCreate: CREATE without valid source (got=$extraSource), finish")
@@ -130,9 +154,16 @@ class RecipeEditActivity : AppCompatActivity() {
                 return
             }
             source = extraSource!!
-            Logger.log(TAG, "onCreate: CREATE mode, source=$source")
+            // Папка имеет смысл только для «Моих рецептов». Для ИИ — null.
+            targetFolderId = if (source == RecipeEntity.SOURCE_USER) extraFolderId else null
+            Logger.log(
+                TAG,
+                "onCreate: CREATE mode, source=$source, targetFolderId=$targetFolderId"
+            )
         } else {
             Logger.log(TAG, "onCreate: EDIT mode, recipeId=$editingRecipeId")
+            // В режиме редактирования папку не меняем — она уже есть у рецепта.
+            targetFolderId = null
         }
 
         setupToolbar()
@@ -295,9 +326,14 @@ class RecipeEditActivity : AppCompatActivity() {
             }
 
             source = recipe.source
+            // 🆕 Шаг 1.7-4: запоминаем текущую папку рецепта (для информации в логах).
+            targetFolderId = recipe.folderId
             binding.etTitle.setText(recipe.title)
             binding.etDescription.setText(recipe.description ?: "")
-            Logger.log(TAG, "loadRecipeForEdit: loaded '${recipe.title}', source=${recipe.source}")
+            Logger.log(
+                TAG,
+                "loadRecipeForEdit: loaded '${recipe.title}', source=${recipe.source}, folderId=${recipe.folderId}"
+            )
         }
     }
 
@@ -540,12 +576,19 @@ class RecipeEditActivity : AppCompatActivity() {
                 val recipeId = editingRecipeId
 
                 if (recipeId == null) {
+                    // ============================================================
+                    // 🆕 Шаг 1.7-4: создание с папкой.
+                    // targetFolderId уже выставлен в onCreate:
+                    //  - для "user" — из EXTRA_FOLDER_ID (или null = корень);
+                    //  - для "ai"   — всегда null (папок у ИИ нет).
+                    // ============================================================
                     val created = withContext(Dispatchers.IO) {
                         repository.createRecipe(
                             title = title,
                             description = description,
                             source = source,
-                            currentUser = currentUser
+                            currentUser = currentUser,
+                            folderId = targetFolderId
                         )
                     }
 
@@ -563,7 +606,7 @@ class RecipeEditActivity : AppCompatActivity() {
 
                     Logger.log(
                         TAG,
-                        "onSaveClicked: created id=${created.id}, reopening in EDIT mode"
+                        "onSaveClicked: created id=${created.id}, folderId=${created.folderId}, reopening in EDIT mode"
                     )
                     reopenInEditMode(created.id)
                 } else {
@@ -581,7 +624,7 @@ class RecipeEditActivity : AppCompatActivity() {
 
                     if (ok) {
                         Logger.log(TAG, "onSaveClicked: OK, recipeId=$recipeId")
-                        val result = android.content.Intent().apply {
+                        val result = Intent().apply {
                             putExtra(EXTRA_RECIPE_ID, recipeId)
                         }
                         setResult(RESULT_OK, result)
@@ -608,9 +651,9 @@ class RecipeEditActivity : AppCompatActivity() {
     }
 
     private fun reopenInEditMode(recipeId: String) {
-        val intent = android.content.Intent(this, RecipeEditActivity::class.java).apply {
+        val intent = Intent(this, RecipeEditActivity::class.java).apply {
             putExtra(EXTRA_RECIPE_ID, recipeId)
-            addFlags(android.content.Intent.FLAG_ACTIVITY_FORWARD_RESULT)
+            addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
         }
         startActivity(intent)
         finish()
