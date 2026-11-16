@@ -67,37 +67,59 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <HorizontalScrollView
-            android:id="@+id/sortChipsScroll"
+        <!-- Строка фильтров: чипы сортировки + кнопка «Добавить папку» справа -->
+        <LinearLayout
+            android:id="@+id/filterRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:scrollbars="none"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:paddingHorizontal="16dp"
             android:paddingBottom="8dp">
 
-            <LinearLayout
+            <HorizontalScrollView
+                android:id="@+id/sortChipsScroll"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipSortNewest"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🕐 Новые"
+                        android:checkable="true"
+                        app:chipIcon="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipSortAlphabetical"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="🔤 А-Я"
+                        android:checkable="true"
+                        app:chipIcon="@null" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAddFolder"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipSortNewest"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🕐 Новые"
-                    android:checkable="true"
-                    app:chipIcon="@null" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipSortAlphabetical"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="🔤 А-Я"
-                    android:checkable="true"
-                    app:chipIcon="@null" />
-            </LinearLayout>
-        </HorizontalScrollView>
+                android:text="Добавить папку"
+                android:textAllCaps="false"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                app:icon="@null"
+                app:iconPadding="0dp" />
+        </LinearLayout>
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.recyclerview.widget.RecyclerView
@@ -159,18 +181,5 @@
         android:src="@android:drawable/ic_input_add"
         app:tint="?attr/colorOnPrimary"
         app:backgroundTint="?attr/colorPrimary" />
-
-    <!-- FAB «📁» (создать папку) -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabCreateFolder"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
-        android:layout_margin="16dp"
-        android:contentDescription="Создать папку"
-        android:src="@drawable/ic_folder_default"
-        app:tint="?attr/colorOnPrimary"
-        app:backgroundTint="?attr/colorPrimary"
-        app:fabSize="mini" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
