@@ -2,176 +2,147 @@
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="?android:attr/colorBackground"
+    android:fitsSystemWindows="true">
 
-    <LinearLayout
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBarLayout"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical">
+        android:layout_height="wrap_content"
+        android:background="?android:attr/colorBackground"
+        app:elevation="0dp">
 
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="?attr/actionBarSize"
             android:background="?attr/colorPrimary"
-            android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
             app:titleTextColor="?attr/colorOnPrimary"
-            tools:title="Рецепты">
+            app:navigationIconTint="?attr/colorOnPrimary" />
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="end"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <ImageButton
-                    android:id="@+id/btnSearch"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:background="@drawable/btn_dark_circle"
-                    android:contentDescription="Поиск"
-                    android:src="@drawable/ic_search"
-                    android:tint="?attr/colorControlNormal" />
-
-            </LinearLayout>
-        </com.google.android.material.appbar.MaterialToolbar>
-
-        <!--
-            Поле поиска. Скрыто по умолчанию, показывается по клику на btnSearch.
-            При показе — запрашивает фокус и открывает клавиатуру.
-        -->
-        <com.google.android.material.textfield.TextInputLayout
+        <LinearLayout
             android:id="@+id/searchLayout"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="8dp"
-            android:hint="Поиск по названию и описанию"
-            android:visibility="gone"
-            app:endIconMode="clear_text"
-            tools:visibility="visible">
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="8dp"
+            android:visibility="gone">
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etSearch"
-                android:layout_width="match_parent"
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:maxLines="1" />
+                android:layout_weight="1"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense">
 
-        </com.google.android.material.textfield.TextInputLayout>
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Поиск"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
 
-        <!--
-            Чипы сортировки: 🕐 Новые / 🔤 А-Я.
-            Показываются только когда есть элементы (папки или рецепты).
-        -->
         <HorizontalScrollView
             android:id="@+id/sortChipsScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:scrollbars="none"
-            android:visibility="gone"
-            tools:visibility="visible">
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="8dp">
 
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/sortChipsGroup"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
-                app:singleLine="true"
-                app:singleSelection="true">
+                android:orientation="horizontal">
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipSortNewest"
-                    style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:checked="true"
-                    android:text="🕐 Новые" />
+                    android:text="🕐 Новые"
+                    android:checkable="true"
+                    app:chipIcon="@null" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipSortAlphabetical"
-                    style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🔤 А-Я" />
-
-            </com.google.android.material.chip.ChipGroup>
-
-        </HorizontalScrollView>
-
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvRecipes"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                tools:listitem="@layout/item_recipe" />
-
-            <!--
-                Заглушка пустого состояния. Показывается, когда список пуст.
-                Текст задаётся программно в RecipeListActivity — разный
-                для «Рецептов ИИ» и «Моих рецептов» и для уровня папки.
-            -->
-            <LinearLayout
-                android:id="@+id/emptyState"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:gravity="center"
-                android:orientation="vertical"
-                android:padding="32dp"
-                android:visibility="gone"
-                tools:visibility="visible">
-
-                <TextView
-                    android:id="@+id/tvEmptyIcon"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textSize="48sp"
-                    tools:text="🍳" />
-
-                <TextView
-                    android:id="@+id/tvEmptyTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:gravity="center"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    tools:text="Здесь пока пусто" />
-
-                <TextView
-                    android:id="@+id/tvEmptySubtitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:gravity="center"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="14sp"
-                    tools:text="Нажмите «+», чтобы добавить первый рецепт" />
-
+                    android:layout_marginStart="8dp"
+                    android:text="🔤 А-Я"
+                    android:checkable="true"
+                    app:chipIcon="@null" />
             </LinearLayout>
+        </HorizontalScrollView>
+    </com.google.android.material.appbar.AppBarLayout>
 
-        </FrameLayout>
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvRecipes"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:padding="8dp"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior" />
 
+    <LinearLayout
+        android:id="@+id/emptyState"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:visibility="gone"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <TextView
+            android:id="@+id/tvEmptyIcon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="64sp"
+            android:text="📝" />
+
+        <TextView
+            android:id="@+id/tvEmptyTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="?android:attr/textColorPrimary"
+            android:gravity="center"
+            android:text="Здесь пока пусто" />
+
+        <TextView
+            android:id="@+id/tvEmptySubtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="14sp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:text="Нажми «+», чтобы добавить первый рецепт." />
     </LinearLayout>
 
-    <!--
-        🆕 Шаг 1.7-3: кнопка «📁 Создать папку» — mini-FAB внизу слева
-        от FAB «+». Показывается только для «Моих рецептов» (source = "user").
-    -->
+    <!-- FAB «+» (создать рецепт) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabAddRecipe"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:contentDescription="Добавить рецепт"
+        android:src="@drawable/ic_add"
+        app:tint="?attr/colorOnPrimary"
+        app:backgroundTint="?attr/colorPrimary" />
+
+    <!-- FAB «📁» (создать папку) -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabCreateFolder"
         android:layout_width="wrap_content"
@@ -180,21 +151,8 @@
         android:layout_margin="16dp"
         android:contentDescription="Создать папку"
         android:src="@drawable/ic_folder_default"
-        android:visibility="gone"
-        app:fabSize="mini"
         app:tint="?attr/colorOnPrimary"
-        tools:visibility="visible" />
-
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabAddRecipe"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_margin="16dp"
-        android:contentDescription="Добавить рецепт"
-        android:src="@drawable/ic_add_photo"
-        android:visibility="gone"
-        app:tint="?attr/colorOnPrimary"
-        tools:visibility="visible" />
+        app:backgroundTint="?attr/colorPrimary"
+        app:fabSize="mini" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
