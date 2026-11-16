@@ -69,6 +69,7 @@ jobs:
     # Загрузка APK как артефакта (хранится 3 дня)
     # ============================================================
     - name: Upload APK
+      if: false   # временно отключено из-за квоты
       uses: actions/upload-artifact@v4
       with:
         name: app-release
