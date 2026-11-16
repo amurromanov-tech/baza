@@ -74,7 +74,7 @@ jobs:
       with:
         name: app-release
         path: app/build/outputs/apk/release/app-release.apk
-        retention-days: 3
+        retention-days: 1
 
     - name: Read version from build.gradle.kts
       id: version
