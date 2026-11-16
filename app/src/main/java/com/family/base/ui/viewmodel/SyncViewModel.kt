@@ -212,9 +212,6 @@ class SyncViewModel(
                     Logger.log(TAG, "syncWithDisk: outboxPending=0 → ничего не менялось локально")
                 }
 
-                // ============================================================
-                // 🔧 СКАЧИВАЕМ ДАННЫЕ С ДИСКА
-                // ============================================================
                 onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Проверка данных на Диске…"))
                 val tDownload = System.currentTimeMillis()
                 val downloadResult = repository.downloadDataFromDisk()
@@ -227,7 +224,7 @@ class SyncViewModel(
                 val diskHasMoreFolders = downloadResult.folders.size > localFoldersCount
                 val forceMerge = diskHasMoreItems || diskHasMoreFolders
 
-                // 🆕 ЭТАЛОН (Алексей): если на Диске МЕНЬШЕ данных, чем локально —
+                // ЭТАЛОН (Алексей): если на Диске МЕНЬШЕ данных, чем локально —
                 // заливаем локальную базу на Диск, перезаписываем.
                 val isMasterNeedsUpload = isMaster && (diskHasLessItems || diskHasLessFolders) && outboxPendingCount == 0
 
@@ -259,7 +256,8 @@ class SyncViewModel(
                     val uploadResult = withContext(Dispatchers.IO) {
                         val items = db.itemDao().getAllItemsRaw()
                         val folders = db.folderDao().getAllFolders()
-                        val history = db.historyDao().getAll()
+                        // 🔧 ФИКС: в HistoryDao метод называется getAllEntries(), а не getAll().
+                        val history = db.historyDao().getAllEntries()
                         val tasks = db.taskDao().getAllForSync()
                         repository.uploadDataToDisk(items, folders, history, tasks)
                     }
@@ -267,8 +265,6 @@ class SyncViewModel(
                     Logger.log(TAG, "syncWithDisk: uploadDataToDisk result=$uploadResult")
 
                     if (uploadResult) {
-                        // После заливки обновляем локальный last_modified,
-                        // чтобы следующий синк не дёргал download.
                         val newLastModified = repository.getDiskLastModified() ?: 0L
                         if (newLastModified > 0L) {
                             withContext(Dispatchers.IO) { syncInfoDao.setLastModified(newLastModified) }
