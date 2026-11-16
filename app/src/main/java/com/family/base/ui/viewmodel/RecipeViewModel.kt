@@ -27,7 +27,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     private var source: String = RecipeEntity.SOURCE_USER
     private var searchQuery: String = ""
-    // 🔧 По умолчанию — «🔤 А-Я» (сортировка по алфавиту)
     private var sortNewest: Boolean = false
     private var currentFolderId: String? = null
     private var loadJob: Job? = null
@@ -53,7 +52,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentFolderName = MutableLiveData<String?>(null)
     val currentFolderName: LiveData<String?> = _currentFolderName
 
-    // 🆕 Стек навигации по папкам (для кнопки «назад» на уровень выше)
     private val folderStack = ArrayDeque<String>()
 
     val currentUserName: String
@@ -91,14 +89,12 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     emptyList()
                 }
 
-                // 2. Счётчики рецептов в папках
+                // 2. Счётчики рецептов в папках (глубокий подсчёт)
                 val counts: Map<String, Int> = if (foldersList.isNotEmpty()) {
                     try {
-                        val map = HashMap<String, Int>(foldersList.size)
-                        foldersList.forEach { f ->
-                            map[f.id] = db.recipeDao().countByFolder(f.id)
-                        }
-                        map
+                        val ids = foldersList.map { it.id }
+                        val rows = db.recipeDao().getRecipeFolderStatsDeep(ids)
+                        rows.associate { it.folderId to it.itemCount }
                     } catch (e: Exception) {
                         Logger.log(TAG, "loadContent: folder counts error: ${e.message}", e)
                         emptyMap()
@@ -118,8 +114,12 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                         else recipesRepository.getRecipesInFolder(folderId, sortNewest)
                     }
                     else -> {
-                        if (hasQuery) recipesRepository.searchRootRecipes(source, searchQuery)
-                        else recipesRepository.getRootRecipes(source, sortNewest)
+                        if (hasQuery) {
+                            // 🔧 Глубокий поиск по всем рецептам source='user' (включая папки)
+                            db.recipeDao().searchAllUserRecipes(searchQuery)
+                        } else {
+                            recipesRepository.getRootRecipes(source, sortNewest)
+                        }
                     }
                 }
 
@@ -151,7 +151,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
                 }
 
-                // 5. Имя текущей папки (из foldersList текущего уровня)
+                // 5. Имя текущей папки
                 val currentName: String? = if (folderId != null) {
                     try {
                         db.recipeFolderDao().getLiveFolderById(folderId)?.name ?: folderId
