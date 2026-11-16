@@ -371,14 +371,10 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    private fun openCreateRecipe() {
+        private fun openCreateRecipe() {
         Logger.log(TAG, "openCreateRecipe: source=$source, folderId=${viewModel.currentFolderIdLive.value}")
         val intent = Intent(this, RecipeEditActivity::class.java).apply {
             putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
-            // Папку передаём, чтобы новый рецепт сразу попал в открытую папку.
-            viewModel.currentFolderIdLive.value?.let {
-                putExtra(RecipeEditActivity.EXTRA_FOLDER_ID, it)
-            }
         }
         editLauncher.launch(intent)
     }
