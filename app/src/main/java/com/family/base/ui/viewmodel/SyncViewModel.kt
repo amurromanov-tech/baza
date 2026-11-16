@@ -1,6 +1,7 @@
 package com.family.base.ui.viewmodel
 
 import android.content.Context
+import com.family.base.AppUser
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
@@ -130,13 +131,15 @@ class SyncViewModel(
                 Logger.log(TAG, "TIMING: collect metrics took ${System.currentTimeMillis() - tMetrics}ms")
 
                 val isFirstLaunch = (localItemsCount == 0 && localFoldersCount == 0)
+                val currentUser = tokenStorage.getCurrentUser()
+                val isMaster = AppUser.canDelete(currentUser)
 
                 Logger.log(
                     TAG,
                     "syncWithDisk: local items=$localItemsCount, folders=$localFoldersCount, " +
                         "outboxPending=$outboxPendingCount, localModified=$localLastModified, " +
                         "diskModified=${diskLastModified ?: "null (network error)"}, " +
-                        "isFirstLaunch=$isFirstLaunch"
+                        "isFirstLaunch=$isFirstLaunch, user=$currentUser, isMaster=$isMaster"
                 )
 
                 if (isFirstLaunch) {
@@ -210,11 +213,7 @@ class SyncViewModel(
                 }
 
                 // ============================================================
-                // 🔧 ВСЕГДА СКАЧИВАЕМ ДАННЫЕ С ДИСКА (даже если last_modified совпал),
-                // чтобы обнаружить расхождение в количестве предметов/папок.
-                // mergeData вызывается ТОЛЬКО если:
-                //  - Диск новее (shouldDownload), ИЛИ
-                //  - На Диске БОЛЬШЕ предметов/папок, чем локально (форс-докачка).
+                // 🔧 СКАЧИВАЕМ ДАННЫЕ С ДИСКА
                 // ============================================================
                 onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Проверка данных на Диске…"))
                 val tDownload = System.currentTimeMillis()
@@ -222,19 +221,61 @@ class SyncViewModel(
                 Logger.log(TAG, "TIMING: downloadDataFromDisk took ${System.currentTimeMillis() - tDownload}ms")
 
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
+                val diskHasLessItems = downloadResult.items.size < localItemsCount
+                val diskHasLessFolders = downloadResult.folders.size < localFoldersCount
                 val diskHasMoreItems = downloadResult.items.size > localItemsCount
                 val diskHasMoreFolders = downloadResult.folders.size > localFoldersCount
                 val forceMerge = diskHasMoreItems || diskHasMoreFolders
 
+                // 🆕 ЭТАЛОН (Алексей): если на Диске МЕНЬШЕ данных, чем локально —
+                // заливаем локальную базу на Диск, перезаписываем.
+                val isMasterNeedsUpload = isMaster && (diskHasLessItems || diskHasLessFolders) && outboxPendingCount == 0
+
                 Logger.log(
                     TAG,
-                    "syncWithDisk: shouldDownload=$shouldDownload, " +
+                    "syncWithDisk: shouldDownload=$shouldDownload, forceMerge=$forceMerge, " +
+                        "isMaster=$isMaster, isMasterNeedsUpload=$isMasterNeedsUpload, " +
                         "diskItems=${downloadResult.items.size} vs localItems=$localItemsCount, " +
-                        "diskFolders=${downloadResult.folders.size} vs localFolders=$localFoldersCount, " +
-                        "forceMerge=$forceMerge"
+                        "diskFolders=${downloadResult.folders.size} vs localFolders=$localFoldersCount"
                 )
 
-                if (shouldDownload || forceMerge) {
+                if (isMasterNeedsUpload) {
+                    Logger.log(
+                        TAG,
+                        "syncWithDisk: ЭТАЛОН — на Диске меньше данных " +
+                            "(diskItems=${downloadResult.items.size} < localItems=$localItemsCount), " +
+                            "заливаем локальную базу на Диск"
+                    )
+
+                    onSyncProgressChanged(
+                        SyncProgress(
+                            SyncPhase.UPLOADING_PHOTOS,
+                            0,
+                            1,
+                            "Заливка эталонной базы на Диск…"
+                        )
+                    )
+
+                    val uploadResult = withContext(Dispatchers.IO) {
+                        val items = db.itemDao().getAllItemsRaw()
+                        val folders = db.folderDao().getAllFolders()
+                        val history = db.historyDao().getAll()
+                        val tasks = db.taskDao().getAllForSync()
+                        repository.uploadDataToDisk(items, folders, history, tasks)
+                    }
+
+                    Logger.log(TAG, "syncWithDisk: uploadDataToDisk result=$uploadResult")
+
+                    if (uploadResult) {
+                        // После заливки обновляем локальный last_modified,
+                        // чтобы следующий синк не дёргал download.
+                        val newLastModified = repository.getDiskLastModified() ?: 0L
+                        if (newLastModified > 0L) {
+                            withContext(Dispatchers.IO) { syncInfoDao.setLastModified(newLastModified) }
+                        }
+                        uploadedCount += localItemsCount + localFoldersCount
+                    }
+                } else if (shouldDownload || forceMerge) {
                     if (forceMerge && !shouldDownload) {
                         Logger.log(TAG, "syncWithDisk: FORCE merge — на Диске больше данных, чем локально")
                     }
@@ -941,8 +982,7 @@ class SyncViewModel(
     }
 
     // ============================================================
-    // MERGE (items / folders / history / tasks — БЕЗ рецептов;
-    //        рецепты и медиа идут через changelog PULL)
+    // MERGE
     // ============================================================
 
     private companion object {
