@@ -28,37 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.family.base.data.local.AppDatabase
 
-/**
- * 🆕 v21.1.0 (Шаг 1.3 + 1.4a + 1.4b-1 + 1.4b-2): экран «Рецепты».
- *
- * 🆕 Шаг 1.7-3: ДВУХУРОВНЕВЫЙ СПИСОК (папки + рецепты).
- * 🆕 Шаг 1.7-4: ПЕРЕМЕЩЕНИЕ РЕЦЕПТА В ПАПКУ.
- *
- * Что делает:
- *  - Принимает EXTRA_SOURCE ("ai" | "user" | "all"), ставит заголовок;
- *  - Подключает RecipeViewModel + RecipeCatalogAdapter + RecyclerView;
- *  - В корне «Моих рецептов»: сверху папки, снизу рецепты без папки;
- *  - Внутри папки: её подпапки (если есть) + её рецепты;
- *  - В «Рецептах ИИ»: только рецепты (папок нет);
- *  - Поиск (debounce 250 мс) — ищет рецепты на текущем уровне;
- *  - Сортировка 🕐 Новые / 🔤 А-Я — папки и рецепты;
- *  - FAB «+» — создать рецепт (в текущей папке, если открыта);
- *  - FAB «📁» — создать папку (только source = "user");
- *  - Клик по папке → ViewModel.openFolder(id) (внутрь);
- *  - Клик по рецепту → RecipeDetailActivity;
- *  - Долгий клик по папке → «Переименовать» / «Удалить»;
- *  - 🆕 Долгий клик по рецепту → «📁 Переместить в папку…» (только для
- *    source = "user"; у ИИ папок нет);
- *  - Кнопка «назад» (системная или в тулбаре): если внутри папки —
- *    в корень, иначе — finish().
- *
- * ВАЖНО (правило проекта):
- *  - Заголовок ставим через supportActionBar?.title = ..., а НЕ через
- *    binding.toolbar.title = ... Иначе ActionBar перетирает его на
- *    android:label из манифеста (= "BAZA").
- *  - Корневая «🍳 Рецепты» (source = "all") этот экран НЕ открывает —
- *    она открывается как обычная папка (MainActivity.navigateToFolder).
- */
 class RecipeListActivity : AppCompatActivity() {
 
     companion object {
@@ -83,10 +52,6 @@ class RecipeListActivity : AppCompatActivity() {
 
     private var searchRunnable: Runnable? = null
 
-    /**
-     * Счётчики рецептов в папках (folderId → count).
-     * Приходят из RecipeViewModel.folderRecipeCounts.
-     */
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
 
     private val editLauncher = registerForActivityResult(
@@ -96,11 +61,6 @@ class RecipeListActivity : AppCompatActivity() {
         viewModel.loadContent()
     }
 
-    /**
-     * Возврат из RecipeDetailActivity.
-     * Если рецепт менялся/удалён (RESULT_OK + EXTRA_RESULT_CHANGED=true) —
-     * перезагружаем список. Иначе ничего не делаем.
-     */
     private val detailLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -144,10 +104,6 @@ class RecipeListActivity : AppCompatActivity() {
         viewModel.loadContent()
     }
 
-    // ============================================================
-    // ТУЛБАР + ЗАГОЛОВОК
-    // ============================================================
-
     private fun setupToolbar() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -161,11 +117,6 @@ class RecipeListActivity : AppCompatActivity() {
         updateTitle(null)
     }
 
-    /**
-     * Обновить заголовок ActionBar.
-     * null → базовый заголовок по source (🤖 / 📝 / 🍳).
-     * не null → имя открытой папки.
-     */
     private fun updateTitle(folderName: String?) {
         val title = when {
             folderName != null -> folderName
@@ -175,10 +126,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
         supportActionBar?.title = title
     }
-
-    // ============================================================
-    // RECYCLER + АДАПТЕР
-    // ============================================================
 
     private fun setupRecycler() {
         adapter = RecipeCatalogAdapter(
@@ -210,10 +157,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
         detailLauncher.launch(intent)
     }
-
-    // ============================================================
-    // ПОИСК
-    // ============================================================
 
     private fun setupSearch() {
         binding.etSearch.addTextChangedListener(object : TextWatcher {
@@ -253,7 +196,6 @@ class RecipeListActivity : AppCompatActivity() {
 
     private fun toggleSearch() {
         if (searchVisible) {
-            // Свернуть поиск и очистить.
             searchVisible = false
             binding.searchLayout.visibility = View.GONE
             binding.etSearch.setText("")
@@ -285,10 +227,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // СОРТИРОВКА
-    // ============================================================
-
     private fun setupSortChips() {
         binding.chipSortNewest.setOnClickListener {
             if (viewModel.isSortNewest()) return@setOnClickListener
@@ -300,13 +238,8 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    // ============================================================
-    // ПУСТОЕ СОСТОЯНИЕ
-    // ============================================================
-
     private fun setupEmptyState() {
         binding.emptyState.setOnClickListener {
-            // Тап по пустому состоянию — создать рецепт (только для ai/user).
             if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
                 openCreateRecipe()
             }
@@ -314,9 +247,6 @@ class RecipeListActivity : AppCompatActivity() {
         updateEmptyStateText(null)
     }
 
-    /**
-     * Тексты пустого состояния зависят от source и от того, в папке мы или в корне.
-     */
     private fun updateEmptyStateText(folderName: String?) {
         val (icon, title, subtitle) = when {
             source == RecipeEntity.SOURCE_AI -> Triple(
@@ -346,12 +276,7 @@ class RecipeListActivity : AppCompatActivity() {
         binding.tvEmptySubtitle.text = subtitle
     }
 
-    // ============================================================
-    // FAB'ы
-    // ============================================================
-
     private fun setupFabs() {
-        // FAB «+» (создать рецепт).
         if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
             binding.fabAddRecipe.visibility = View.VISIBLE
             binding.fabAddRecipe.setOnClickListener {
@@ -362,7 +287,6 @@ class RecipeListActivity : AppCompatActivity() {
             binding.fabAddRecipe.setOnClickListener(null)
         }
 
-        // FAB «📁» (создать папку) — только в «Моих рецептах».
         if (viewModel.isFolderModeAvailable()) {
             binding.fabCreateFolder.visibility = View.VISIBLE
             binding.fabCreateFolder.setOnClickListener {
@@ -378,8 +302,6 @@ class RecipeListActivity : AppCompatActivity() {
         Logger.log(TAG, "openCreateRecipe: source=$source, folderId=${viewModel.currentFolderIdLive.value}")
         val intent = Intent(this, RecipeEditActivity::class.java).apply {
             putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
-            // 🆕 Шаг 1.7-4: передаём папку, чтобы новый рецепт сразу попал
-            // в открытую папку (если мы внутри папки).
             viewModel.currentFolderIdLive.value?.let {
                 putExtra(RecipeEditActivity.EXTRA_FOLDER_ID, it)
             }
@@ -387,14 +309,6 @@ class RecipeListActivity : AppCompatActivity() {
         editLauncher.launch(intent)
     }
 
-    // ============================================================
-    // ДИАЛОГИ ПАПОК
-    // ============================================================
-
-    /**
-     * Создать папку на текущем уровне (в корне или в открытой папке).
-     * Простой диалог с EditText.
-     */
     private fun showCreateFolderDialog() {
         val editText = EditText(this).apply {
             hint = "Название папки"
@@ -431,9 +345,6 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Долгий клик по папке: «Переименовать» / «Удалить».
-     */
     private fun showFolderActionsDialog(folder: RecipeFolderEntity) {
         val options = arrayOf("✏️ Переименовать", "🗑️ Удалить папку")
 
@@ -507,15 +418,6 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    // ============================================================
-    // 🆕 ШАГ 1.7-4: ПЕРЕМЕЩЕНИЕ РЕЦЕПТА В ПАПКУ
-    // ============================================================
-
-    /**
-     * Долгий клик по рецепту.
-     * Для «Моих рецептов» (source = "user") — «📁 Переместить в папку…».
-     * Для «Рецептов ИИ» папок нет — меню не показываем.
-     */
     private fun showRecipeActionsDialog(recipe: RecipeEntity) {
         if (!viewModel.isFolderModeAvailable()) {
             Logger.log(TAG, "showRecipeActionsDialog: folder mode unavailable for source=$source")
@@ -536,18 +438,10 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Диалог выбора папки для перемещения рецепта.
-     * Список: «📁 Без папки (корень)» + все «живые» папки иерархией с отступами.
-     * Помечаем текущую папку рецепта (• ) и запрещаем выбирать её же.
-     */
     private fun showMoveToFolderDialog(recipe: RecipeEntity) {
         lifecycleScope.launch {
             val folders = try {
                 withContext(Dispatchers.IO) {
-                    // Все живые папки (без фильтра по родителю).
-                    // Через репозиторий ViewModel не пробрасывает getAllFolders,
-                    // поэтому берём напрямую из БД — лёгкий запрос.
                     AppDatabase.getInstance(applicationContext)
                         .recipeFolderDao()
                         .getAllLive()
@@ -558,8 +452,6 @@ class RecipeListActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // Строим иерархический список: сначала корневые папки,
-            // потом их дети с отступом «— », и т.д.
             val ordered = buildFolderHierarchy(folders)
             if (ordered.isEmpty()) {
                 Toast.makeText(
@@ -573,7 +465,6 @@ class RecipeListActivity : AppCompatActivity() {
             val labels = ArrayList<String>(ordered.size + 1)
             val ids = ArrayList<String?>(ordered.size + 1)
 
-            // Пункт «Без папки (корень)» — чтобы можно было вернуть рецепт из папки.
             labels.add("📁 Без папки (корень)")
             ids.add(null)
 
@@ -583,9 +474,6 @@ class RecipeListActivity : AppCompatActivity() {
                 labels.add("$indent${folder.name}$currentMark")
                 ids.add(folder.id)
             }
-
-            // Текущая папка рецепта — индекс для пометки (и чтобы не дать выбрать её же).
-            val currentIndex = ids.indexOf(recipe.folderId)
 
             AlertDialog.Builder(this@RecipeListActivity)
                 .setTitle("📁 Переместить в папку")
@@ -624,11 +512,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Построить иерархический список папок: (folder, depth).
-     * Корневые — depth = 0, их дети — depth = 1, и т.д.
-     * Порядок — по имени внутри уровня (COLLATE NOCASE уже в запросе).
-     */
     private fun buildFolderHierarchy(
         all: List<RecipeFolderEntity>
     ): List<Pair<RecipeFolderEntity, Int>> {
@@ -647,10 +530,6 @@ class RecipeListActivity : AppCompatActivity() {
         return result
     }
 
-    // ============================================================
-    // НАВИГАЦИЯ НАЗАД
-    // ============================================================
-
     private fun setupBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -659,45 +538,32 @@ class RecipeListActivity : AppCompatActivity() {
         })
     }
 
-    /**
-     * Обработка «назад»:
-     *  - если внутри папки — вернуться в корень;
-     *  - иначе — finish().
-     */
     private fun handleBack() {
         if (viewModel.goBack()) {
-            Logger.log(TAG, "handleBack: went to root")
+            Logger.log(TAG, "handleBack: went to parent or root")
         } else {
             Logger.log(TAG, "handleBack: finish")
             finish()
         }
     }
 
-    // ============================================================
-    // НАБЛЮДЕНИЕ ЗА VIEWMODEL
-    // ============================================================
-
     private fun observeViewModel() {
-        // Папки уровня.
         viewModel.folders.observe(this) { folders ->
             Logger.log(TAG, "folders observer: count=${folders.size}")
             rebuildList()
         }
 
-        // Счётчики рецептов в папках.
         viewModel.folderRecipeCounts.observe(this) { counts ->
             Logger.log(TAG, "folderRecipeCounts observer: size=${counts.size}")
             folderRecipeCounts = counts
             rebuildList()
         }
 
-        // Рецепты уровня.
         viewModel.recipes.observe(this) { recipes ->
             Logger.log(TAG, "recipes observer: count=${recipes.size}")
             rebuildList()
         }
 
-        // Имя текущей папки (для заголовка и текстов пустого состояния).
         viewModel.currentFolderName.observe(this) { name ->
             Logger.log(TAG, "currentFolderName observer: '$name'")
             updateTitle(name)
@@ -714,10 +580,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Склеить папки и рецепты в один список для RecipeCatalogAdapter:
-     * сначала все папки, потом все рецепты.
-     */
     private fun rebuildList() {
         val folders = viewModel.folders.value ?: emptyList()
         val recipes = viewModel.recipes.value ?: emptyList()
