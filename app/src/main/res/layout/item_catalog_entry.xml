@@ -100,6 +100,19 @@
                 android:visibility="gone"
                 tools:text="🤝 У Иванова (на неделю)"
                 tools:visibility="visible" />
+
+            <!-- 🆕 Ревизия: показывается только если проблема (🔴/🟡) -->
+            <TextView
+                android:id="@+id/revisionInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone"
+                tools:text="🔴 Ревизия не проводилась"
+                tools:visibility="visible" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
