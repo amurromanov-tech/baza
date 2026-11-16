@@ -108,17 +108,17 @@
                 </LinearLayout>
             </HorizontalScrollView>
 
-            <com.google.android.material.button.MaterialButton
+            <!-- Кнопка «Добавить папку» — в стиле чипов-фильтров -->
+            <com.google.android.material.chip.Chip
                 android:id="@+id/btnAddFolder"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
                 android:text="Добавить папку"
-                android:textAllCaps="false"
-                android:minHeight="0dp"
-                android:minWidth="0dp"
-                app:icon="@null"
-                app:iconPadding="0dp" />
+                android:checkable="false"
+                android:clickable="true"
+                android:focusable="true"
+                app:chipIcon="@null" />
         </LinearLayout>
     </com.google.android.material.appbar.AppBarLayout>
 
