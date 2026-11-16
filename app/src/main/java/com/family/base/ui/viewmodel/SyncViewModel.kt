@@ -224,8 +224,6 @@ class SyncViewModel(
                 val diskHasMoreFolders = downloadResult.folders.size > localFoldersCount
                 val forceMerge = diskHasMoreItems || diskHasMoreFolders
 
-                // ЭТАЛОН (Алексей): если на Диске МЕНЬШЕ данных, чем локально —
-                // заливаем локальную базу на Диск, перезаписываем.
                 val isMasterNeedsUpload = isMaster && (diskHasLessItems || diskHasLessFolders) && outboxPendingCount == 0
 
                 Logger.log(
@@ -256,7 +254,6 @@ class SyncViewModel(
                     val uploadResult = withContext(Dispatchers.IO) {
                         val items = db.itemDao().getAllItemsRaw()
                         val folders = db.folderDao().getAllFolders()
-                        // 🔧 ФИКС: в HistoryDao метод называется getAllEntries(), а не getAll().
                         val history = db.historyDao().getAllEntries()
                         val tasks = db.taskDao().getAllForSync()
                         repository.uploadDataToDisk(items, folders, history, tasks)
@@ -861,6 +858,15 @@ class SyncViewModel(
     // МЕДИА РЕЦЕПТОВ — DOWNLOAD
     // ============================================================
 
+    /**
+     * Скачивание медиа рецептов с Диска.
+     *
+     * 🔧 ФИКС (2026-11-16): убрана проверка `if (!media.imageSynced)`. Причина:
+     * при PULL через changelog `imageSynced` у Римы остаётся false (ChangelogParser
+     * его не выставляет), и файлы не скачивались. Теперь скачиваем ВСЕ живые
+     * медиа, у которых НЕТ локального файла. Если на Диске файла нет —
+     * downloadRecipeMediaBytes вернёт null, и мы просто пропустим (без ошибки).
+     */
     private suspend fun syncRecipeMedia() {
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncRecipeMedia: network blocked, skipping")
@@ -871,7 +877,6 @@ class SyncViewModel(
         val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
 
         val toDownload = allMedia.filter { media ->
-            if (!media.imageSynced) return@filter false
             if (media.isDeleted) return@filter false
             val name = media.imageUrl
             if (name.isNullOrBlank()) return@filter false
@@ -888,6 +893,7 @@ class SyncViewModel(
 
         var downloadedCount = 0
         var failedCount = 0
+        var notFoundOnDisk = 0
         val total = toDownload.size
 
         toDownload.forEachIndexed { index, media ->
@@ -912,13 +918,19 @@ class SyncViewModel(
 
                 val bytes = repository.downloadRecipeMediaBytes(media.recipeId, fileName)
                 if (bytes == null) {
-                    failedCount++
+                    notFoundOnDisk++
                     return@forEachIndexed
                 }
                 val localFile = File(dir, fileName)
                 localFile.outputStream().use { it.write(bytes) }
                 downloadedCount++
                 Logger.log(TAG, "syncRecipeMedia: OK ${media.recipeId}/$fileName (${bytes.size} bytes)")
+
+                // Обновляем imageSynced=true, раз файл теперь точно есть локально.
+                if (!media.imageSynced) {
+                    val updated = media.copy(imageSynced = true)
+                    withContext(Dispatchers.IO) { db.recipeMediaDao().updateMedia(updated) }
+                }
 
                 val thumbName = media.thumbnailUrl
                 if (!thumbName.isNullOrBlank()) {
@@ -937,7 +949,11 @@ class SyncViewModel(
             }
         }
 
-        Logger.log(TAG, "syncRecipeMedia: downloaded=$downloadedCount, failed=$failedCount, total=$total")
+        Logger.log(
+            TAG,
+            "syncRecipeMedia: downloaded=$downloadedCount, notFoundOnDisk=$notFoundOnDisk, " +
+                "failed=$failedCount, total=$total"
+        )
     }
 
     // ============================================================
