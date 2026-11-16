@@ -67,11 +67,11 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Upload APK
-      uses: actions/upload-artifact@v4
-      if: false
-      with:
-        name: app-release
-        path: app/build/outputs/apk/release/*.apk
+  uses: actions/upload-artifact@v4
+  with:
+    name: app-release
+    path: app/build/outputs/apk/release/app-release.apk
+    retention-days: 3  # Хранить всего 7 дней вместо 90
 
     - name: Read version from build.gradle.kts
       id: version
