@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.family.base.BaseApplication
 import com.family.base.databinding.ActivityAppSettingsBinding
+import com.family.base.ui.adapter.CatalogAdapter
 import com.family.base.util.Logger
 import com.family.base.util.TaskReminderPreferences
 
@@ -29,6 +30,18 @@ class AppSettingsActivity : AppCompatActivity() {
      * 🆕 v20.4.2: защита от рекурсии при программной установке isChecked.
      */
     private var suppressNotificationsListener = false
+
+    /**
+     * 🆕 Порог ревизии: человекочитаемые варианты и соответствующие дни.
+     * Индексы массивов совпадают — revisionDays[i] соответствует revisionLabels[i].
+     */
+    private val revisionLabels = arrayOf(
+        "6 месяцев",
+        "1 год",
+        "2 года",
+        "3 года"
+    )
+    private val revisionDays = intArrayOf(180, 365, 730, 1095)
 
     private val languages = arrayOf("Русский", "English")
     private val sortOptions = arrayOf(
@@ -74,6 +87,7 @@ class AppSettingsActivity : AppCompatActivity() {
 
         setupLanguageSpinner()
         setupSortSpinner()
+        setupRevisionSpinner()
         setupThemeSelector()
         setupNotificationsSwitch()
         setupTodayDialogSwitch()
@@ -128,6 +142,31 @@ class AppSettingsActivity : AppCompatActivity() {
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+    }
+
+    // ============================================================
+    // 🆕 СПИННЕР РЕВИЗИИ
+    // ============================================================
+    private fun setupRevisionSpinner() {
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, revisionLabels)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerRevisionThreshold.adapter = adapter
+
+        binding.spinnerRevisionThreshold.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    val days = revisionDays[position]
+                    Logger.log(TAG, "Revision threshold selected: ${revisionLabels[position]} ($days дн.)")
+                    saveSetting(CatalogAdapter.PREF_REVISION_WARNING_DAYS, days)
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
     }
 
     // ============================================================
@@ -354,10 +393,42 @@ class AppSettingsActivity : AppCompatActivity() {
             val sortIndex = sortOptions.indexOf(savedSort).coerceAtLeast(0)
             binding.spinnerSort.setSelection(sortIndex)
 
+            // 🆕 Ревизия: порог в днях → ближайший индекс
+            loadRevisionSetting(prefs)
+
             Logger.log(TAG, "Settings loaded")
         } catch (e: Exception) {
             Logger.log(TAG, "Error loading settings", e)
         }
+    }
+
+    /**
+     * 🆕 Загрузить сохранённый порог ревизии и выставить Spinner.
+     * Если сохранённого значения нет — по умолчанию 1 год (365).
+     * Если сохранённое значение не совпадает ни с одним вариантом —
+     * выбираем ближайший по количеству дней.
+     */
+    private fun loadRevisionSetting(prefs: android.content.SharedPreferences) {
+        val savedDays = prefs.getInt(
+            CatalogAdapter.PREF_REVISION_WARNING_DAYS,
+            CatalogAdapter.DEFAULT_REVISION_WARNING_DAYS
+        )
+        // Точное совпадение?
+        var index = revisionDays.indexOfFirst { it == savedDays }
+        if (index < 0) {
+            // Ближайший по绝对值 разнице.
+            var bestDiff = Int.MAX_VALUE
+            revisionDays.forEachIndexed { i, d ->
+                val diff = kotlin.math.abs(d - savedDays)
+                if (diff < bestDiff) {
+                    bestDiff = diff
+                    index = i
+                }
+            }
+        }
+        if (index < 0) index = 1 // fallback: 1 год
+        binding.spinnerRevisionThreshold.setSelection(index)
+        Logger.log(TAG, "loadRevisionSetting: savedDays=$savedDays → index=$index (${revisionLabels[index]})")
     }
 
     // ============================================================
