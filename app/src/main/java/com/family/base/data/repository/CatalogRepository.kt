@@ -24,25 +24,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.UnknownHostException
 
-/**
- * 🆕 v20.7.5 (миграция 20→21): uploadItemImage / uploadFolderImage ставят
- * imageSynced / iconSynced = true при успехе.
- *
- * 🆕 v21.1.0 (Шаг 1.6-2): медиа рецептов.
- *  - uploadRecipeMedia(recipeId, fileName, bytes) — заливка файла
- *    на Диск в /BAZA/data/recipe_media/<recipeId>/<fileName>.
- *    При успехе ставит imageSynced = true у RecipeMediaEntity
- *    (по id = имя файла без расширения — см. RecipeMediaController).
- *  - downloadRecipeMediaBytes(recipeId, fileName) — скачивание файла
- *    с Диска в память (для сохранения локально в SyncViewModel).
- *  - recipeMediaExistsOnDisk(recipeId, fileName): Boolean? — есть ли
- *    файл на Диске (200 → true, 404 → false, иначе → null).
- *
- *  Всё по образцу uploadItemImage / downloadItemImageBytes / itemImageExistsOnDisk:
- *   - DNS-abort: при UnknownHostException — noteDnsFailure();
- *   - ретраи не делаем (это задача SyncViewModel);
- *   - URL/mediaType — из mimeType файла (image/jpeg или video/mp4).
- */
 class CatalogRepository(private val db: AppDatabase) {
 
     private val gson = Gson()
@@ -533,6 +514,69 @@ class CatalogRepository(private val db: AppDatabase) {
                 return false
             }
             Logger.log(TAG, "Error updating last_modified: ${e.message}")
+            false
+        }
+    }
+
+    // ============================================================
+    // 🆕 ЗАЛИВКА ОСНОВНЫХ ДАННЫХ НА ДИСК (items.json / folders.json / ...)
+    // Только для эталонного устройства (Алексей). Перезаписывает
+    // неполные данные на Диске. Вызывается из SyncViewModel,
+    // когда diskItems < localItems.
+    // ============================================================
+
+    /**
+     * Залить локальные items.json / folders.json / history.json / tasks.json
+     * на Диск и обновить last_modified.
+     *
+     * Возвращает true, если хотя бы items.json и folders.json залились.
+     */
+    suspend fun uploadDataToDisk(
+        items: List<ItemEntity>,
+        folders: List<FolderEntity>,
+        history: List<HistoryEntry>,
+        tasks: List<TaskEntity>
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (isDnsBlocked()) {
+                Logger.log(TAG, "uploadDataToDisk: DNS blocked, skipping")
+                return@withContext false
+            }
+
+            val foldersJson = gson.toJson(folders)
+            val itemsJson = gson.toJson(items)
+            val historyJson = gson.toJson(history)
+            val tasksJson = gson.toJson(tasks)
+
+            Logger.log(
+                TAG,
+                "uploadDataToDisk: folders=${folders.size}, items=${items.size}, " +
+                    "history=${history.size}, tasks=${tasks.size}"
+            )
+
+            val foldersOk = uploadJsonWithToken(FOLDERS_FILENAME, foldersJson)
+            val itemsOk = uploadJsonWithToken(ITEMS_FILENAME, itemsJson)
+            val historyOk = uploadJsonWithToken(HISTORY_FILENAME, historyJson)
+            val tasksOk = uploadJsonWithToken(TASKS_FILENAME, tasksJson)
+
+            Logger.log(
+                TAG,
+                "uploadDataToDisk: foldersOk=$foldersOk, itemsOk=$itemsOk, " +
+                    "historyOk=$historyOk, tasksOk=$tasksOk"
+            )
+
+            if (foldersOk || itemsOk) {
+                updateLastModifiedWithToken()
+                return@withContext true
+            }
+            return@withContext false
+        } catch (e: Exception) {
+            if (isDnsError(e)) {
+                noteDnsFailure()
+                Logger.log(TAG, "uploadDataToDisk: DNS failure: ${e.message}")
+                return@withContext false
+            }
+            Logger.log(TAG, "uploadDataToDisk error: ${e.message}", e)
             false
         }
     }
@@ -1047,22 +1091,9 @@ class CatalogRepository(private val db: AppDatabase) {
     }
 
     // ============================================================
-    // 🆕 v21.1.0 (Шаг 1.6-2): МЕДИА РЕЦЕПТОВ
+    // МЕДИА РЕЦЕПТОВ
     // ============================================================
 
-    /**
-     * Залить файл медиа рецепта на Яндекс.Диск.
-     *
-     * Путь: /BAZA/data/recipe_media/<recipeId>/<fileName>.
-     * При успехе ставит imageSynced = true у RecipeMediaEntity
-     * (id = имя файла без расширения, см. RecipeMediaController).
-     *
-     * @param recipeId  id рецепта (папка на Диске).
-     * @param fileName  имя файла: "<mediaId>.jpg" / "<mediaId>.mp4" / "<mediaId>_thumb.jpg".
-     * @param bytes     содержимое файла.
-     * @param mimeType  "image/jpeg" / "video/mp4" / ... (по умолчанию image/jpeg).
-     * @return true только если файл реально улетел на Диск.
-     */
     suspend fun uploadRecipeMedia(
         recipeId: String,
         fileName: String,
@@ -1102,8 +1133,6 @@ class CatalogRepository(private val db: AppDatabase) {
                     return@withContext false
                 }
 
-                // Ставим imageSynced = true. id медиа = имя файла без расширения
-                // (RecipeMediaController генерирует mediaId == baseName).
                 val mediaId = fileName.substringBeforeLast('.', fileName)
                 val media = db.recipeMediaDao().getMediaById(mediaId)
                 if (media != null) {
@@ -1133,11 +1162,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Скачать файл медиа рецепта с Диска в память.
-     *
-     * @return ByteArray или null при ошибке / отсутствии файла.
-     */
     suspend fun downloadRecipeMediaBytes(recipeId: String, fileName: String): ByteArray? {
         return withContext(Dispatchers.IO) {
             try {
@@ -1193,11 +1217,6 @@ class CatalogRepository(private val db: AppDatabase) {
         }
     }
 
-    /**
-     * Проверить, есть ли файл медиа рецепта на Диске.
-     *
-     * @return true — есть (200), false — нет (404), null — сетевая ошибка/DNS.
-     */
     suspend fun recipeMediaExistsOnDisk(recipeId: String, fileName: String): Boolean? {
         return withContext(Dispatchers.IO) {
             try {
