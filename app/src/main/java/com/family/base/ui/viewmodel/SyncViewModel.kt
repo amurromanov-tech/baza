@@ -26,28 +26,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/**
- * Делегат MainViewModel: вся синхронизация с Яндекс.Диском.
- *
- * 🆕 v20.7.5: uploadUnsyncedImages / uploadUnsyncedFolderImages фильтруют
- * по imageSynced == false / iconSynced == false (а не по imageUrl).
- *
- * 🆕 v21.1.0 (Шаг 1.6-3): медиа рецептов.
- *  - uploadUnsyncedRecipeMedia(): фильтр imageSynced == false + локальный
- *    файл есть → CatalogRepository.uploadRecipeMedia() → imageSynced=true
- *    выставляется внутри репозитория. DNS-abort как у items.
- *  - downloadRecipeMedia(): фильтр imageSynced == true + локального файла
- *    нет → CatalogRepository.downloadRecipeMediaBytes() → сохраняем в
- *    filesDir/recipe_media/<recipeId>/<fileName> (ImageUtils).
- *  - Вызовы в syncWithDisk() рядом с uploadUnsyncedImages / syncImages.
- *  - cleanupConfirmedTombstones: удаление рецептов и их медиа
- *    (локальные файлы + файлы на Диске через api.deleteFile).
- *
- *  mergeData для рецептов/медиа НЕ нужен: они приходят через changelog
- *  (ChangelogParser.applyRecipeEntry / applyRecipeMediaEntry — файл 5/5).
- *  items.json / folders.json / tasks.json / history.json — только для
- *  старых сущностей.
- */
 class SyncViewModel(
     private val db: AppDatabase,
     private val repository: CatalogRepository,
@@ -231,16 +209,35 @@ class SyncViewModel(
                     Logger.log(TAG, "syncWithDisk: outboxPending=0 → ничего не менялось локально")
                 }
 
+                // ============================================================
+                // 🔧 ВСЕГДА СКАЧИВАЕМ ДАННЫЕ С ДИСКА (даже если last_modified совпал),
+                // чтобы обнаружить расхождение в количестве предметов/папок.
+                // mergeData вызывается ТОЛЬКО если:
+                //  - Диск новее (shouldDownload), ИЛИ
+                //  - На Диске БОЛЬШЕ предметов/папок, чем локально (форс-докачка).
+                // ============================================================
+                onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Проверка данных на Диске…"))
+                val tDownload = System.currentTimeMillis()
+                val downloadResult = repository.downloadDataFromDisk()
+                Logger.log(TAG, "TIMING: downloadDataFromDisk took ${System.currentTimeMillis() - tDownload}ms")
+
                 val shouldDownload = (diskLastModified != null) && (diskLastModified > localLastModified)
+                val diskHasMoreItems = downloadResult.items.size > localItemsCount
+                val diskHasMoreFolders = downloadResult.folders.size > localFoldersCount
+                val forceMerge = diskHasMoreItems || diskHasMoreFolders
 
-                if (shouldDownload) {
-                    Logger.log(TAG, "syncWithDisk: disk modified ($diskLastModified) > local ($localLastModified) → download")
+                Logger.log(
+                    TAG,
+                    "syncWithDisk: shouldDownload=$shouldDownload, " +
+                        "diskItems=${downloadResult.items.size} vs localItems=$localItemsCount, " +
+                        "diskFolders=${downloadResult.folders.size} vs localFolders=$localFoldersCount, " +
+                        "forceMerge=$forceMerge"
+                )
 
-                    onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Получение данных…"))
-
-                    val tDownload = System.currentTimeMillis()
-                    val downloadResult = repository.downloadDataFromDisk()
-                    Logger.log(TAG, "TIMING: downloadDataFromDisk took ${System.currentTimeMillis() - tDownload}ms")
+                if (shouldDownload || forceMerge) {
+                    if (forceMerge && !shouldDownload) {
+                        Logger.log(TAG, "syncWithDisk: FORCE merge — на Диске больше данных, чем локально")
+                    }
 
                     onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
 
@@ -283,7 +280,6 @@ class SyncViewModel(
                     uploadUnsyncedFolderImages()
                     Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
 
-                    // 🆕 1.6-3: медиа рецептов.
                     val tUploadRecipeMedia = System.currentTimeMillis()
                     uploadUnsyncedRecipeMedia()
                     Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia took ${System.currentTimeMillis() - tUploadRecipeMedia}ms")
@@ -296,7 +292,6 @@ class SyncViewModel(
                 syncFolderImages()
                 Logger.log(TAG, "TIMING: syncFolderImages took ${System.currentTimeMillis() - tSyncFolderImages}ms")
 
-                // 🆕 1.6-3: скачивание медиа рецептов.
                 val tSyncRecipeMedia = System.currentTimeMillis()
                 syncRecipeMedia()
                 Logger.log(TAG, "TIMING: syncRecipeMedia took ${System.currentTimeMillis() - tSyncRecipeMedia}ms")
@@ -589,19 +584,9 @@ class SyncViewModel(
     }
 
     // ============================================================
-    // 🆕 v21.1.0 (Шаг 1.6-3): МЕДИА РЕЦЕПТОВ — UPLOAD
+    // МЕДИА РЕЦЕПТОВ — UPLOAD
     // ============================================================
 
-    /**
-     * Заливка медиа рецептов на Диск.
-     *
-     * Фильтр: imageSynced == false И локальный файл существует и не пустой.
-     * imageUrl НЕ смотрим (как у items) — imageSynced единая точка правды.
-     *
-     * CatalogRepository.uploadRecipeMedia при успехе ставит imageSynced = true.
-     *
-     * DNS-abort: если upload вернул false при isNetworkAvailable()==false — break.
-     */
     private suspend fun uploadUnsyncedRecipeMedia() {
         val t0 = System.currentTimeMillis()
 
@@ -677,7 +662,6 @@ class SyncViewModel(
                 )
                 if (success) {
                     uploadedCount++
-                    // Также заливаем thumb (для видео), если есть и ещё не залит.
                     val thumbName = media.thumbnailUrl
                     if (!thumbName.isNullOrBlank()) {
                         val thumbFile = ImageUtils.getRecipeThumbFile(appContext, media.recipeId, thumbName)
@@ -837,21 +821,9 @@ class SyncViewModel(
     }
 
     // ============================================================
-    // 🆕 v21.1.0 (Шаг 1.6-3): МЕДИА РЕЦЕПТОВ — DOWNLOAD
+    // МЕДИА РЕЦЕПТОВ — DOWNLOAD
     // ============================================================
 
-    /**
-     * Скачивание медиа рецептов с Диска.
-     *
-     * Фильтр: imageSynced == true (значит, файл точно есть на Диске)
-     * И локального файла нет (или он пустой).
-     *
-     * Скачанный файл кладём в filesDir/recipe_media/<recipeId>/<fileName>
-     * через ImageUtils.ensureRecipeMediaDir.
-     *
-     * Также (для видео) скачиваем thumb, если thumbnailUrl != null
-     * и локального thumb нет.
-     */
     private suspend fun syncRecipeMedia() {
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncRecipeMedia: network blocked, skipping")
@@ -911,7 +883,6 @@ class SyncViewModel(
                 downloadedCount++
                 Logger.log(TAG, "syncRecipeMedia: OK ${media.recipeId}/$fileName (${bytes.size} bytes)")
 
-                // Thumb (для видео).
                 val thumbName = media.thumbnailUrl
                 if (!thumbName.isNullOrBlank()) {
                     val thumbFile = ImageUtils.getRecipeThumbFile(appContext, media.recipeId, thumbName)
@@ -1289,21 +1260,12 @@ class SyncViewModel(
     }
 
     // ============================================================
-    // 🆕 v21.1.0 (Шаг 1.6-3): cleanup рецептов и медиа
-    // (вызывается из SyncManager.cleanup через cleanupConfirmedTombstones)
+    // cleanup рецептов и медиа
     // ============================================================
 
-    /**
-     * Удаляет подтверждённые tombstones рецептов и их медиа старше cutoff.
-     * Вызывается из SyncManager.cleanupConfirmedTombstones (файл 4/5).
-     *
-     * Здесь только подготовка: чистим локальные файлы recipe_media
-     * (файлы на Диске удалит SyncManagerApi.deleteFile в SyncManager).
-     */
     suspend fun cleanupRecipeTombstonesLocal(cutoff: Long) {
         val appContext = appContext()
 
-        // Медиа: удаляем локальные файлы + hard-delete строк
         try {
             val mediaIds = db.recipeMediaDao().getConfirmedMediaOlderThan(cutoff)
             if (mediaIds.isNotEmpty()) {
@@ -1325,7 +1287,6 @@ class SyncViewModel(
             Logger.log(TAG, "cleanupRecipeTombstonesLocal: media error: ${e.message}")
         }
 
-        // Рецепты: удаляем папки recipe_media целиком + hard-delete строк
         try {
             val recipeIds = db.recipeDao().getConfirmedRecipesOlderThan(cutoff)
             if (recipeIds.isNotEmpty()) {
