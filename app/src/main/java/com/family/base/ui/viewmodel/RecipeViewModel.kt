@@ -27,7 +27,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     private var source: String = RecipeEntity.SOURCE_USER
     private var searchQuery: String = ""
-    private var sortNewest: Boolean = true
+    // 🔧 По умолчанию — «🔤 А-Я» (сортировка по алфавиту)
+    private var sortNewest: Boolean = false
     private var currentFolderId: String? = null
     private var loadJob: Job? = null
 
@@ -152,12 +153,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
                 // 5. Имя текущей папки (из foldersList текущего уровня)
                 val currentName: String? = if (folderId != null) {
-                    // 🔧 ФИКС: Ищем имя папки в уже загруженном списке папок текущего уровня.
-                    // Но если мы внутри папки, то foldersList — это её подпапки. 
-                    // Имя самой папки нужно получить либо из репозитория (запрос по ID), 
-                    // либо из стека навигации (мы запоминали имя при клике).
-                    // Чтобы не делать лишний запрос в БД (хотя можно было бы), 
-                    // сделаем запрос в БД, так как getLiveFolderById есть в DAO.
                     try {
                         db.recipeFolderDao().getLiveFolderById(folderId)?.name ?: folderId
                     } catch (e: Exception) {
@@ -203,10 +198,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         if (currentFolderId == folderId) return
-        
-        // Запоминаем, откуда пришли, для корректного возврата
+
         currentFolderId?.let { folderStack.addLast(it) }
-        
+
         currentFolderId = folderId
         searchQuery = ""
         Logger.log(TAG, "openFolder: $folderId (stack size=${folderStack.size})")
@@ -222,19 +216,12 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         loadContent()
     }
 
-    /**
-     * Кнопка «назад»:
-     *  - Если внутри папки — поднимаемся на уровень выше (к родительской папке).
-     *  - Если в корне — возвращаем false (UI вызывает finish()).
-     */
     fun goBack(): Boolean {
         return if (currentFolderId != null) {
             if (folderStack.isNotEmpty()) {
-                // Возвращаемся в предыдущую папку из стека
                 currentFolderId = folderStack.removeLast()
                 Logger.log(TAG, "goBack: restored to parent $currentFolderId (stack size=${folderStack.size})")
             } else {
-                // Стек пуст, значит родитель — корень
                 currentFolderId = null
                 Logger.log(TAG, "goBack: to root")
             }
