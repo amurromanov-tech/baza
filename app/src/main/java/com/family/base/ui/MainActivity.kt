@@ -295,23 +295,6 @@ class MainActivity : AppCompatActivity() {
                         Logger.log(TAG, "onFolderClick: opening GalleryActivity")
                         startActivity(Intent(this, GalleryActivity::class.java))
                     }
-                    // ============================================================
-                    // 🆕 v21.1.0 (Шаг 1.3): СИСТЕМНЫЕ ПАПКИ «РЕЦЕПТЫ»
-                    //
-                    // ВАЖНОЕ ОТЛИЧИЕ (после жалобы пользователя):
-                    //  - Корневая «🍳 Рецепты» — открывается как ОБЫЧНАЯ ПАПКА
-                    //    через navigateToFolder. Так пользователь видит две
-                    //    подпапки «🤖 Рецепты ИИ» и «📝 Мои рецепты» внутри,
-                    //    как раньше. Иначе он попадает в пустой экран
-                    //    с надписью «Рецептов пока нет» и думает, что всё
-                    //    сломалось.
-                    //
-                    //  - Дочерние «🤖 Рецепты ИИ» и «📝 Мои рецепты» —
-                    //    открывают RecipeListActivity с EXTRA_SOURCE.
-                    //
-                    //  Так и задумано: корень «Рецептов» = контейнер,
-                    //  содержимое = RecipeListActivity.
-                    // ============================================================
                     FolderEntity.SYSTEM_KEY_RECIPES -> {
                         Logger.log(TAG, "onFolderClick: navigating into recipes root folder")
                         navigateToFolder(folder)
@@ -825,7 +808,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val editText = EditText(this).apply {
-            hint = "Поиск по названию или штрих-коду..."
+            hint = "Поиск предметов (рецепты — в 📝 Мои рецепты)"
             viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) setText(it) }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
