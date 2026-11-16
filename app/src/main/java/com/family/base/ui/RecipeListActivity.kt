@@ -228,13 +228,22 @@ class RecipeListActivity : AppCompatActivity() {
     }
 
     private fun setupSortChips() {
+        // 🔧 Синхронизируем визуальное состояние чипов с текущей сортировкой ViewModel.
+        // По умолчанию в RecipeViewModel sortNewest = false (А-Я).
+        binding.chipSortNewest.isChecked = viewModel.isSortNewest()
+        binding.chipSortAlphabetical.isChecked = !viewModel.isSortNewest()
+
         binding.chipSortNewest.setOnClickListener {
             if (viewModel.isSortNewest()) return@setOnClickListener
             viewModel.setSort(true)
+            binding.chipSortNewest.isChecked = true
+            binding.chipSortAlphabetical.isChecked = false
         }
         binding.chipSortAlphabetical.setOnClickListener {
             if (!viewModel.isSortNewest()) return@setOnClickListener
             viewModel.setSort(false)
+            binding.chipSortNewest.isChecked = false
+            binding.chipSortAlphabetical.isChecked = true
         }
     }
 
