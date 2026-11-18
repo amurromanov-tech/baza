@@ -3,13 +3,16 @@ package com.family.base.ui
 import android.app.ProgressDialog
 import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +49,9 @@ class RecipeListActivity : AppCompatActivity() {
     private var searchRunnable: Runnable? = null
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
     private var aiProgressDialog: ProgressDialog? = null
+    
+    // 🆕 Для голосового ввода
+    private var currentAiPromptEditText: EditText? = null
 
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -64,6 +70,22 @@ class RecipeListActivity : AppCompatActivity() {
         Logger.log(TAG, "detailLauncher result: code=${result.resultCode}, changed=$changed")
         if (result.resultCode == RESULT_OK && changed) {
             viewModel.loadContent()
+        }
+    }
+
+    // 🆕 Лаунчер для голосового ввода
+    private val speechLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            if (!matches.isNullOrEmpty()) {
+                val spokenText = matches[0]
+                val currentText = currentAiPromptEditText?.text?.toString().orEmpty()
+                val newText = if (currentText.isBlank()) spokenText else "$currentText $spokenText"
+                currentAiPromptEditText?.setText(newText)
+                currentAiPromptEditText?.setSelection(newText.length)
+            }
         }
     }
 
@@ -315,34 +337,49 @@ class RecipeListActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
+    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2 + Голосовой ввод)
     // ============================================================
-    /**
-     * Диалог ввода запроса для AI-генерации рецепта.
-     * Показывает EditText с подсказкой, кнопки "Сгенерировать" и "Отмена".
-     * При нажатии "Сгенерировать" — вызывает viewModel.generateAiRecipe().
-     */
     private fun showAiRecipeDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+        }
+
         val editText = EditText(this).apply {
-            hint = "Например: блины на молоке, паста карбонара, салат Цезарь..."
+            id = View.generateViewId()
+            hint = "Например: блины на молоке, паста карбонара..."
             setSingleLine(false)
             minLines = 2
             maxLines = 4
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = (8 * resources.displayMetrics.density).toInt()
+            }
         }
-        val container = FrameLayout(this).apply {
-            val pad = (16 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad / 2, pad, 0)
-            addView(editText)
+
+        val btnMic = Button(this).apply {
+            text = "🎤"
+            textSize = 20f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            setOnClickListener {
+                startVoiceInput(editText)
+            }
         }
+
+        layout.addView(editText)
+        layout.addView(btnMic)
 
         AlertDialog.Builder(this)
             .setTitle("🤖 Сгенерировать рецепт")
             .setMessage("Опишите, что хотите приготовить:")
-            .setView(container)
+            .setView(layout)
             .setPositiveButton("Сгенерировать") { _, _ ->
                 val prompt = editText.text?.toString()?.trim().orEmpty()
                 if (prompt.isEmpty()) {
-                    Toast.makeText(this, "Введите запрос", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Введите или скажите запрос", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
                 requestAiRecipe(prompt)
@@ -351,11 +388,20 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Запрос генерации рецепта у AI.
-     * Показывает прогресс-диалог, вызывает viewModel.generateAiRecipe().
-     * Результат обрабатывается в observeViewModel() через LiveData generatedAiRecipe.
-     */
+    private fun startVoiceInput(editText: EditText) {
+        currentAiPromptEditText = editText
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Скажите, что хотите приготовить...")
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Голосовой ввод не поддерживается на этом устройстве", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun requestAiRecipe(prompt: String) {
         showAiProgressDialog()
         viewModel.generateAiRecipe(prompt) { error ->
@@ -364,7 +410,6 @@ class RecipeListActivity : AppCompatActivity() {
                 if (error != null) {
                     Toast.makeText(this, error, Toast.LENGTH_LONG).show()
                 }
-                // Успех обрабатывается через observe generatedAiRecipe
             }
         }
     }
@@ -384,10 +429,6 @@ class RecipeListActivity : AppCompatActivity() {
         aiProgressDialog = null
     }
 
-    /**
-     * Открыть RecipeEditActivity с предзаполненным текстом от AI.
-     * Текст передаётся через EXTRA_AI_RECIPE_TEXT.
-     */
     private fun openCreateRecipeWithAiText(aiText: String) {
         Logger.log(TAG, "openCreateRecipeWithAiText: length=${aiText.length}")
         val intent = Intent(this, RecipeEditActivity::class.java).apply {
@@ -648,7 +689,6 @@ class RecipeListActivity : AppCompatActivity() {
             updateUiState(isEmpty = viewModel.isEmpty.value ?: true)
         }
 
-        // 🆕 AI-генерация: observe результата
         viewModel.generatedAiRecipe.observe(this) { recipeText ->
             if (!recipeText.isNullOrBlank()) {
                 Logger.log(TAG, "generatedAiRecipe observer: got text, length=${recipeText.length}")
@@ -657,7 +697,6 @@ class RecipeListActivity : AppCompatActivity() {
             }
         }
 
-        // 🆕 AI-генерация: observe ошибки (на случай, если колбэк не сработал)
         viewModel.aiError.observe(this) { error ->
             if (!error.isNullOrBlank()) {
                 Logger.log(TAG, "aiError observer: $error")
