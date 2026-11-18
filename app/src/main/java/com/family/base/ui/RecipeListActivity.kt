@@ -1,5 +1,6 @@
 package com.family.base.ui
 
+import android.app.ProgressDialog
 import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
@@ -32,27 +33,19 @@ class RecipeListActivity : AppCompatActivity() {
 
     companion object {
         const val TAG = "RecipeListActivity"
-
         const val EXTRA_SOURCE = "recipe_source"
-
         const val EXTRA_SOURCE_ALL = "all"
-
         private const val SEARCH_DEBOUNCE_MS = 250L
     }
 
     private lateinit var binding: ActivityRecipeListBinding
-
     private val viewModel: RecipeViewModel by viewModels()
-
     private var source: String = EXTRA_SOURCE_ALL
-
     private lateinit var adapter: RecipeCatalogAdapter
-
     private var searchVisible = false
-
     private var searchRunnable: Runnable? = null
-
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
+    private var aiProgressDialog: ProgressDialog? = null
 
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -77,7 +70,6 @@ class RecipeListActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.log(TAG, "=== RecipeListActivity onCreate START ===")
-
         try {
             binding = ActivityRecipeListBinding.inflate(layoutInflater)
             setContentView(binding.root)
@@ -108,12 +100,10 @@ class RecipeListActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
-
         binding.toolbar.setNavigationOnClickListener {
             Logger.log(TAG, "toolbar up clicked")
             handleBack()
         }
-
         updateTitle(null)
     }
 
@@ -146,7 +136,6 @@ class RecipeListActivity : AppCompatActivity() {
                 showRecipeActionsDialog(recipe)
             }
         )
-
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
         binding.rvRecipes.adapter = adapter
     }
@@ -159,15 +148,12 @@ class RecipeListActivity : AppCompatActivity() {
     }
 
     private fun setupSearch() {
-        // 🔧 В корне «🍳 Рецепты» (source = all) поиск не нужен —
-        // там только две системные папки. Скрываем кнопку и строку поиска.
         if (source == EXTRA_SOURCE_ALL) {
             binding.btnSearch.visibility = View.GONE
             binding.searchLayout.visibility = View.GONE
             binding.btnSearch.setOnClickListener(null)
             return
         }
-
         binding.etSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -175,7 +161,6 @@ class RecipeListActivity : AppCompatActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-
         binding.etSearch.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 performSearchNow(binding.etSearch.text?.toString() ?: "")
@@ -185,7 +170,6 @@ class RecipeListActivity : AppCompatActivity() {
                 false
             }
         }
-
         binding.btnSearch.setOnClickListener {
             toggleSearch()
         }
@@ -239,7 +223,6 @@ class RecipeListActivity : AppCompatActivity() {
     private fun setupSortChips() {
         binding.chipSortNewest.isChecked = viewModel.isSortNewest()
         binding.chipSortAlphabetical.isChecked = !viewModel.isSortNewest()
-
         binding.chipSortNewest.setOnClickListener {
             if (viewModel.isSortNewest()) return@setOnClickListener
             viewModel.setSort(true)
@@ -256,8 +239,10 @@ class RecipeListActivity : AppCompatActivity() {
 
     private fun setupEmptyState() {
         binding.emptyState.setOnClickListener {
-            if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
+            if (source == RecipeEntity.SOURCE_USER) {
                 openCreateRecipe()
+            } else if (source == RecipeEntity.SOURCE_AI) {
+                showAiRecipeDialog()
             }
         }
         updateEmptyStateText(null)
@@ -268,7 +253,7 @@ class RecipeListActivity : AppCompatActivity() {
             source == RecipeEntity.SOURCE_AI -> Triple(
                 "🤖",
                 "Рецептов ИИ пока нет",
-                "Скажи, что хочешь приготовить, — и ИИ предложит рецепт.\n(Появится на Шаге 2)"
+                "Нажми «+» и скажи, что хочешь приготовить — ИИ предложит рецепт."
             )
             folderName != null -> Triple(
                 "📁",
@@ -286,14 +271,18 @@ class RecipeListActivity : AppCompatActivity() {
                 "Загляни в «🤖 Рецепты ИИ» или «📝 Мои рецепты»."
             )
         }
-
         binding.tvEmptyIcon.text = icon
         binding.tvEmptyTitle.text = title
         binding.tvEmptySubtitle.text = subtitle
     }
 
     private fun setupFabs() {
-        if (source == RecipeEntity.SOURCE_AI || source == RecipeEntity.SOURCE_USER) {
+        if (source == RecipeEntity.SOURCE_AI) {
+            binding.fabAddRecipe.visibility = View.VISIBLE
+            binding.fabAddRecipe.setOnClickListener {
+                showAiRecipeDialog()
+            }
+        } else if (source == RecipeEntity.SOURCE_USER) {
             binding.fabAddRecipe.visibility = View.VISIBLE
             binding.fabAddRecipe.setOnClickListener {
                 openCreateRecipe()
@@ -325,18 +314,99 @@ class RecipeListActivity : AppCompatActivity() {
         editLauncher.launch(intent)
     }
 
-    private fun showCreateFolderDialog() {
+    // ============================================================
+    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
+    // ============================================================
+    /**
+     * Диалог ввода запроса для AI-генерации рецепта.
+     * Показывает EditText с подсказкой, кнопки "Сгенерировать" и "Отмена".
+     * При нажатии "Сгенерировать" — вызывает viewModel.generateAiRecipe().
+     */
+    private fun showAiRecipeDialog() {
         val editText = EditText(this).apply {
-            hint = "Название папки"
-            setSingleLine(true)
+            hint = "Например: блины на молоке, паста карбонара, салат Цезарь..."
+            setSingleLine(false)
+            minLines = 2
+            maxLines = 4
         }
-
         val container = FrameLayout(this).apply {
             val pad = (16 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad / 2, pad, 0)
             addView(editText)
         }
 
+        AlertDialog.Builder(this)
+            .setTitle("🤖 Сгенерировать рецепт")
+            .setMessage("Опишите, что хотите приготовить:")
+            .setView(container)
+            .setPositiveButton("Сгенерировать") { _, _ ->
+                val prompt = editText.text?.toString()?.trim().orEmpty()
+                if (prompt.isEmpty()) {
+                    Toast.makeText(this, "Введите запрос", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                requestAiRecipe(prompt)
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    /**
+     * Запрос генерации рецепта у AI.
+     * Показывает прогресс-диалог, вызывает viewModel.generateAiRecipe().
+     * Результат обрабатывается в observeViewModel() через LiveData generatedAiRecipe.
+     */
+    private fun requestAiRecipe(prompt: String) {
+        showAiProgressDialog()
+        viewModel.generateAiRecipe(prompt) { error ->
+            runOnUiThread {
+                dismissAiProgressDialog()
+                if (error != null) {
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                }
+                // Успех обрабатывается через observe generatedAiRecipe
+            }
+        }
+    }
+
+    private fun showAiProgressDialog() {
+        dismissAiProgressDialog()
+        aiProgressDialog = ProgressDialog(this).apply {
+            setMessage("🤖 ИИ генерирует рецепт...")
+            setCancelable(false)
+            setProgressStyle(ProgressDialog.STYLE_SPINNER)
+            show()
+        }
+    }
+
+    private fun dismissAiProgressDialog() {
+        aiProgressDialog?.dismiss()
+        aiProgressDialog = null
+    }
+
+    /**
+     * Открыть RecipeEditActivity с предзаполненным текстом от AI.
+     * Текст передаётся через EXTRA_AI_RECIPE_TEXT.
+     */
+    private fun openCreateRecipeWithAiText(aiText: String) {
+        Logger.log(TAG, "openCreateRecipeWithAiText: length=${aiText.length}")
+        val intent = Intent(this, RecipeEditActivity::class.java).apply {
+            putExtra(RecipeEditActivity.EXTRA_SOURCE, RecipeEntity.SOURCE_AI)
+            putExtra(RecipeEditActivity.EXTRA_AI_RECIPE_TEXT, aiText)
+        }
+        editLauncher.launch(intent)
+    }
+
+    private fun showCreateFolderDialog() {
+        val editText = EditText(this).apply {
+            hint = "Название папки"
+            setSingleLine(true)
+        }
+        val container = FrameLayout(this).apply {
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
         AlertDialog.Builder(this)
             .setTitle("📁 Новая папка")
             .setView(container)
@@ -363,7 +433,6 @@ class RecipeListActivity : AppCompatActivity() {
 
     private fun showFolderActionsDialog(folder: RecipeFolderEntity) {
         val options = arrayOf("✏️ Переименовать", "🗑️ Удалить папку")
-
         AlertDialog.Builder(this)
             .setTitle(folder.name)
             .setItems(options) { _, which ->
@@ -382,13 +451,11 @@ class RecipeListActivity : AppCompatActivity() {
             setSelection(folder.name.length)
             setSingleLine(true)
         }
-
         val container = FrameLayout(this).apply {
             val pad = (16 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad / 2, pad, 0)
             addView(editText)
         }
-
         AlertDialog.Builder(this)
             .setTitle("✏️ Переименовать папку")
             .setView(container)
@@ -440,9 +507,7 @@ class RecipeListActivity : AppCompatActivity() {
             Toast.makeText(this, "У рецептов ИИ нет папок", Toast.LENGTH_SHORT).show()
             return
         }
-
         val options = arrayOf("📁 Переместить в папку…")
-
         AlertDialog.Builder(this)
             .setTitle(recipe.title)
             .setItems(options) { _, which ->
@@ -467,7 +532,6 @@ class RecipeListActivity : AppCompatActivity() {
                 Toast.makeText(this@RecipeListActivity, "Не удалось загрузить папки", Toast.LENGTH_SHORT).show()
                 return@launch
             }
-
             val ordered = buildFolderHierarchy(folders)
             if (ordered.isEmpty()) {
                 Toast.makeText(
@@ -477,20 +541,16 @@ class RecipeListActivity : AppCompatActivity() {
                 ).show()
                 return@launch
             }
-
             val labels = ArrayList<String>(ordered.size + 1)
             val ids = ArrayList<String?>(ordered.size + 1)
-
             labels.add("📁 Без папки (корень)")
             ids.add(null)
-
             ordered.forEach { (folder, depth) ->
                 val indent = if (depth > 0) "— ".repeat(depth) else ""
                 val currentMark = if (folder.id == recipe.folderId) " •" else ""
                 labels.add("$indent${folder.name}$currentMark")
                 ids.add(folder.id)
             }
-
             AlertDialog.Builder(this@RecipeListActivity)
                 .setTitle("📁 Переместить в папку")
                 .setItems(labels.toTypedArray()) { _, which ->
@@ -533,7 +593,6 @@ class RecipeListActivity : AppCompatActivity() {
     ): List<Pair<RecipeFolderEntity, Int>> {
         val byParent = all.groupBy { it.parentId }
         val result = ArrayList<Pair<RecipeFolderEntity, Int>>(all.size)
-
         fun walk(parentId: String?, depth: Int) {
             val children = byParent[parentId] ?: return
             children.forEach { folder ->
@@ -541,7 +600,6 @@ class RecipeListActivity : AppCompatActivity() {
                 walk(folder.id, depth + 1)
             }
         }
-
         walk(null, 0)
         return result
     }
@@ -568,42 +626,53 @@ class RecipeListActivity : AppCompatActivity() {
             Logger.log(TAG, "folders observer: count=${folders.size}")
             rebuildList()
         }
-
         viewModel.folderRecipeCounts.observe(this) { counts ->
             Logger.log(TAG, "folderRecipeCounts observer: size=${counts.size}")
             folderRecipeCounts = counts
             rebuildList()
         }
-
         viewModel.recipes.observe(this) { recipes ->
             Logger.log(TAG, "recipes observer: count=${recipes.size}")
             rebuildList()
         }
-
         viewModel.currentFolderName.observe(this) { name ->
             Logger.log(TAG, "currentFolderName observer: '$name'")
             updateTitle(name)
             updateEmptyStateText(name)
         }
-
         viewModel.isEmpty.observe(this) { empty ->
             updateUiState(isEmpty = empty)
         }
-
         viewModel.isLoading.observe(this) { loading ->
             Logger.log(TAG, "isLoading: $loading")
             updateUiState(isEmpty = viewModel.isEmpty.value ?: true)
+        }
+
+        // 🆕 AI-генерация: observe результата
+        viewModel.generatedAiRecipe.observe(this) { recipeText ->
+            if (!recipeText.isNullOrBlank()) {
+                Logger.log(TAG, "generatedAiRecipe observer: got text, length=${recipeText.length}")
+                viewModel.clearAiState()
+                openCreateRecipeWithAiText(recipeText)
+            }
+        }
+
+        // 🆕 AI-генерация: observe ошибки (на случай, если колбэк не сработал)
+        viewModel.aiError.observe(this) { error ->
+            if (!error.isNullOrBlank()) {
+                Logger.log(TAG, "aiError observer: $error")
+                // Ошибка уже показана в колбэке requestAiRecipe, но на всякий случай
+                // viewModel.clearAiState() // не очищаем здесь, чтобы колбэк тоже сработал
+            }
         }
     }
 
     private fun rebuildList() {
         val folders = viewModel.folders.value ?: emptyList()
         val recipes = viewModel.recipes.value ?: emptyList()
-
         val list = ArrayList<RecipeCatalogAdapter.RecipeCatalogItem>(
             folders.size + recipes.size
         )
-
         folders.forEach { folder ->
             list.add(
                 RecipeCatalogAdapter.RecipeCatalogItem.Folder(
@@ -612,7 +681,6 @@ class RecipeListActivity : AppCompatActivity() {
                 )
             )
         }
-
         recipes.forEach { item ->
             list.add(
                 RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
@@ -621,18 +689,21 @@ class RecipeListActivity : AppCompatActivity() {
                 )
             )
         }
-
         adapter.submitList(list)
     }
 
     private fun updateUiState(isEmpty: Boolean) {
         val loading = viewModel.isLoading.value ?: false
         val hasItems = !isEmpty
-
         binding.rvRecipes.visibility = if (hasItems) View.VISIBLE else View.GONE
         binding.emptyState.visibility =
             if (isEmpty && !loading) View.VISIBLE else View.GONE
         binding.sortChipsScroll.visibility =
             if (hasItems) View.VISIBLE else View.GONE
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        dismissAiProgressDialog()
     }
 }
