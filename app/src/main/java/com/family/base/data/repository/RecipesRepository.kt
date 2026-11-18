@@ -1,7 +1,7 @@
 package com.family.base.data.repository
 
 import android.content.Context
-import com.family.base.AI_RECIPE_PROXY_URL
+import com.family.base.Config.AI_RECIPE_PROXY_URL
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.OutboxHelper
 import com.family.base.data.local.entity.FolderEntity
@@ -22,45 +22,7 @@ import java.util.concurrent.TimeUnit
 
 /**
 🆕 v21.1.0 (миграция 21→22): репозиторий для рецептов.
-Две зоны ответственности:
-СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «Рецепты».
-Метод ensureRecipesFolders(currentUser) вызывается из MainViewModel
-при старте (по аналогии с ensureGalleryFolder / ensureSystemFolder).
-Создаёт три папки, если их ещё нет:
- - «🍳 Рецепты»       (systemKey = "recipes",    parentId = null)
- - «🤖 Рецепты ИИ»    (systemKey = "recipes_ai", parentId = id «Рецептов»)
- - «📝 Мои рецепты»   (systemKey = "recipes_my", parentId = id «Рецептов»)
-Идемпотентно: повторный вызов ничего не ломает. Если «Рецепты» есть,
-а дочерней не хватает (например, пользователь как-то ухитрился её
-удалить — хотя isSystem защищает), досоздаёт отсутствующую.
-ВАЖНО: папки создаются с фиксированными id (константы из FolderEntity),
-чтобы на всех устройствах это были одни и те же записи, и синк
-через folders.json не плодил дубликаты.
-CRUD РЕЦЕПТОВ.
-Обёртки над RecipeDao / RecipeMediaDao, единая точка правды
-для записи в outbox (changelog).
-Стиль — как у CatalogRepository:
-- createRecipe / updateRecipe / deleteRecipe — с outbox;
-- addMedia / deleteMedia — с outbox;
-- никакой работы с файлами на Диске здесь нет — это делает
-  отдельный слой (SyncManager), потому что файлы рецептов
-  грузятся отдельной очередью uploadUnsyncedRecipeMedia.
-🆕 v21.1.0 (Шаг 1.5-2): addMedia получил параметр mediaId
-(по умолчанию null → сгенерируется UUID внутри). Это нужно, чтобы
-id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
-(<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
-Старые вызовы (без mediaId) продолжают работать как раньше.
-🆕 v21.1.0+ (Шаг 1.7-2, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
-Добавлен блок «5. ПАПКИ РЕЦЕПТОВ» — CRUD папок (createFolder,
-renameFolder, deleteFolder с проверкой «не пуста»), навигация
-(getFolders(parentId)), перемещение рецептов (moveRecipeToFolder),
-чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
-Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
-У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
-🆕 Шаг 2: AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ.
-Добавлен блок «6. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ» — метод generateAiRecipe(prompt)
-отправляет запрос на Cloudflare Worker AI-прокси (URL в Config.AI_RECIPE_PROXY_URL),
-получает сгенерированный текст рецепта. Ключ API надёжно спрятан на сервере.
+...
 */
 class RecipesRepository(
     private val db: AppDatabase,
@@ -71,13 +33,6 @@ class RecipesRepository(
     // ============================================================
     // 1. СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «РЕЦЕПТЫ»
     // ============================================================
-    /**
-     * Гарантирует, что три системные папки «Рецептов» существуют.
-     * Вызывается из MainViewModel.checkFirstLaunch() — один раз при старте
-     * (после ensureGalleryFolder). Идемпотентно.
-     * @param currentUser имя текущего пользователя (AppUser.name).
-     * @return Pair(создано ли что-то, id корневой папки «Рецепты»).
-     */
     suspend fun ensureRecipesFolders(currentUser: String): Pair<Boolean, String?> =
         withContext(Dispatchers.IO) {
             try {
@@ -107,8 +62,6 @@ class RecipesRepository(
                     Logger.log(TAG, "ensureRecipesFolders: created root '${root.name}' (id=${root.id})")
                 } else {
                     rootId = existingRoot.id
-                    // На всякий случай выставим флаг isSystem, если запись
-                    // когда-то была создана без него (защита от ручного вмешательства).
                     if (!existingRoot.isSystem || existingRoot.systemKey != FolderEntity.SYSTEM_KEY_RECIPES) {
                         val fixed = existingRoot.copy(
                             isSystem = true,
@@ -142,8 +95,6 @@ class RecipesRepository(
                     created = true
                     Logger.log(TAG, "ensureRecipesFolders: created '${aiFolder.name}' (id=${aiFolder.id}, parent=$rootId)")
                 } else if (existingAi.parentId != rootId) {
-                    // Если по какой-то причине дочерняя папка оказалась
-                    // в другом месте — вернём её под «Рецепты».
                     val fixed = existingAi.copy(parentId = rootId)
                     db.folderDao().updateFolder(fixed)
                     Logger.log(TAG, "ensureRecipesFolders: re-parented '${existingAi.name}' → $rootId")
@@ -185,16 +136,6 @@ class RecipesRepository(
     // ============================================================
     // 2. РЕЦЕПТЫ — CRUD
     // ============================================================
-    /**
-     * Создать рецепт.
-     * Пишет в outbox как ACTION_CREATE и ставит syncStatus = 'pending',
-     * чтобы синк подхватил. Источник (source) задаёт вызывающий:
-     * RecipeEntity.SOURCE_AI   — для «Рецептов ИИ»;
-     * RecipeEntity.SOURCE_USER — для «Моих рецептов».
-     * 🆕 Шаг 1.7-2: параметр folderId — папка рецепта (null = корень).
-     * Для «Рецептов ИИ» всегда null (у ИИ-рецептов папок нет).
-     * @return созданный RecipeEntity (с реальным id), либо null при ошибке.
-     */
     suspend fun createRecipe(
         title: String,
         description: String?,
@@ -235,10 +176,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Обновить рецепт (название / описание).
-     * Пишет в outbox как ACTION_UPDATE.
-     */
     suspend fun updateRecipe(
         recipeId: String,
         newTitle: String,
@@ -280,17 +217,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Удалить рецепт (tombstone).
-     * Медиа рецепта тоже помечаются tombstone (markAllByRecipeDeleted),
-     * чтобы каждое удаление файла уехало отдельной записью в changelog.
-     * ⚠️ Физическое удаление файлов с Диска — НЕ здесь. Это сделает
-     * cleanupOldRecipeTombstones через год, вместе с hardDelete.
-     * Локальные файлы (filesDir/recipe_media/<recipeId>/) тоже удаляются
-     * не сразу — при hard-delete в cleanup (Шаг 1.6).
-     * Права: удалять рецепт может Алексей (любой) или автор (свой) —
-     * проверка в UI/ViewModel, здесь только техническая операция.
-     */
     suspend fun deleteRecipe(recipeId: String, currentUser: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
@@ -314,7 +240,6 @@ class RecipesRepository(
                     Logger.log(TAG, "deleteRecipe: outbox log error: ${e.message}", e)
                 }
 
-                // Помечаем всё медиа рецепта tombstone (отдельные записи в outbox).
                 val affected = db.recipeMediaDao().markAllByRecipeDeleted(recipeId, now, currentUser)
                 if (affected > 0) {
                     val allRaw = db.recipeMediaDao().getAllRaw().filter { it.recipeId == recipeId && it.isDeleted }
@@ -339,24 +264,6 @@ class RecipesRepository(
     // ============================================================
     // 3. МЕДИА — CRUD
     // ============================================================
-    /**
-     * Добавить медиа (фото или видео) к рецепту.
-     * Файл УЖЕ должен быть сохранён локально до вызова этого метода
-     * (через RecipeMediaController). Здесь только запись в БД + outbox.
-     * 🆕 Шаг 1.5-2: параметр mediaId.
-     * Если передан (RecipeMediaController сгенерировал UUID) — используем его
-     * как id строки recipe_media. Тогда id == имя файла (без расширения),
-     * что упрощает синк на Шаге 1.6.
-     * Если null (старые вызовы) — генерируем UUID внутри, как раньше.
-     * @param recipeId   id рецепта.
-     * @param mediaType  RecipeMediaEntity.TYPE_PHOTO / TYPE_VIDEO.
-     * @param localName  имя локального файла (например "abc-123.jpg").
-     * @param thumbName  имя файла превью (для видео) или null.
-     * @param mimeType   MIME (например "video/mp4").
-     * @param currentUser имя пользователя.
-     * @param mediaId    🆕 id для строки recipe_media (null → сгенерируется).
-     * @return созданный RecipeMediaEntity, либо null при ошибке.
-     */
     suspend fun addMedia(
         recipeId: String,
         mediaType: String,
@@ -412,13 +319,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Удалить одно медиа (tombstone).
-     * Файл с Диска удалится позже — через cleanup (Шаг 1.6).
-     * Локальный файл (filesDir/recipe_media/...) удаляется вызывающим
-     * (RecipeEditActivity / RecipeDetailActivity) через RecipeMediaController,
-     * чтобы UI сразу видел исчезновение.
-     */
     suspend fun deleteMedia(mediaId: String, currentUser: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
@@ -505,11 +405,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Всё медиа рецепта (фото + видео), по orderIndex.
-     * Нужно для экрана редактирования (Шаг 1.5-2) — чтобы показать
-     * уже добавленные файлы в одном RecyclerView.
-     */
     suspend fun getAllMedia(recipeId: String): List<RecipeMediaEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -532,20 +427,7 @@ class RecipesRepository(
 
     // ============================================================
     // 🆕 5. ПАПКИ РЕЦЕПТОВ (Шаг 1.7-2, миграция 22→23)
-    //
-    //  Папки есть только у «Моих рецептов» (source = "user").
-    //  У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
-    //
-    //  Все методы пишут в outbox (ENTITY_RECIPE_FOLDER), чтобы синк
-    //  через changelog разносил изменения по устройствам.
     // ============================================================
-    /**
-     * Создать папку рецептов.
-     * @param name      название (обрезается, пустое недопустимо).
-     * @param parentId  id родительской папки (null = корень «Моих рецептов»).
-     * @param currentUser имя текущего пользователя.
-     * @return созданный RecipeFolderEntity либо null при ошибке/пустом имени.
-     */
     suspend fun createFolder(
         name: String,
         parentId: String?,
@@ -558,7 +440,6 @@ class RecipesRepository(
                 return@withContext null
             }
 
-            // Если указан родитель — проверим, что он существует и жив.
             if (parentId != null) {
                 val parent = db.recipeFolderDao().getLiveFolderById(parentId)
                 if (parent == null) {
@@ -597,10 +478,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Переименовать папку рецептов.
-     * Пишет в outbox как ACTION_UPDATE.
-     */
     suspend fun renameFolder(
         folderId: String,
         newName: String,
@@ -650,13 +527,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Удалить папку рецептов (tombstone).
-     * ⚠️ Запрещено, пока в папке есть рецепты или дочерние папки.
-     * Проверяем оба условия. Если не пуста — возвращаем false
-     * с записью в лог, UI покажет сообщение.
-     * @return true — удалено (tombstone), false — нельзя/ошибка.
-     */
     suspend fun deleteFolder(folderId: String, currentUser: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
@@ -670,7 +540,6 @@ class RecipesRepository(
                     return@withContext false
                 }
 
-                // Проверка «не пуста»: рецепты + дочерние папки.
                 val recipesCount = db.recipeDao().countByFolder(folderId)
                 val childrenCount = db.recipeFolderDao().countChildren(folderId)
                 if (recipesCount > 0 || childrenCount > 0) {
@@ -699,13 +568,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Переместить рецепт в папку (или в корень, если folderId = null).
-     * Обновляет folderId, updatedAt/By и ставит syncStatus = 'pending'.
-     * Пишет в outbox как ACTION_UPDATE.
-     * Для «Рецептов ИИ» вызывать не нужно (там папок нет).
-     * @return true — перемещено/уже там, false — ошибка.
-     */
     suspend fun moveRecipeToFolder(
         recipeId: String,
         folderId: String?,
@@ -726,7 +588,6 @@ class RecipesRepository(
                 return@withContext true
             }
 
-            // Если указана папка — проверим, что она существует и жива.
             if (folderId != null) {
                 val folder = db.recipeFolderDao().getLiveFolderById(folderId)
                 if (folder == null) {
@@ -753,11 +614,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * Папки указанного уровня (родителя).
-     * parentId = null → корневые папки «Моих рецептов».
-     * sortNewest = true → по createdAt DESC, false → по name COLLATE NOCASE ASC.
-     */
     suspend fun getFolders(parentId: String?, sortNewest: Boolean): List<RecipeFolderEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -769,10 +625,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Все «живые» папки рецептов (без фильтра по родителю).
-     * Для выпадающего списка «Папка» в RecipeEditActivity (Шаг 1.7-4).
-     */
     suspend fun getAllFolders(): List<RecipeFolderEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -783,10 +635,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Рецепты в указанной папке.
-     * sortNewest = true → по createdAt DESC, false → по title COLLATE NOCASE ASC.
-     */
     suspend fun getRecipesInFolder(folderId: String, sortNewest: Boolean): List<RecipeEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -798,12 +646,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Рецепты БЕЗ папки (в корне «Моих рецептов») по source.
-     * sortNewest = true → по createdAt DESC, false → по title COLLATE NOCASE ASC.
-     * Для «Моих рецептов»: source = "user", folderId IS NULL.
-     * Для «Рецептов ИИ»: source = "ai", folderId IS NULL (папок нет).
-     */
     suspend fun getRootRecipes(source: String, sortNewest: Boolean): List<RecipeEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -815,10 +657,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Поиск рецептов в корне «Моих рецептов» (folderId IS NULL) по source.
-     * Если query пустой — ведёт себя как getRootRecipes(source, true).
-     */
     suspend fun searchRootRecipes(source: String, query: String): List<RecipeEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -830,10 +668,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * Поиск рецептов внутри папки.
-     * Если query пустой — ведёт себя как getRecipesInFolder(folderId, true).
-     */
     suspend fun searchInFolder(folderId: String, query: String): List<RecipeEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -848,17 +682,11 @@ class RecipesRepository(
     // ============================================================
     // 🆕 6. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
     // ============================================================
-    /**
-     * Генерация рецепта через AI-прокси Cloudflare Worker.
-     *
-     * @param prompt запрос пользователя (например, "Рецепт блинов на молоке").
-     * @return сгенерированный текст рецепта или null в случае ошибки.
-     */
     suspend fun generateAiRecipe(prompt: String): String? = withContext(Dispatchers.IO) {
         try {
             val client = OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS) // AI может думать дольше
+                .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)
                 .build()
 
