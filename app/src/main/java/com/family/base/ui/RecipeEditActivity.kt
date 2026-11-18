@@ -27,48 +27,54 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 🆕 v21.1.0 (Шаг 1.4a + 1.5-2): создание / редактирование рецепта.
- *
- * 🆕 Шаг 1.7-4: ПАПКА ПРИ СОЗДАНИИ.
- *  - При создании рецепта из открытой папки RecipeListActivity передаёт
- *    EXTRA_FOLDER_ID — новый рецепт сразу попадает в эту папку.
- *  - Для «Рецептов ИИ» (source = "ai") EXTRA_FOLDER_ID игнорируется
- *    (у ИИ папок нет).
- *  - Блок «Папка» в этом экране НЕ показываем (решение пользователя:
- *    перемещение — через долгий клик в RecipeListActivity, Шаг 1.7-4).
- *
- * Режимы:
- *  - Создание: extra EXTRA_RECIPE_ID НЕ передан.
- *              extra EXTRA_SOURCE обязателен: "ai" или "user".
- *  - Редактирование: extra EXTRA_RECIPE_ID передан.
- *              extra EXTRA_SOURCE игнорируется — берётся из рецепта.
- *
- * Поля:
- *  - Название: обязательно, обрезается trim(), не может быть пустым.
- *  - Описание: необязательно, многострочное. Пустая строка → null.
- *
- * МЕДИА (🆕 Шаг 1.5-2):
- *  - В режиме РЕДАКТИРОВАНИЯ показываем блок «Фото и видео»:
- *    горизонтальный список уже добавленных файлов + кнопки
- *    «📷 Добавить фото» / «🎬 Добавить видео».
- *  - В режиме СОЗДАНИЯ медиа-блок скрыт с подсказкой
- *    «Сначала сохраните рецепт…».
- *  - ВСЁ РАБОТАЕТ ОФЛАЙН: файлы пишутся в filesDir/recipe_media/<recipeId>/.
- */
+🆕 v21.1.0 (Шаг 1.4a + 1.5-2): создание / редактирование рецепта.
+🆕 Шаг 1.7-4: ПАПКА ПРИ СОЗДАНИИ.
+При создании рецепта из открытой папки RecipeListActivity передаёт
+EXTRA_FOLDER_ID — новый рецепт сразу попадает в эту папку.
+Для «Рецептов ИИ» (source = "ai") EXTRA_FOLDER_ID игнорируется
+(у ИИ папок нет).
+Блок «Папка» в этом экране НЕ показываем (решение пользователя:
+перемещение — через долгий клик в RecipeListActivity, Шаг 1.7-4).
+🆕 Шаг 2: AI-ГЕНЕРАЦИЯ.
+При создании рецепта из «🤖 Рецепты ИИ» RecipeListActivity передаёт
+EXTRA_AI_RECIPE_TEXT — сгенерированный ИИ текст рецепта.
+Он автоматически заполняет поле описания. Пользователь может
+отредактировать текст и ввести название перед сохранением.
+Режимы:
+Создание: extra EXTRA_RECIPE_ID НЕ передан.
+         extra EXTRA_SOURCE обязателен: "ai" или "user".
+         для source="ai" опционально EXTRA_AI_RECIPE_TEXT.
+Редактирование: extra EXTRA_RECIPE_ID передан.
+         extra EXTRA_SOURCE игнорируется — берётся из рецепта.
+Поля:
+Название: обязательно, обрезается trim(), не может быть пустым.
+Описание: необязательно, многострочное. Пустая строка → null.
+МЕДИА (🆕 Шаг 1.5-2):
+В режиме РЕДАКТИРОВАНИЯ показываем блок «Фото и видео»:
+горизонтальный список уже добавленных файлов + кнопки
+«📷 Добавить фото» / «🎬 Добавить видео».
+В режиме СОЗДАНИЯ медиа-блок скрыт с подсказкой
+«Сначала сохраните рецепт…».
+ВСЁ РАБОТАЕТ ОФЛАЙН: файлы пишутся в filesDir/recipe_media/<recipeId>/.
+*/
 class RecipeEditActivity : AppCompatActivity() {
 
     companion object {
         const val TAG = "RecipeEditActivity"
-
         const val EXTRA_RECIPE_ID = "recipe_id"
         const val EXTRA_SOURCE = "recipe_source"
-
         /**
          * 🆕 Шаг 1.7-4: id папки, в которую нужно положить новый рецепт.
          * Передаётся из RecipeListActivity, если создание идёт из открытой папки.
          * Для source = "ai" игнорируется.
          */
         const val EXTRA_FOLDER_ID = "recipe_folder_id"
+        /**
+         * 🆕 Шаг 2: текст рецепта, сгенерированный ИИ.
+         * Передаётся из RecipeListActivity при создании рецепта в «🤖 Рецепты ИИ».
+         * Автоматически заполняет поле описания.
+         */
+        const val EXTRA_AI_RECIPE_TEXT = "ai_recipe_text"
     }
 
     private lateinit var binding: ActivityRecipeEditBinding
@@ -82,10 +88,16 @@ class RecipeEditActivity : AppCompatActivity() {
     private var source: String = RecipeEntity.SOURCE_USER
 
     /**
-     * 🆕 Шаг 1.7-4: папка, в которую нужно положить новый рецепт.
-     * null — корень «Моих рецептов». Для source = "ai" игнорируется.
-     */
+    🆕 Шаг 1.7-4: папка, в которую нужно положить новый рецепт.
+    null — корень «Моих рецептов». Для source = "ai" игнорируется.
+    */
     private var targetFolderId: String? = null
+
+    /**
+     * 🆕 Шаг 2: текст рецепта от ИИ.
+     * Если не null — заполнит поле описания при создании.
+     */
+    private var aiRecipeText: String? = null
 
     /** Текущий пользователь (для createdBy / audit). */
     private val currentUser: String
@@ -102,7 +114,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // LAUNCHERS
     // ============================================================
-
     private val pickPhotoLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -126,7 +137,6 @@ class RecipeEditActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.log(TAG, "=== RecipeEditActivity onCreate START ===")
-
         try {
             binding = ActivityRecipeEditBinding.inflate(layoutInflater)
             setContentView(binding.root)
@@ -146,6 +156,9 @@ class RecipeEditActivity : AppCompatActivity() {
         // 🆕 Шаг 1.7-4: папка для нового рецепта (только для "user").
         val extraFolderId = intent.getStringExtra(EXTRA_FOLDER_ID)
 
+        // 🆕 Шаг 2: текст рецепта от ИИ (только для "ai").
+        aiRecipeText = intent.getStringExtra(EXTRA_AI_RECIPE_TEXT)
+
         if (editingRecipeId == null) {
             if (extraSource != RecipeEntity.SOURCE_AI && extraSource != RecipeEntity.SOURCE_USER) {
                 Logger.log(TAG, "onCreate: CREATE without valid source (got=$extraSource), finish")
@@ -158,12 +171,13 @@ class RecipeEditActivity : AppCompatActivity() {
             targetFolderId = if (source == RecipeEntity.SOURCE_USER) extraFolderId else null
             Logger.log(
                 TAG,
-                "onCreate: CREATE mode, source=$source, targetFolderId=$targetFolderId"
+                "onCreate: CREATE mode, source=$source, targetFolderId=$targetFolderId, aiRecipeText=${aiRecipeText?.length ?: 0} chars"
             )
         } else {
             Logger.log(TAG, "onCreate: EDIT mode, recipeId=$editingRecipeId")
             // В режиме редактирования папку не меняем — она уже есть у рецепта.
             targetFolderId = null
+            aiRecipeText = null // при редактировании AI-текст не используется
         }
 
         setupToolbar()
@@ -173,25 +187,27 @@ class RecipeEditActivity : AppCompatActivity() {
         if (editingRecipeId != null) {
             loadRecipeForEdit(editingRecipeId!!)
             loadMediaForEdit(editingRecipeId!!)
+        } else if (aiRecipeText != null && source == RecipeEntity.SOURCE_AI) {
+            // 🆕 Шаг 2: предзаполнение описания текстом от ИИ
+            binding.etDescription.setText(aiRecipeText)
+            binding.etDescription.setSelection(aiRecipeText!!.length)
+            Logger.log(TAG, "onCreate: pre-filled description with AI text (${aiRecipeText!!.length} chars)")
         }
     }
 
     // ============================================================
     // ТУЛБАР
     // ============================================================
-
     private fun setupToolbar() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
-
         val title = if (editingRecipeId == null) {
             if (source == RecipeEntity.SOURCE_AI) "Новый рецепт ИИ" else "Новый рецепт"
         } else {
             "Редактирование рецепта"
         }
         binding.toolbar.title = title
-
         binding.toolbar.setNavigationOnClickListener {
             Logger.log(TAG, "toolbar up clicked")
             confirmDiscardIfChanged()
@@ -219,7 +235,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // МЕДИА-БЛОК (🆕 1.5-2)
     // ============================================================
-
     private fun setupMediaBlock() {
         mediaAdapter = RecipeMediaEditAdapter(
             recipeId = editingRecipeId ?: "",
@@ -228,7 +243,6 @@ class RecipeEditActivity : AppCompatActivity() {
                 Logger.log(TAG, "media item clicked: id=${media.id}, type=${media.mediaType}")
             }
         )
-
         binding.rvMedia.layoutManager = LinearLayoutManager(
             this,
             LinearLayoutManager.HORIZONTAL,
@@ -272,7 +286,6 @@ class RecipeEditActivity : AppCompatActivity() {
     private fun updateMediaBlockVisibility() {
         val isEdit = editingRecipeId != null
         binding.llAddMediaButtons.visibility = if (isEdit) View.VISIBLE else View.GONE
-
         if (!isEdit) {
             binding.rvMedia.visibility = View.GONE
             binding.tvMediaHint.visibility = View.VISIBLE
@@ -287,7 +300,6 @@ class RecipeEditActivity : AppCompatActivity() {
             binding.rvMedia.visibility = View.GONE
             return
         }
-
         val count = mediaAdapter.itemCount
         if (count == 0) {
             binding.tvMediaHint.visibility = View.VISIBLE
@@ -302,7 +314,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // ЗАГРУЗКА РЕЦЕПТА (режим редактирования)
     // ============================================================
-
     private fun loadRecipeForEdit(recipeId: String) {
         lifecycleScope.launch {
             val recipe = withContext(Dispatchers.IO) {
@@ -315,32 +326,33 @@ class RecipeEditActivity : AppCompatActivity() {
             }
 
             if (recipe == null) {
-                Logger.log(TAG, "loadRecipeForEdit: recipe not found or tombstone: $recipeId")
-                Toast.makeText(
-                    this@RecipeEditActivity,
-                    "Рецепт не найден",
-                    Toast.LENGTH_SHORT
-                ).show()
-                finish()
-                return@launch
-            }
+                 Logger.log(TAG, "loadRecipeForEdit: recipe not found or tombstone: $recipeId")
+                 Toast.makeText(
+                     this@RecipeEditActivity,
+                     "Рецепт не найден",
+                     Toast.LENGTH_SHORT
+                 ).show()
+                 finish()
+                 return@launch
+             }
 
-            source = recipe.source
-            // 🆕 Шаг 1.7-4: запоминаем текущую папку рецепта (для информации в логах).
-            targetFolderId = recipe.folderId
-            binding.etTitle.setText(recipe.title)
-            binding.etDescription.setText(recipe.description ?: "")
-            Logger.log(
-                TAG,
-                "loadRecipeForEdit: loaded '${recipe.title}', source=${recipe.source}, folderId=${recipe.folderId}"
-            )
-        }
+             source = recipe.source
+             // 🆕 Шаг 1.7-4: запоминаем текущую папку рецепта (для информации в логах).
+             targetFolderId = recipe.folderId
+
+             binding.etTitle.setText(recipe.title)
+             binding.etDescription.setText(recipe.description ?: "")
+
+             Logger.log(
+                 TAG,
+                 "loadRecipeForEdit: loaded '${recipe.title}', source=${recipe.source}, folderId=${recipe.folderId}"
+             )
+         }
     }
 
     // ============================================================
     // ЗАГРУЗКА МЕДИА (режим редактирования)
     // ============================================================
-
     private fun loadMediaForEdit(recipeId: String) {
         lifecycleScope.launch {
             val media = withContext(Dispatchers.IO) {
@@ -360,141 +372,136 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // ДОБАВЛЕНИЕ ФОТО
     // ============================================================
-
     private fun onPhotoPicked(uri: Uri) {
         val recipeId = editingRecipeId ?: return
         Logger.log(TAG, "onPhotoPicked: recipeId=$recipeId, uri=$uri")
-
         lifecycleScope.launch {
-            try {
-                val saved = withContext(Dispatchers.IO) {
-                    RecipeMediaController.savePhotoFromUri(this@RecipeEditActivity, recipeId, uri)
-                }
-                if (saved == null) {
-                    Toast.makeText(
-                        this@RecipeEditActivity,
-                        "Не удалось сохранить фото",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@launch
-                }
+             try {
+                 val saved = withContext(Dispatchers.IO) {
+                     RecipeMediaController.savePhotoFromUri(this@RecipeEditActivity, recipeId, uri)
+                 }
+                 if (saved == null) {
+                     Toast.makeText(
+                         this@RecipeEditActivity,
+                         "Не удалось сохранить фото",
+                         Toast.LENGTH_SHORT
+                     ).show()
+                     return@launch
+                 }
 
-                val media = withContext(Dispatchers.IO) {
-                    repository.addMedia(
-                        recipeId = recipeId,
-                        mediaType = RecipeMediaEntity.TYPE_PHOTO,
-                        localName = saved.localName,
-                        thumbName = saved.thumbName,
-                        mimeType = saved.mimeType,
-                        currentUser = currentUser,
-                        mediaId = saved.mediaId
-                    )
-                }
+                 val media = withContext(Dispatchers.IO) {
+                     repository.addMedia(
+                         recipeId = recipeId,
+                         mediaType = RecipeMediaEntity.TYPE_PHOTO,
+                         localName = saved.localName,
+                         thumbName = saved.thumbName,
+                         mimeType = saved.mimeType,
+                         currentUser = currentUser,
+                         mediaId = saved.mediaId
+                     )
+                 }
 
-                if (media == null) {
-                    withContext(Dispatchers.IO) {
-                        RecipeMediaController.deleteMediaFiles(
-                            this@RecipeEditActivity,
-                            recipeId,
-                            saved.localName,
-                            saved.thumbName
-                        )
-                    }
-                    Toast.makeText(
-                        this@RecipeEditActivity,
-                        "Не удалось добавить фото",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@launch
-                }
+                 if (media == null) {
+                     withContext(Dispatchers.IO) {
+                         RecipeMediaController.deleteMediaFiles(
+                             this@RecipeEditActivity,
+                             recipeId,
+                             saved.localName,
+                             saved.thumbName
+                         )
+                     }
+                     Toast.makeText(
+                         this@RecipeEditActivity,
+                         "Не удалось добавить фото",
+                         Toast.LENGTH_SHORT
+                     ).show()
+                     return@launch
+                 }
 
-                Logger.log(TAG, "onPhotoPicked: added media id=${media.id}")
-                loadMediaForEdit(recipeId)
-            } catch (e: Exception) {
-                Logger.log(TAG, "onPhotoPicked ERROR: ${e.message}", e)
-                Toast.makeText(
-                    this@RecipeEditActivity,
-                    "Ошибка: ${e.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
+                 Logger.log(TAG, "onPhotoPicked: added media id=${media.id}")
+                 loadMediaForEdit(recipeId)
+             } catch (e: Exception) {
+                 Logger.log(TAG, "onPhotoPicked ERROR: ${e.message}", e)
+                 Toast.makeText(
+                     this@RecipeEditActivity,
+                     "Ошибка: ${e.message}",
+                     Toast.LENGTH_SHORT
+                 ).show()
+             }
+         }
     }
 
     // ============================================================
     // ДОБАВЛЕНИЕ ВИДЕО
     // ============================================================
-
     private fun onVideoPicked(uri: Uri) {
         val recipeId = editingRecipeId ?: return
         Logger.log(TAG, "onVideoPicked: recipeId=$recipeId, uri=$uri")
-
         lifecycleScope.launch {
-            try {
-                Toast.makeText(
-                    this@RecipeEditActivity,
-                    "Сохраняю видео…",
-                    Toast.LENGTH_SHORT
-                ).show()
+             try {
+                 Toast.makeText(
+                     this@RecipeEditActivity,
+                     "Сохраняю видео…",
+                     Toast.LENGTH_SHORT
+                 ).show()
 
-                val saved = withContext(Dispatchers.IO) {
-                    RecipeMediaController.saveVideoFromUri(this@RecipeEditActivity, recipeId, uri)
-                }
-                if (saved == null) {
-                    Toast.makeText(
-                        this@RecipeEditActivity,
-                        "Не удалось сохранить видео",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@launch
-                }
+                 val saved = withContext(Dispatchers.IO) {
+                     RecipeMediaController.saveVideoFromUri(this@RecipeEditActivity, recipeId, uri)
+                 }
+                 if (saved == null) {
+                     Toast.makeText(
+                         this@RecipeEditActivity,
+                         "Не удалось сохранить видео",
+                         Toast.LENGTH_SHORT
+                     ).show()
+                     return@launch
+                 }
 
-                val media = withContext(Dispatchers.IO) {
-                    repository.addMedia(
-                        recipeId = recipeId,
-                        mediaType = RecipeMediaEntity.TYPE_VIDEO,
-                        localName = saved.localName,
-                        thumbName = saved.thumbName,
-                        mimeType = saved.mimeType,
-                        currentUser = currentUser,
-                        mediaId = saved.mediaId
-                    )
-                }
+                 val media = withContext(Dispatchers.IO) {
+                     repository.addMedia(
+                         recipeId = recipeId,
+                         mediaType = RecipeMediaEntity.TYPE_VIDEO,
+                         localName = saved.localName,
+                         thumbName = saved.thumbName,
+                         mimeType = saved.mimeType,
+                         currentUser = currentUser,
+                         mediaId = saved.mediaId
+                     )
+                 }
 
-                if (media == null) {
-                    withContext(Dispatchers.IO) {
-                        RecipeMediaController.deleteMediaFiles(
-                            this@RecipeEditActivity,
-                            recipeId,
-                            saved.localName,
-                            saved.thumbName
-                        )
-                    }
-                    Toast.makeText(
-                        this@RecipeEditActivity,
-                        "Не удалось добавить видео",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@launch
-                }
+                 if (media == null) {
+                     withContext(Dispatchers.IO) {
+                         RecipeMediaController.deleteMediaFiles(
+                             this@RecipeEditActivity,
+                             recipeId,
+                             saved.localName,
+                             saved.thumbName
+                         )
+                     }
+                     Toast.makeText(
+                         this@RecipeEditActivity,
+                         "Не удалось добавить видео",
+                         Toast.LENGTH_SHORT
+                     ).show()
+                     return@launch
+                 }
 
-                Logger.log(TAG, "onVideoPicked: added media id=${media.id}")
-                loadMediaForEdit(recipeId)
-            } catch (e: Exception) {
-                Logger.log(TAG, "onVideoPicked ERROR: ${e.message}", e)
-                Toast.makeText(
-                    this@RecipeEditActivity,
-                    "Ошибка: ${e.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
+                 Logger.log(TAG, "onVideoPicked: added media id=${media.id}")
+                 loadMediaForEdit(recipeId)
+             } catch (e: Exception) {
+                 Logger.log(TAG, "onVideoPicked ERROR: ${e.message}", e)
+                 Toast.makeText(
+                     this@RecipeEditActivity,
+                     "Ошибка: ${e.message}",
+                     Toast.LENGTH_SHORT
+                 ).show()
+             }
+         }
     }
 
     // ============================================================
     // УДАЛЕНИЕ МЕДИА
     // ============================================================
-
     private fun onRemoveMediaClicked(media: RecipeMediaEntity) {
         val recipeId = editingRecipeId ?: return
         AlertDialog.Builder(this)
@@ -553,11 +560,11 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // СОХРАНЕНИЕ
     // ============================================================
-
     private fun onSaveClicked() {
         if (saving) return
 
         val title = binding.etTitle.text?.toString()?.trim().orEmpty()
+
         if (TextUtils.isEmpty(title)) {
             binding.tilTitle.error = "Введите название"
             binding.etTitle.requestFocus()
@@ -574,7 +581,6 @@ class RecipeEditActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val recipeId = editingRecipeId
-
                 if (recipeId == null) {
                     // ============================================================
                     // 🆕 Шаг 1.7-4: создание с папкой.
@@ -662,7 +668,6 @@ class RecipeEditActivity : AppCompatActivity() {
     // ============================================================
     // ПОДТВЕРЖДЕНИЕ ВЫХОДА
     // ============================================================
-
     private fun confirmDiscardIfChanged() {
         if (saving) return
 
