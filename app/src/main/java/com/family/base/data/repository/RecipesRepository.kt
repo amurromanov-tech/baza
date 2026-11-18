@@ -57,6 +57,10 @@ renameFolder, deleteFolder с проверкой «не пуста»), нави�
 чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
 Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
 У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
+🆕 Шаг 2: AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ.
+Добавлен блок «6. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ» — метод generateAiRecipe(prompt)
+отправляет запрос на Cloudflare Worker AI-прокси (URL в Config.AI_RECIPE_PROXY_URL),
+получает сгенерированный текст рецепта. Ключ API надёжно спрятан на сервере.
 */
 class RecipesRepository(
     private val db: AppDatabase,
