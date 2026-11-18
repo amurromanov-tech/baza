@@ -52,6 +52,18 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentFolderName = MutableLiveData<String?>(null)
     val currentFolderName: LiveData<String?> = _currentFolderName
 
+    // ============================================================
+    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
+    // ============================================================
+    private val _isAiGenerating = MutableLiveData(false)
+    val isAiGenerating: LiveData<Boolean> = _isAiGenerating
+
+    private val _aiError = MutableLiveData<String?>(null)
+    val aiError: LiveData<String?> = _aiError
+
+    private val _generatedAiRecipe = MutableLiveData<String?>(null)
+    val generatedAiRecipe: LiveData<String?> = _generatedAiRecipe
+
     private val folderStack = ArrayDeque<String>()
 
     val currentUserName: String
@@ -147,7 +159,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                         )
                         null
                     }
-
                     RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
                 }
 
@@ -198,9 +209,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         if (currentFolderId == folderId) return
-
         currentFolderId?.let { folderStack.addLast(it) }
-
         currentFolderId = folderId
         searchQuery = ""
         Logger.log(TAG, "openFolder: $folderId (stack size=${folderStack.size})")
@@ -372,5 +381,64 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 Logger.log(TAG, "deleteRecipe ERROR: ${e.message}", e)
             }
         }
+    }
+
+    // ============================================================
+    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
+    // ============================================================
+    /**
+     * Запросить генерацию рецепта у AI-прокси Cloudflare Worker.
+     *
+     * @param prompt запрос пользователя (например, "Рецепт блинов на молоке").
+     * @param onResult колбэк с результатом:
+     *   - null → успех, текст рецепта доступен через LiveData generatedAiRecipe;
+     *   - строка → сообщение об ошибке.
+     */
+    fun generateAiRecipe(prompt: String, onResult: (String?) -> Unit) {
+        val cleanPrompt = prompt.trim()
+        if (cleanPrompt.isEmpty()) {
+            onResult("Введите запрос для генерации рецепта")
+            return
+        }
+
+        _aiError.value = null
+        _generatedAiRecipe.value = null
+        _isAiGenerating.value = true
+
+        viewModelScope.launch {
+            try {
+                Logger.log(TAG, "generateAiRecipe: start, prompt='$cleanPrompt'")
+                val recipeText = recipesRepository.generateAiRecipe(cleanPrompt)
+
+                if (recipeText.isNullOrBlank()) {
+                    val errorMsg = "Не удалось сгенерировать рецепт. Проверьте интернет и попробуйте снова."
+                    Logger.log(TAG, "generateAiRecipe: empty response")
+                    _aiError.value = errorMsg
+                    onResult(errorMsg)
+                } else {
+                    Logger.log(TAG, "generateAiRecipe: OK, length=${recipeText.length}")
+                    _generatedAiRecipe.value = recipeText
+                    onResult(null)
+                }
+            } catch (e: Exception) {
+                val errorMsg = "Ошибка генерации: ${e.message ?: "неизвестная ошибка"}"
+                Logger.log(TAG, "generateAiRecipe ERROR: ${e.message}", e)
+                _aiError.value = errorMsg
+                onResult(errorMsg)
+            } finally {
+                _isAiGenerating.value = false
+            }
+        }
+    }
+
+    /**
+     * Сбросить состояние AI-генерации.
+     * Вызывается из UI после того, как сгенерированный рецепт
+     * обработан (например, открыт экран создания рецепта)
+     * или после показа ошибки.
+     */
+    fun clearAiState() {
+        _generatedAiRecipe.value = null
+        _aiError.value = null
     }
 }
