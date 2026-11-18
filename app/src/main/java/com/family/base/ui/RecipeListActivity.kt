@@ -1,9 +1,10 @@
 package com.family.base.ui
 
+import android.Manifest
 import android.app.ProgressDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.speech.RecognizerIntent
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -19,6 +20,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
@@ -26,6 +29,7 @@ import com.family.base.databinding.ActivityRecipeListBinding
 import com.family.base.ui.adapter.RecipeCatalogAdapter
 import com.family.base.ui.viewmodel.RecipeViewModel
 import com.family.base.util.Logger
+import com.family.base.util.VoiceInputHelper
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -49,9 +53,9 @@ class RecipeListActivity : AppCompatActivity() {
     private var searchRunnable: Runnable? = null
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
     private var aiProgressDialog: ProgressDialog? = null
-    
-    // 🆕 Для голосового ввода
-    private var currentAiPromptEditText: EditText? = null
+
+    // 🆕 Для голосового ввода (как в AddItemActivity)
+    private var pendingVoiceField: EditText? = null
 
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -73,20 +77,18 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    // 🆕 Лаунчер для голосового ввода
-    private val speechLauncher = registerForActivityResult(
+    // 🆕 Лаунчер для голосового ввода (как в AddItemActivity)
+    private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == RESULT_OK && result.data != null) {
-            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            if (!matches.isNullOrEmpty()) {
-                val spokenText = matches[0]
-                val currentText = currentAiPromptEditText?.text?.toString().orEmpty()
-                val newText = if (currentText.isBlank()) spokenText else "$currentText $spokenText"
-                currentAiPromptEditText?.setText(newText)
-                currentAiPromptEditText?.setSelection(newText.length)
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
             }
         }
+        pendingVoiceField = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -339,6 +341,11 @@ class RecipeListActivity : AppCompatActivity() {
     // ============================================================
     // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2 + Голосовой ввод)
     // ============================================================
+    /**
+     * Диалог ввода запроса для AI-генерации рецепта.
+     * Поле ввода + кнопка 🎤 справа (голосовой ввод через VoiceInputHelper,
+     * как в AddItemActivity).
+     */
     private fun showAiRecipeDialog() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -347,7 +354,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
 
         val editText = EditText(this).apply {
-            id = View.generateViewId()
             hint = "Например: блины на молоке, паста карбонара..."
             setSingleLine(false)
             minLines = 2
@@ -365,7 +371,7 @@ class RecipeListActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
             setOnClickListener {
-                startVoiceInput(editText)
+                startVoiceFor(editText)
             }
         }
 
@@ -388,17 +394,40 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun startVoiceInput(editText: EditText) {
-        currentAiPromptEditText = editText
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Скажите, что хотите приготовить...")
-        }
-        try {
-            speechLauncher.launch(intent)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Голосовой ввод не поддерживается на этом устройстве", Toast.LENGTH_SHORT).show()
+    /**
+     * 🆕 Запуск голосового ввода (как в AddItemActivity).
+     * Запоминает поле, в которое нужно вставить распознанный текст,
+     * и вызывает VoiceInputHelper.startVoiceInput.
+     */
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Скажите, что хотите приготовить…")
+    }
+
+    /**
+     * 🆕 Обработка результата запроса разрешения на микрофон
+     * (как в AddItemActivity). Если разрешение получено — повторяем запуск.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Скажите, что хотите приготовить…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
