@@ -239,10 +239,10 @@ class RecipeListActivity : AppCompatActivity() {
 
     private fun setupEmptyState() {
         binding.emptyState.setOnClickListener {
-            if (source == RecipeEntity.SOURCE_USER) {
-                openCreateRecipe()
-            } else if (source == RecipeEntity.SOURCE_AI) {
+            if (source == RecipeEntity.SOURCE_AI) {
                 showAiRecipeDialog()
+            } else if (source == RecipeEntity.SOURCE_USER) {
+                openCreateRecipe()
             }
         }
         updateEmptyStateText(null)
@@ -661,8 +661,6 @@ class RecipeListActivity : AppCompatActivity() {
         viewModel.aiError.observe(this) { error ->
             if (!error.isNullOrBlank()) {
                 Logger.log(TAG, "aiError observer: $error")
-                // Ошибка уже показана в колбэке requestAiRecipe, но на всякий случай
-                // viewModel.clearAiState() // не очищаем здесь, чтобы колбэк тоже сработал
             }
         }
     }
