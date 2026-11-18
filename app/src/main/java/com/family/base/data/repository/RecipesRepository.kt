@@ -1,6 +1,7 @@
 package com.family.base.data.repository
 
 import android.content.Context
+import com.family.base.AI_RECIPE_PROXY_URL
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.OutboxHelper
 import com.family.base.data.local.entity.FolderEntity
@@ -11,72 +12,65 @@ import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
- * 🆕 v21.1.0 (миграция 21→22): репозиторий для рецептов.
- *
- * Две зоны ответственности:
- *
- * 1. СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «Рецепты».
- *    Метод ensureRecipesFolders(currentUser) вызывается из MainViewModel
- *    при старте (по аналогии с ensureGalleryFolder / ensureSystemFolder).
- *    Создаёт три папки, если их ещё нет:
- *      - «🍳 Рецепты»       (systemKey = "recipes",    parentId = null)
- *      - «🤖 Рецепты ИИ»    (systemKey = "recipes_ai", parentId = id «Рецептов»)
- *      - «📝 Мои рецепты»   (systemKey = "recipes_my", parentId = id «Рецептов»)
- *
- *    Идемпотентно: повторный вызов ничего не ломает. Если «Рецепты» есть,
- *    а дочерней не хватает (например, пользователь как-то ухитрился её
- *    удалить — хотя isSystem защищает), досоздаёт отсутствующую.
- *
- *    ВАЖНО: папки создаются с фиксированными id (константы из FolderEntity),
- *    чтобы на всех устройствах это были одни и те же записи, и синк
- *    через folders.json не плодил дубликаты.
- *
- * 2. CRUD РЕЦЕПТОВ.
- *    Обёртки над RecipeDao / RecipeMediaDao, единая точка правды
- *    для записи в outbox (changelog).
- *
- *    Стиль — как у CatalogRepository:
- *     - createRecipe / updateRecipe / deleteRecipe — с outbox;
- *     - addMedia / deleteMedia — с outbox;
- *     - никакой работы с файлами на Диске здесь нет — это делает
- *       отдельный слой (SyncManager), потому что файлы рецептов
- *       грузятся отдельной очередью uploadUnsyncedRecipeMedia.
- *
- * 🆕 v21.1.0 (Шаг 1.5-2): addMedia получил параметр mediaId
- *  (по умолчанию null → сгенерируется UUID внутри). Это нужно, чтобы
- *  id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
- *  (<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
- *  Старые вызовы (без mediaId) продолжают работать как раньше.
- *
- * 🆕 v21.1.0+ (Шаг 1.7-2, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
- *  Добавлен блок «5. ПАПКИ РЕЦЕПТОВ» — CRUD папок (createFolder,
- *  renameFolder, deleteFolder с проверкой «не пуста»), навигация
- *  (getFolders(parentId)), перемещение рецептов (moveRecipeToFolder),
- *  чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
- *
- *  Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
- *  У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
- */
+🆕 v21.1.0 (миграция 21→22): репозиторий для рецептов.
+Две зоны ответственности:
+СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «Рецепты».
+Метод ensureRecipesFolders(currentUser) вызывается из MainViewModel
+при старте (по аналогии с ensureGalleryFolder / ensureSystemFolder).
+Создаёт три папки, если их ещё нет:
+ - «🍳 Рецепты»       (systemKey = "recipes",    parentId = null)
+ - «🤖 Рецепты ИИ»    (systemKey = "recipes_ai", parentId = id «Рецептов»)
+ - «📝 Мои рецепты»   (systemKey = "recipes_my", parentId = id «Рецептов»)
+Идемпотентно: повторный вызов ничего не ломает. Если «Рецепты» есть,
+а дочерней не хватает (например, пользователь как-то ухитрился её
+удалить — хотя isSystem защищает), досоздаёт отсутствующую.
+ВАЖНО: папки создаются с фиксированными id (константы из FolderEntity),
+чтобы на всех устройствах это были одни и те же записи, и синк
+через folders.json не плодил дубликаты.
+CRUD РЕЦЕПТОВ.
+Обёртки над RecipeDao / RecipeMediaDao, единая точка правды
+для записи в outbox (changelog).
+Стиль — как у CatalogRepository:
+- createRecipe / updateRecipe / deleteRecipe — с outbox;
+- addMedia / deleteMedia — с outbox;
+- никакой работы с файлами на Диске здесь нет — это делает
+  отдельный слой (SyncManager), потому что файлы рецептов
+  грузятся отдельной очередью uploadUnsyncedRecipeMedia.
+🆕 v21.1.0 (Шаг 1.5-2): addMedia получил параметр mediaId
+(по умолчанию null → сгенерируется UUID внутри). Это нужно, чтобы
+id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
+(<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
+Старые вызовы (без mediaId) продолжают работать как раньше.
+🆕 v21.1.0+ (Шаг 1.7-2, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
+Добавлен блок «5. ПАПКИ РЕЦЕПТОВ» — CRUD папок (createFolder,
+renameFolder, deleteFolder с проверкой «не пуста»), навигация
+(getFolders(parentId)), перемещение рецептов (moveRecipeToFolder),
+чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
+Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
+У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
+*/
 class RecipesRepository(
     private val db: AppDatabase,
     private val appContext: Context
 ) {
-
     private val TAG = "RecipesRepository"
 
     // ============================================================
     // 1. СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «РЕЦЕПТЫ»
     // ============================================================
-
     /**
      * Гарантирует, что три системные папки «Рецептов» существуют.
-     *
      * Вызывается из MainViewModel.checkFirstLaunch() — один раз при старте
      * (после ensureGalleryFolder). Идемпотентно.
-     *
      * @param currentUser имя текущего пользователя (AppUser.name).
      * @return Pair(создано ли что-то, id корневой папки «Рецепты»).
      */
@@ -88,7 +82,6 @@ class RecipesRepository(
                 // ---------- 1. Корневая «🍳 Рецепты» ----------
                 val existingRoot = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_RECIPES)
                 val rootId: String
-
                 if (existingRoot == null) {
                     val now = System.currentTimeMillis()
                     val root = FolderEntity(
@@ -188,18 +181,14 @@ class RecipesRepository(
     // ============================================================
     // 2. РЕЦЕПТЫ — CRUD
     // ============================================================
-
     /**
      * Создать рецепт.
-     *
      * Пишет в outbox как ACTION_CREATE и ставит syncStatus = 'pending',
      * чтобы синк подхватил. Источник (source) задаёт вызывающий:
-     *  - RecipeEntity.SOURCE_AI   — для «Рецептов ИИ»;
-     *  - RecipeEntity.SOURCE_USER — для «Моих рецептов».
-     *
+     * RecipeEntity.SOURCE_AI   — для «Рецептов ИИ»;
+     * RecipeEntity.SOURCE_USER — для «Моих рецептов».
      * 🆕 Шаг 1.7-2: параметр folderId — папка рецепта (null = корень).
      * Для «Рецептов ИИ» всегда null (у ИИ-рецептов папок нет).
-     *
      * @return созданный RecipeEntity (с реальным id), либо null при ошибке.
      */
     suspend fun createRecipe(
@@ -289,15 +278,12 @@ class RecipesRepository(
 
     /**
      * Удалить рецепт (tombstone).
-     *
      * Медиа рецепта тоже помечаются tombstone (markAllByRecipeDeleted),
      * чтобы каждое удаление файла уехало отдельной записью в changelog.
-     *
      * ⚠️ Физическое удаление файлов с Диска — НЕ здесь. Это сделает
      * cleanupOldRecipeTombstones через год, вместе с hardDelete.
      * Локальные файлы (filesDir/recipe_media/<recipeId>/) тоже удаляются
      * не сразу — при hard-delete в cleanup (Шаг 1.6).
-     *
      * Права: удалять рецепт может Алексей (любой) или автор (свой) —
      * проверка в UI/ViewModel, здесь только техническая операция.
      */
@@ -349,19 +335,15 @@ class RecipesRepository(
     // ============================================================
     // 3. МЕДИА — CRUD
     // ============================================================
-
     /**
      * Добавить медиа (фото или видео) к рецепту.
-     *
      * Файл УЖЕ должен быть сохранён локально до вызова этого метода
      * (через RecipeMediaController). Здесь только запись в БД + outbox.
-     *
      * 🆕 Шаг 1.5-2: параметр mediaId.
-     *  - Если передан (RecipeMediaController сгенерировал UUID) — используем его
-     *    как id строки recipe_media. Тогда id == имя файла (без расширения),
-     *    что упрощает синк на Шаге 1.6.
-     *  - Если null (старые вызовы) — генерируем UUID внутри, как раньше.
-     *
+     * Если передан (RecipeMediaController сгенерировал UUID) — используем его
+     * как id строки recipe_media. Тогда id == имя файла (без расширения),
+     * что упрощает синк на Шаге 1.6.
+     * Если null (старые вызовы) — генерируем UUID внутри, как раньше.
      * @param recipeId   id рецепта.
      * @param mediaType  RecipeMediaEntity.TYPE_PHOTO / TYPE_VIDEO.
      * @param localName  имя локального файла (например "abc-123.jpg").
@@ -394,7 +376,6 @@ class RecipesRepository(
             val nextIndex = db.recipeMediaDao().nextOrderIndex(recipeId)
             val now = System.currentTimeMillis()
             val id = mediaId ?: UUID.randomUUID().toString()
-
             val media = RecipeMediaEntity(
                 id = id,
                 recipeId = recipeId,
@@ -468,7 +449,6 @@ class RecipesRepository(
     // ============================================================
     // 4. ЧТЕНИЕ ДЛЯ UI (тонкие обёртки)
     // ============================================================
-
     suspend fun getRecipesBySource(source: String, sortNewest: Boolean): List<RecipeEntity> =
         withContext(Dispatchers.IO) {
             try {
@@ -496,7 +476,7 @@ class RecipesRepository(
             try {
                 db.recipeDao().getLiveRecipeById(recipeId)
             } catch (e: Exception) {
-                Logger.log(TAG, "getRecipeById ERROR: ${e.message}", e)
+                Logger.log(TAG,"getRecipeById ERROR: ${e.message}", e)
                 null
             }
         }
@@ -555,10 +535,8 @@ class RecipesRepository(
     //  Все методы пишут в outbox (ENTITY_RECIPE_FOLDER), чтобы синк
     //  через changelog разносил изменения по устройствам.
     // ============================================================
-
     /**
      * Создать папку рецептов.
-     *
      * @param name      название (обрезается, пустое недопустимо).
      * @param parentId  id родительской папки (null = корень «Моих рецептов»).
      * @param currentUser имя текущего пользователя.
@@ -670,11 +648,9 @@ class RecipesRepository(
 
     /**
      * Удалить папку рецептов (tombstone).
-     *
      * ⚠️ Запрещено, пока в папке есть рецепты или дочерние папки.
      * Проверяем оба условия. Если не пуста — возвращаем false
      * с записью в лог, UI покажет сообщение.
-     *
      * @return true — удалено (tombstone), false — нельзя/ошибка.
      */
     suspend fun deleteFolder(folderId: String, currentUser: String): Boolean =
@@ -723,9 +699,7 @@ class RecipesRepository(
      * Переместить рецепт в папку (или в корень, если folderId = null).
      * Обновляет folderId, updatedAt/By и ставит syncStatus = 'pending'.
      * Пишет в outbox как ACTION_UPDATE.
-     *
      * Для «Рецептов ИИ» вызывать не нужно (там папок нет).
-     *
      * @return true — перемещено/уже там, false — ошибка.
      */
     suspend fun moveRecipeToFolder(
@@ -759,8 +733,8 @@ class RecipesRepository(
 
             val now = System.currentTimeMillis()
             db.recipeDao().moveRecipeToFolder(recipeId, folderId, now, currentUser)
-
             val after = db.recipeDao().getRecipeById(recipeId) ?: return@withContext false
+
             try {
                 OutboxHelper.logRecipe(db, after, OutboxEntity.ACTION_UPDATE, currentUser)
             } catch (e: Exception) {
@@ -823,7 +797,6 @@ class RecipesRepository(
     /**
      * Рецепты БЕЗ папки (в корне «Моих рецептов») по source.
      * sortNewest = true → по createdAt DESC, false → по title COLLATE NOCASE ASC.
-     *
      * Для «Моих рецептов»: source = "user", folderId IS NULL.
      * Для «Рецептов ИИ»: source = "ai", folderId IS NULL (папок нет).
      */
@@ -867,4 +840,59 @@ class RecipesRepository(
                 emptyList()
             }
         }
+
+    // ============================================================
+    // 🆕 6. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
+    // ============================================================
+    /**
+     * Генерация рецепта через AI-прокси Cloudflare Worker.
+     *
+     * @param prompt запрос пользователя (например, "Рецепт блинов на молоке").
+     * @return сгенерированный текст рецепта или null в случае ошибки.
+     */
+    suspend fun generateAiRecipe(prompt: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS) // AI может думать дольше
+                .writeTimeout(15, TimeUnit.SECONDS)
+                .build()
+
+            val jsonBody = JSONObject().apply {
+                put("prompt", prompt)
+            }.toString()
+
+            val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+            val request = Request.Builder()
+                .url(AI_RECIPE_PROXY_URL)
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string().orEmpty()
+
+            if (!response.isSuccessful) {
+                Logger.log(TAG, "generateAiRecipe: HTTP ${response.code}, body=${responseBody.take(300)}")
+                return@withContext null
+            }
+
+            val json = JSONObject(responseBody)
+            val success = json.optBoolean("success", false)
+            
+            if (success) {
+                val recipeText = json.optString("recipe", "")
+                Logger.log(TAG, "generateAiRecipe: OK, length=${recipeText.length}")
+                return@withContext recipeText.ifBlank { null }
+            } else {
+                val error = json.optString("error", "Unknown error")
+                Logger.log(TAG, "generateAiRecipe: API error: $error")
+                return@withContext null
+            }
+
+        } catch (e: Exception) {
+            Logger.log(TAG, "generateAiRecipe ERROR: ${e.message}", e)
+            return@withContext null
+        }
+    }
 }
