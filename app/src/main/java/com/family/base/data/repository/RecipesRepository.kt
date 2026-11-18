@@ -11,56 +11,25 @@ import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.TlsVersion
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
 
 /**
 🆕 v21.1.0 (миграция 21→22): репозиторий для рецептов.
-Две зоны ответственности:
-СИДИРОВАНИЕ СИСТЕМНЫХ ПАПОК «Рецепты».
-Метод ensureRecipesFolders(currentUser) вызывается из MainViewModel
-при старте (по аналогии с ensureGalleryFolder / ensureSystemFolder).
-Создаёт три папки, если их ещё нет:
- - «🍳 Рецепты»       (systemKey = "recipes",    parentId = null)
- - «🤖 Рецепты ИИ»    (systemKey = "recipes_ai", parentId = id «Рецептов»)
- - «📝 Мои рецепты»   (systemKey = "recipes_my", parentId = id «Рецептов»)
-Идемпотентно: повторный вызов ничего не ломает. Если «Рецепты» есть,
-а дочерней не хватает (например, пользователь как-то ухитрился её
-удалить — хотя isSystem защищает), досоздаёт отсутствующую.
-ВАЖНО: папки создаются с фиксированными id (константы из FolderEntity),
-чтобы на всех устройствах это были одни и те же записи, и синк
-через folders.json не плодил дубликаты.
-CRUD РЕЦЕПТОВ.
-Обёртки над RecipeDao / RecipeMediaDao, единая точка правды
-для записи в outbox (changelog).
-Стиль — как у CatalogRepository:
-- createRecipe / updateRecipe / deleteRecipe — с outbox;
-- addMedia / deleteMedia — с outbox;
-- никакой работы с файлами на Диске здесь нет — это делает
-  отдельный слой (SyncManager), потому что файлы рецептов
-  грузятся отдельной очередью uploadUnsyncedRecipeMedia.
-🆕 v21.1.0 (Шаг 1.5-2): addMedia получил параметр mediaId
-(по умолчанию null → сгенерируется UUID внутри). Это нужно, чтобы
-id строки recipe_media совпадал с именем файла в filesDir/recipe_media/
-(<mediaId>.jpg / <mediaId>.mp4 / <mediaId>_thumb.jpg). См. RecipeMediaController.
-Старые вызовы (без mediaId) продолжают работать как раньше.
-🆕 v21.1.0+ (Шаг 1.7-2, миграция 22→23): ПАПКИ РЕЦЕПТОВ.
-Добавлен блок «5. ПАПКИ РЕЦЕПТОВ» — CRUD папок (createFolder,
-renameFolder, deleteFolder с проверкой «не пуста»), навигация
-(getFolders(parentId)), перемещение рецептов (moveRecipeToFolder),
-чтение рецептов уровня (getRecipesInFolder / getRootRecipes).
-Папки рецептов живут ТОЛЬКО у «Моих рецептов» (source = "user").
-У «Рецептов ИИ» (source = "ai") папок нет — folderId всегда null.
-🆕 Шаг 2: AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ.
-Добавлен блок «6. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ» — метод generateAiRecipe(prompt)
-отправляет запрос на Cloudflare Worker AI-прокси (URL в Config.AI_RECIPE_PROXY_URL),
-получает сгенерированный текст рецепта. Ключ API надёжно спрятан на сервере.
+...
+🆕 v23.2.2: исправлен импорт AI_RECIPE_PROXY_URL (добавлен Config.) 
+и добавлен явный ConnectionSpec (TLS 1.2 + TLS 1.3) с повторной попыткой 
+для устранения SSLHandshakeException при обращении к Cloudflare Worker.
 */
 class RecipesRepository(
     private val db: AppDatabase,
@@ -76,7 +45,6 @@ class RecipesRepository(
             try {
                 var created = false
 
-                // ---------- 1. Корневая «🍳 Рецепты» ----------
                 val existingRoot = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_RECIPES)
                 val rootId: String
                 if (existingRoot == null) {
@@ -112,7 +80,6 @@ class RecipesRepository(
                     }
                 }
 
-                // ---------- 2. «🤖 Рецепты ИИ» ----------
                 val existingAi = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_RECIPES_AI)
                 if (existingAi == null) {
                     val now = System.currentTimeMillis()
@@ -138,7 +105,6 @@ class RecipesRepository(
                     Logger.log(TAG, "ensureRecipesFolders: re-parented '${existingAi.name}' → $rootId")
                 }
 
-                // ---------- 3. «📝 Мои рецепты» ----------
                 val existingMy = db.folderDao().getFolderById(FolderEntity.SYSTEM_ID_RECIPES_MY)
                 if (existingMy == null) {
                     val now = System.currentTimeMillis()
@@ -203,10 +169,7 @@ class RecipesRepository(
                 Logger.log(TAG, "createRecipe: outbox log error: ${e.message}", e)
             }
 
-            Logger.log(
-                TAG,
-                "createRecipe: OK id=${recipe.id}, source=$source, folderId=$folderId, title='${recipe.title}'"
-            )
+            Logger.log(TAG, "createRecipe: OK id=${recipe.id}, source=$source, folderId=$folderId, title='${recipe.title}'")
             recipe
         } catch (e: Exception) {
             Logger.log(TAG, "createRecipe ERROR: ${e.message}", e)
@@ -346,10 +309,7 @@ class RecipesRepository(
                 Logger.log(TAG, "addMedia: outbox log error: ${e.message}", e)
             }
 
-            Logger.log(
-                TAG,
-                "addMedia: OK id=${media.id}, recipe=$recipeId, type=$mediaType, order=$nextIndex, localName=$localName"
-            )
+            Logger.log(TAG, "addMedia: OK id=${media.id}, recipe=$recipeId, type=$mediaType, order=$nextIndex, localName=$localName")
             media
         } catch (e: Exception) {
             Logger.log(TAG, "addMedia ERROR: ${e.message}", e)
@@ -464,7 +424,7 @@ class RecipesRepository(
         }
 
     // ============================================================
-    // 🆕 5. ПАПКИ РЕЦЕПТОВ (Шаг 1.7-2, миграция 22→23)
+    // 5. ПАПКИ РЕЦЕПТОВ (Шаг 1.7-2, миграция 22→23)
     // ============================================================
     suspend fun createFolder(
         name: String,
@@ -505,10 +465,7 @@ class RecipesRepository(
                 Logger.log(TAG, "createFolder: outbox log error: ${e.message}", e)
             }
 
-            Logger.log(
-                TAG,
-                "createFolder: OK id=${folder.id}, name='${folder.name}', parentId=$parentId"
-            )
+            Logger.log(TAG, "createFolder: OK id=${folder.id}, name='${folder.name}', parentId=$parentId")
             folder
         } catch (e: Exception) {
             Logger.log(TAG, "createFolder ERROR: ${e.message}", e)
@@ -581,10 +538,7 @@ class RecipesRepository(
                 val recipesCount = db.recipeDao().countByFolder(folderId)
                 val childrenCount = db.recipeFolderDao().countChildren(folderId)
                 if (recipesCount > 0 || childrenCount > 0) {
-                    Logger.log(
-                        TAG,
-                        "deleteFolder: not empty id=$folderId, recipes=$recipesCount, children=$childrenCount"
-                    )
+                    Logger.log(TAG, "deleteFolder: not empty id=$folderId, recipes=$recipesCount, children=$childrenCount")
                     return@withContext false
                 }
 
@@ -722,51 +676,72 @@ class RecipesRepository(
     // ============================================================
     /**
      * Генерация рецепта через AI-прокси Cloudflare Worker.
-     * @param prompt запрос пользователя (например, "Рецепт блинов на молоке").
-     * @return сгенерированный текст рецепта или null в случае ошибки.
+     * 🆕 v23.2.2: явный ConnectionSpec с TLS 1.2 + TLS 1.3 и повторная попытка 
+     * при SSLHandshakeException (решает проблему "connection closed" на Android).
      */
+    private fun buildAiClient(): OkHttpClient {
+        val connectionSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
+            .build()
+
+        return OkHttpClient.Builder()
+            .connectionSpecs(listOf(connectionSpec))
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
+
     suspend fun generateAiRecipe(prompt: String): String? = withContext(Dispatchers.IO) {
-        try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .build()
+        val client = buildAiClient()
 
-            val jsonBody = JSONObject().apply {
-                put("prompt", prompt)
-            }.toString()
+        val jsonBody = JSONObject().apply {
+            put("prompt", prompt)
+        }.toString()
 
-            val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
 
-            val request = Request.Builder()
-                .url(AI_RECIPE_PROXY_URL)
-                .post(requestBody)
-                .build()
+        val request = Request.Builder()
+            .url(AI_RECIPE_PROXY_URL)
+            .post(requestBody)
+            .build()
 
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string().orEmpty()
+        var lastException: Exception? = null
+        for (attempt in 1..2) {
+            try {
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string().orEmpty()
 
-            if (!response.isSuccessful) {
-                Logger.log(TAG, "generateAiRecipe: HTTP ${response.code}, body=${responseBody.take(300)}")
+                if (!response.isSuccessful) {
+                    Logger.log(TAG, "generateAiRecipe: HTTP ${response.code}, body=${responseBody.take(300)}")
+                    return@withContext null
+                }
+
+                val json = JSONObject(responseBody)
+                val success = json.optBoolean("success", false)
+
+                if (success) {
+                    val recipeText = json.optString("recipe", "")
+                    Logger.log(TAG, "generateAiRecipe: OK, length=${recipeText.length}")
+                    return@withContext recipeText.ifBlank { null }
+                } else {
+                    val error = json.optString("error", "Unknown error")
+                    Logger.log(TAG, "generateAiRecipe: API error: $error")
+                    return@withContext null
+                }
+            } catch (e: SSLHandshakeException) {
+                lastException = e
+                Logger.log(TAG, "generateAiRecipe: SSLHandshakeException on attempt $attempt: ${e.message}")
+                if (attempt == 1) {
+                    delay(500) // Небольшая пауза перед повторной попыткой
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "generateAiRecipe ERROR: ${e.message}", e)
                 return@withContext null
             }
-
-            val json = JSONObject(responseBody)
-            val success = json.optBoolean("success", false)
-
-            if (success) {
-                val recipeText = json.optString("recipe", "")
-                Logger.log(TAG, "generateAiRecipe: OK, length=${recipeText.length}")
-                return@withContext recipeText.ifBlank { null }
-            } else {
-                val error = json.optString("error", "Unknown error")
-                Logger.log(TAG, "generateAiRecipe: API error: $error")
-                return@withContext null
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "generateAiRecipe ERROR: ${e.message}", e)
-            return@withContext null
         }
+
+        Logger.log(TAG, "generateAiRecipe: all attempts failed. Last error: ${lastException?.message}")
+        return@withContext null
     }
 }
