@@ -883,7 +883,7 @@ class RecipesRepository(
 
             val json = JSONObject(responseBody)
             val success = json.optBoolean("success", false)
-            
+
             if (success) {
                 val recipeText = json.optString("recipe", "")
                 Logger.log(TAG, "generateAiRecipe: OK, length=${recipeText.length}")
