@@ -10,7 +10,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.repository.RecipesRepository
-import com.family.base.ui.adapter.RecipeAdapter
+import com.family.base.ui.adapter.RecipeCatalogAdapter
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Job
@@ -37,8 +37,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _folderRecipeCounts = MutableLiveData<Map<String, Int>>(emptyMap())
     val folderRecipeCounts: LiveData<Map<String, Int>> = _folderRecipeCounts
 
-    private val _recipes = MutableLiveData<List<RecipeAdapter.RecipeListItem>>(emptyList())
-    val recipes: LiveData<List<RecipeAdapter.RecipeListItem>> = _recipes
+    // Теперь отдаем готовые элементы для RecipeCatalogAdapter
+    private val _recipes = MutableLiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>>(emptyList())
+    val recipes: LiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>> = _recipes
 
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
@@ -127,7 +128,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     else -> {
                         if (hasQuery) {
-                            // 🔧 Глубокий поиск по всем рецептам source='user' (включая папки)
                             db.recipeDao().searchAllUserRecipes(searchQuery)
                         } else {
                             recipesRepository.getRootRecipes(source, sortNewest)
@@ -139,27 +139,28 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     if (hasQuery && !sortNewest) recipesList.sortedBy { it.title.lowercase() }
                     else recipesList
 
-                // 4. Подстановка локального файла первого фото
+                // 4. Подстановка медиа (ВСЕ фото и видео)
                 val appContext = getApplication<Application>()
-                val listItems: List<RecipeAdapter.RecipeListItem> = sortedRecipes.map { recipe ->
-                    val photoFile: File? = try {
-                        val firstPhoto = recipesRepository.getPhotos(recipe.id).firstOrNull()
-                        val name = firstPhoto?.imageUrl
-                        if (!name.isNullOrBlank()) {
-                            val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
-                            if (f.exists()) f else null
-                        } else {
-                            null
+                val listItems: List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe> = sortedRecipes.map { recipe ->
+                    val mediaFiles = mutableListOf<File>()
+                    try {
+                        val allMedia = recipesRepository.getAllMedia(recipe.id)
+                        allMedia.forEach { media ->
+                            val name = media.imageUrl // В твоей БД это имя локального файла
+                            if (!name.isNullOrBlank()) {
+                                val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
+                                if (f.exists()) {
+                                    mediaFiles.add(f)
+                                }
+                            }
                         }
                     } catch (e: Exception) {
-                        Logger.log(
-                            TAG,
-                            "loadContent: photoFile error for ${recipe.id}: ${e.message}",
-                            e
-                        )
-                        null
+                        Logger.log(TAG, "loadContent: mediaFiles error for ${recipe.id}: ${e.message}", e)
                     }
-                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
+                    RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
+                        recipe = recipe,
+                        mediaFiles = mediaFiles
+                    )
                 }
 
                 // 5. Имя текущей папки
@@ -178,7 +179,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     TAG,
                     "loadContent: source=$source, folderId=$folderId, query='$searchQuery', " +
                         "sortNewest=$sortNewest, folders=${foldersList.size}, recipes=${listItems.size}, " +
-                        "withPhoto=${listItems.count { it.photoFile != null }}, counts=${counts.size}"
+                        "counts=${counts.size}"
                 )
 
                 _folders.value = foldersList
@@ -386,14 +387,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // ============================================================
     // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
     // ============================================================
-    /**
-     * Запросить генерацию рецепта у AI-прокси Cloudflare Worker.
-     *
-     * @param prompt запрос пользователя (например, "Рецепт блинов на молоке").
-     * @param onResult колбэк с результатом:
-     *   - null → успех, текст рецепта доступен через LiveData generatedAiRecipe;
-     *   - строка → сообщение об ошибке.
-     */
     fun generateAiRecipe(prompt: String, onResult: (String?) -> Unit) {
         val cleanPrompt = prompt.trim()
         if (cleanPrompt.isEmpty()) {
@@ -431,12 +424,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * Сбросить состояние AI-генерации.
-     * Вызывается из UI после того, как сгенерированный рецепт
-     * обработан (например, открыт экран создания рецепта)
-     * или после показа ошибки.
-     */
     fun clearAiState() {
         _generatedAiRecipe.value = null
         _aiError.value = null
