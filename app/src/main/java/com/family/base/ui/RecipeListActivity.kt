@@ -157,7 +157,6 @@ class RecipeListActivity : AppCompatActivity() {
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
             },
-            // НОВЫЕ ЛЯМБДЫ
             onEditClick = { recipe ->
                 Logger.log(TAG, "recipe edit clicked: id=${recipe.id}")
                 val intent = Intent(this, RecipeEditActivity::class.java).apply {
@@ -181,14 +180,12 @@ class RecipeListActivity : AppCompatActivity() {
             .setMessage("Рецепт «${recipe.title}» будет удалён. Это действие нельзя отменить.")
             .setPositiveButton("Удалить") { _, _ ->
                 val currentUser = viewModel.currentUserName
-                // Предполагается, что в ViewModel есть метод deleteRecipe
                 viewModel.deleteRecipe(recipe.id, currentUser) { error ->
                     runOnUiThread {
                         if (error != null) {
                             Toast.makeText(this, error, Toast.LENGTH_LONG).show()
                         } else {
                             Toast.makeText(this, "Рецепт удалён", Toast.LENGTH_SHORT).show()
-                            viewModel.loadContent()
                         }
                     }
                 }
@@ -763,13 +760,9 @@ class RecipeListActivity : AppCompatActivity() {
                 )
             )
         }
+        // Теперь recipes — это уже List<RecipeCatalogItem.Recipe> из ViewModel
         recipes.forEach { item ->
-            list.add(
-                RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
-                    recipe = item.recipe,
-                    photoFile = item.photoFile
-                )
-            )
+            list.add(item)
         }
         adapter.submitList(list)
     }
