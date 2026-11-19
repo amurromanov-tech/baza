@@ -3,6 +3,7 @@ package com.family.base.ui.adapter
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
@@ -15,34 +16,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * 🆕 Шаг 1.7-3: универсальный адаптер для экрана «Мои рецепты».
- *
- * Один RecyclerView — два типа элементов:
- *  - ПАПКА  (RecipeFolderEntity) — item_recipe_folder.xml;
- *  - РЕЦЕПТ (RecipeEntity)       — item_recipe.xml (существующий layout).
- *
- * Модель списка — sealed class [RecipeCatalogItem]:
- *  - Folder(folder, recipesCount) — папка + счётчик «живых» рецептов в ней;
- *  - Recipe(recipe, photoFile)    — рецепт + локальный файл первого фото.
- *
- * Склейку двух LiveData (folders + recipes) в один список делает
- * RecipeListActivity: сначала все папки, потом все рецепты.
- *
- * Стиль — как у CatalogAdapter:
- *  - submitList через DiffUtil (папки и рецепты не пересекаются по id);
- *  - onFolderClick / onRecipeClick — клик;
- *  - onFolderLongClick / onRecipeLongClick — долгий клик (контекстное меню).
- *
- * Кто использует:
- *  - RecipeListActivity (source = "user") — папки + рецепты;
- *  - RecipeListActivity (source = "ai")   — только рецепты (folders пустые).
- */
 class RecipeCatalogAdapter(
     private val onFolderClick: (RecipeFolderEntity) -> Unit,
     private val onRecipeClick: (RecipeEntity) -> Unit,
     private val onFolderLongClick: (RecipeFolderEntity) -> Unit,
-    private val onRecipeLongClick: (RecipeEntity) -> Unit
+    private val onRecipeLongClick: (RecipeEntity) -> Unit,
+    private val onEditClick: (RecipeEntity) -> Unit,
+    private val onDeleteClick: (RecipeEntity) -> Unit
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -50,12 +30,6 @@ class RecipeCatalogAdapter(
         private const val TYPE_RECIPE = 1
     }
 
-    /**
-     * Модель элемента списка.
-     *
-     * @param Folder  папка + количество «живых» рецептов внутри (для подписи).
-     * @param Recipe  рецепт + локальный File первого фото (или null).
-     */
     sealed class RecipeCatalogItem {
         data class Folder(
             val folder: RecipeFolderEntity,
@@ -64,7 +38,7 @@ class RecipeCatalogAdapter(
 
         data class Recipe(
             val recipe: RecipeEntity,
-            val photoFile: java.io.File?
+            val photoFile: java.io.File? // Оставляем одно фото для совместимости, но будем использовать сетку
         ) : RecipeCatalogItem()
     }
 
@@ -74,17 +48,6 @@ class RecipeCatalogAdapter(
         SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
     }
 
-    // ============================================================
-    // ДАННЫЕ
-    // ============================================================
-
-    /**
-     * Обновить список через DiffUtil (плавные анимации, без мигания).
-     *
-     * Сравнение:
-     *  - Folder: по folder.id + (name, parentId, recipesCount) для areContentsTheSame;
-     *  - Recipe: по recipe.id + (title, description, updatedAt, photoFile) для contents.
-     */
     fun submitList(newItems: List<RecipeCatalogItem>) {
         val oldItems = items
         val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
@@ -125,10 +88,6 @@ class RecipeCatalogAdapter(
         diff.dispatchUpdatesTo(this)
     }
 
-    // ============================================================
-    // RECYCLER
-    // ============================================================
-
     override fun getItemViewType(position: Int): Int = when (items[position]) {
         is RecipeCatalogItem.Folder -> TYPE_FOLDER
         is RecipeCatalogItem.Recipe -> TYPE_RECIPE
@@ -154,10 +113,6 @@ class RecipeCatalogAdapter(
     }
 
     override fun getItemCount(): Int = items.size
-
-    // ============================================================
-    // VIEWHOLDER: ПАПКА
-    // ============================================================
 
     inner class FolderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val colorBar: View = view.findViewById(R.id.colorBar)
@@ -190,42 +145,25 @@ class RecipeCatalogAdapter(
         }
     }
 
-    // ============================================================
-    // VIEWHOLDER: РЕЦЕПТ
-    //
-    // item_recipe.xml (существующий layout):
-    //   colorBar, ivRecipePhoto, tvRecipeTitle, tvRecipeDescription, tvRecipeMeta
-    // ============================================================
-
     inner class RecipeViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val colorBar: View = view.findViewById(R.id.colorBar)
-        private val ivRecipePhoto: ImageView = view.findViewById(R.id.ivRecipePhoto)
+        private val mediaGrid: GridLayout = view.findViewById(R.id.mediaGrid)
         private val tvRecipeTitle: TextView = view.findViewById(R.id.tvRecipeTitle)
         private val tvRecipeDescription: TextView = view.findViewById(R.id.tvRecipeDescription)
         private val tvRecipeMeta: TextView = view.findViewById(R.id.tvRecipeMeta)
+        private val btnEdit: View = view.findViewById(R.id.btnEdit)
+        private val btnDelete: View = view.findViewById(R.id.btnDelete)
 
         fun bind(item: RecipeCatalogItem.Recipe) {
             val recipe = item.recipe
             val context = itemView.context
 
-            // Полоска: у ИИ — акцент, у пользовательских — обычный цвет.
             val colorRes = if (recipe.source == RecipeEntity.SOURCE_AI) {
                 R.color.colorWarning
             } else {
                 R.color.colorNormal
             }
             colorBar.setBackgroundColor(context.resources.getColor(colorRes, context.theme))
-
-            // Фото: локальный файл первого фото, иначе заглушка.
-            if (item.photoFile != null && item.photoFile.exists()) {
-                ivRecipePhoto.load(item.photoFile) {
-                    crossfade(true)
-                    placeholder(R.drawable.ic_item_default)
-                    error(R.drawable.ic_item_default)
-                }
-            } else {
-                ivRecipePhoto.load(R.drawable.ic_item_default)
-            }
 
             tvRecipeTitle.text = recipe.title
 
@@ -235,6 +173,31 @@ class RecipeCatalogAdapter(
             } else {
                 tvRecipeDescription.visibility = View.VISIBLE
                 tvRecipeDescription.text = desc
+            }
+
+            // --- СЕТКА МЕДИА ---
+            mediaGrid.removeAllViews()
+            if (item.photoFile != null && item.photoFile.exists()) {
+                mediaGrid.visibility = View.VISIBLE
+                // Создаём ImageView программно
+                val imageView = ImageView(context).apply {
+                    layoutParams = GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = 0
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        setMargins(4, 4, 4, 4)
+                    }
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    load(item.photoFile) {
+                        crossfade(true)
+                        placeholder(R.drawable.ic_item_default)
+                        error(R.drawable.ic_item_default)
+                    }
+                }
+                mediaGrid.addView(imageView)
+            } else {
+                mediaGrid.visibility = View.GONE
             }
 
             val sourceLabel = if (recipe.source == RecipeEntity.SOURCE_AI) "🤖 ИИ" else "📝 Мои"
@@ -247,12 +210,11 @@ class RecipeCatalogAdapter(
 
             itemView.setOnClickListener { onRecipeClick(recipe) }
             itemView.setOnLongClickListener { onRecipeLongClick(recipe); true }
+            
+            btnEdit.setOnClickListener { onEditClick(recipe) }
+            btnDelete.setOnClickListener { onDeleteClick(recipe) }
         }
     }
-
-    // ============================================================
-    // ВСПОМОГАТЕЛЬНОЕ
-    // ============================================================
 
     private fun pluralRecipes(n: Int): String {
         val mod10 = n % 10
