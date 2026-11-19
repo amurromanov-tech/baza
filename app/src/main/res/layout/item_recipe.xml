@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.cardview.widget.CardView
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -16,38 +15,22 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:minHeight="88dp">
+        android:orientation="vertical">
 
-        <!-- Цветная полоса слева — как в item_catalog_entry.xml -->
+        <!-- Цветная полоса сверху (вместо левой, т.к. дизайн изменился) -->
         <View
             android:id="@+id/colorBar"
-            android:layout_width="6dp"
-            android:layout_height="match_parent"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
             android:background="@color/colorPrimary" />
 
-        <!-- Фото рецепта. Если фото нет — ic_item_default через Coil. -->
-        <ImageView
-            android:id="@+id/ivRecipePhoto"
-            android:layout_width="88dp"
-            android:layout_height="88dp"
-            android:layout_margin="8dp"
-            android:contentDescription="Фото рецепта"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_item_default" />
-
         <LinearLayout
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_gravity="center_vertical"
             android:orientation="vertical"
-            android:paddingStart="0dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp">
+            android:padding="12dp">
 
-            <!-- Название рецепта -->
+            <!-- 1. Название рецепта -->
             <TextView
                 android:id="@+id/tvRecipeTitle"
                 android:layout_width="match_parent"
@@ -55,33 +38,70 @@
                 android:ellipsize="end"
                 android:maxLines="2"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="16sp"
+                android:textSize="18sp"
                 android:textStyle="bold"
                 tools:text="Блины классические" />
 
-            <!-- Короткое описание / первые шаги. Если описания нет — скрыт. -->
+            <!-- 2. Описание -->
             <TextView
                 android:id="@+id/tvRecipeDescription"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
-                android:maxLines="2"
+                android:maxLines="3"
                 android:textColor="?android:attr/textColorSecondary"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 tools:text="Молоко, мука, яйца, сахар, соль. Жарить на разогретой сковороде." />
 
-            <!-- Строка мета-информации: дата + маркер источника (ИИ/Мои) -->
+            <!-- 3. Сетка фото и видео (динамически заполняется в адаптере) -->
+            <GridLayout
+                android:id="@+id/mediaGrid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:columnCount="3"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <!-- 4. Кнопки управления -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="end"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnEdit"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Редактировать"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDelete"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Удалить"
+                    android:textColor="?attr/colorError"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Мета-информация (дата + источник) -->
             <TextView
                 android:id="@+id/tvRecipeMeta"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textColor="?android:attr/textColorSecondary"
-                android:textSize="12sp"
-                tools:text="🤖 ИИ · 12.11.2026 · 📷 3 · 🎬 1" />
+                android:textSize="11sp"
+                tools:text="🤖 ИИ · 12.11.2026" />
 
         </LinearLayout>
 
