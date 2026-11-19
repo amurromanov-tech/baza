@@ -12,6 +12,7 @@ import coil.load
 import com.family.base.R
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -38,7 +39,7 @@ class RecipeCatalogAdapter(
 
         data class Recipe(
             val recipe: RecipeEntity,
-            val photoFile: java.io.File? // Оставляем одно фото для совместимости, но будем использовать сетку
+            val mediaFiles: List<File> // Теперь список всех медиа
         ) : RecipeCatalogItem()
     }
 
@@ -79,7 +80,7 @@ class RecipeCatalogAdapter(
                         old.recipe.title == new.recipe.title &&
                             old.recipe.description == new.recipe.description &&
                             old.recipe.updatedAt == new.recipe.updatedAt &&
-                            old.photoFile?.absolutePath == new.photoFile?.absolutePath
+                            old.mediaFiles == new.mediaFiles // Сравниваем списки
                     else -> false
                 }
             }
@@ -175,27 +176,31 @@ class RecipeCatalogAdapter(
                 tvRecipeDescription.text = desc
             }
 
-            // --- СЕТКА МЕДИА ---
+            // --- СЕТКА МЕДИА (динамическая) ---
             mediaGrid.removeAllViews()
-            if (item.photoFile != null && item.photoFile.exists()) {
+            if (item.mediaFiles.isNotEmpty()) {
                 mediaGrid.visibility = View.VISIBLE
-                // Создаём ImageView программно
-                val imageView = ImageView(context).apply {
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = 0
-                        height = 0
-                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        setMargins(4, 4, 4, 4)
+                
+                for (file in item.mediaFiles) {
+                    val imageView = ImageView(context).apply {
+                        layoutParams = GridLayout.LayoutParams().apply {
+                            width = 0
+                            height = 0
+                            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                            rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                            setMargins(4, 4, 4, 4)
+                        }
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        
+                        // Загружаем файл. Если это видео, Coil всё равно покажет первый кадр.
+                        load(file) {
+                            crossfade(true)
+                            placeholder(R.drawable.ic_item_default)
+                            error(R.drawable.ic_item_default)
+                        }
                     }
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    load(item.photoFile) {
-                        crossfade(true)
-                        placeholder(R.drawable.ic_item_default)
-                        error(R.drawable.ic_item_default)
-                    }
+                    mediaGrid.addView(imageView)
                 }
-                mediaGrid.addView(imageView)
             } else {
                 mediaGrid.visibility = View.GONE
             }
