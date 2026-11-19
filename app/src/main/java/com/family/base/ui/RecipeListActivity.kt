@@ -54,7 +54,6 @@ class RecipeListActivity : AppCompatActivity() {
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
     private var aiProgressDialog: ProgressDialog? = null
 
-    // 🆕 Для голосового ввода (как в AddItemActivity)
     private var pendingVoiceField: EditText? = null
 
     private val editLauncher = registerForActivityResult(
@@ -77,7 +76,6 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    // 🆕 Лаунчер для голосового ввода (как в AddItemActivity)
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -158,10 +156,45 @@ class RecipeListActivity : AppCompatActivity() {
             onRecipeLongClick = { recipe ->
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
+            },
+            // НОВЫЕ ЛЯМБДЫ
+            onEditClick = { recipe ->
+                Logger.log(TAG, "recipe edit clicked: id=${recipe.id}")
+                val intent = Intent(this, RecipeEditActivity::class.java).apply {
+                    putExtra(RecipeEditActivity.EXTRA_RECIPE_ID, recipe.id)
+                    putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
+                }
+                editLauncher.launch(intent)
+            },
+            onDeleteClick = { recipe ->
+                Logger.log(TAG, "recipe delete clicked: id=${recipe.id}")
+                showDeleteRecipeDialog(recipe)
             }
         )
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
         binding.rvRecipes.adapter = adapter
+    }
+
+    private fun showDeleteRecipeDialog(recipe: RecipeEntity) {
+        AlertDialog.Builder(this)
+            .setTitle("🗑️ Удалить рецепт?")
+            .setMessage("Рецепт «${recipe.title}» будет удалён. Это действие нельзя отменить.")
+            .setPositiveButton("Удалить") { _, _ ->
+                val currentUser = viewModel.currentUserName
+                // Предполагается, что в ViewModel есть метод deleteRecipe
+                viewModel.deleteRecipe(recipe.id, currentUser) { error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this, "Рецепт удалён", Toast.LENGTH_SHORT).show()
+                            viewModel.loadContent()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun openRecipeDetail(recipeId: String) {
@@ -338,14 +371,6 @@ class RecipeListActivity : AppCompatActivity() {
         editLauncher.launch(intent)
     }
 
-    // ============================================================
-    // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2 + Голосовой ввод)
-    // ============================================================
-    /**
-     * Диалог ввода запроса для AI-генерации рецепта.
-     * Поле ввода + кнопка 🎤 справа (голосовой ввод через VoiceInputHelper,
-     * как в AddItemActivity).
-     */
     private fun showAiRecipeDialog() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -394,20 +419,11 @@ class RecipeListActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 🆕 Запуск голосового ввода (как в AddItemActivity).
-     * Запоминает поле, в которое нужно вставить распознанный текст,
-     * и вызывает VoiceInputHelper.startVoiceInput.
-     */
     private fun startVoiceFor(field: EditText) {
         pendingVoiceField = field
         VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Скажите, что хотите приготовить…")
     }
 
-    /**
-     * 🆕 Обработка результата запроса разрешения на микрофон
-     * (как в AddItemActivity). Если разрешение получено — повторяем запуск.
-     */
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
