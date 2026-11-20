@@ -156,42 +156,10 @@ class RecipeListActivity : AppCompatActivity() {
             onRecipeLongClick = { recipe ->
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
-            },
-            onEditClick = { recipe ->
-                Logger.log(TAG, "recipe edit clicked: id=${recipe.id}")
-                val intent = Intent(this, RecipeEditActivity::class.java).apply {
-                    putExtra(RecipeEditActivity.EXTRA_RECIPE_ID, recipe.id)
-                    putExtra(RecipeEditActivity.EXTRA_SOURCE, source)
-                }
-                editLauncher.launch(intent)
-            },
-            onDeleteClick = { recipe ->
-                Logger.log(TAG, "recipe delete clicked: id=${recipe.id}")
-                showDeleteRecipeDialog(recipe)
             }
         )
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
         binding.rvRecipes.adapter = adapter
-    }
-
-    private fun showDeleteRecipeDialog(recipe: RecipeEntity) {
-        AlertDialog.Builder(this)
-            .setTitle("🗑️ Удалить рецепт?")
-            .setMessage("Рецепт «${recipe.title}» будет удалён. Это действие нельзя отменить.")
-            .setPositiveButton("Удалить") { _, _ ->
-                val currentUser = viewModel.currentUserName
-                viewModel.deleteRecipe(recipe.id, currentUser) { error ->
-                    runOnUiThread {
-                        if (error != null) {
-                            Toast.makeText(this, error, Toast.LENGTH_LONG).show()
-                        } else {
-                            Toast.makeText(this, "Рецепт удалён", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
     }
 
     private fun openRecipeDetail(recipeId: String) {
@@ -760,9 +728,13 @@ class RecipeListActivity : AppCompatActivity() {
                 )
             )
         }
-        // Теперь recipes — это уже List<RecipeCatalogItem.Recipe> из ViewModel
         recipes.forEach { item ->
-            list.add(item)
+            list.add(
+                RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
+                    recipe = item.recipe,
+                    photoFile = item.photoFile
+                )
+            )
         }
         adapter.submitList(list)
     }
