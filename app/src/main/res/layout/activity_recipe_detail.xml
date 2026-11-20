@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -32,89 +31,17 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <!-- ============================================================ -->
-                <!-- 🆕 Шаг 1.5-3: ГАЛЕРЕЯ ФОТО                                  -->
-                <!-- Горизонтальный RecyclerView с фото рецепта.                  -->
-                <!-- Скрыт, если фото нет. Клик → FullscreenImageActivity.        -->
-                <!-- ============================================================ -->
-                <LinearLayout
-                    android:id="@+id/photosBlock"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone"
-                    tools:visibility="visible">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="📷 Фото"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="15sp"
-                        android:textStyle="bold" />
-
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/rvPhotos"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:clipToPadding="false"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="4dp"
-                        android:scrollbars="horizontal"
-                        tools:itemCount="3"
-                        tools:listitem="@layout/item_recipe_photo" />
-
-                </LinearLayout>
-
-                <!-- ============================================================ -->
-                <!-- 🆕 Шаг 1.5-3: ГАЛЕРЕЯ ВИДЕО                                 -->
-                <!-- Горизонтальный RecyclerView с видео рецепта.                  -->
-                <!-- Скрыт, если видео нет. Клик → VideoPlayerActivity.           -->
-                <!-- ============================================================ -->
-                <LinearLayout
-                    android:id="@+id/videosBlock"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:orientation="vertical"
-                    android:visibility="gone"
-                    tools:visibility="visible">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🎬 Видео"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="15sp"
-                        android:textStyle="bold" />
-
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/rvVideos"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:clipToPadding="false"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="4dp"
-                        android:scrollbars="horizontal"
-                        tools:itemCount="2"
-                        tools:listitem="@layout/item_recipe_video" />
-
-                </LinearLayout>
-
-                <!-- Название рецепта -->
+                <!-- 1. Название рецепта -->
                 <TextView
                     android:id="@+id/tvTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="22sp"
                     android:textStyle="bold"
                     tools:text="Блины классические" />
 
-                <!-- Мета: источник · автор · дата -->
+                <!-- 2. Мета: источник · автор · дата -->
                 <TextView
                     android:id="@+id/tvMeta"
                     android:layout_width="match_parent"
@@ -124,25 +51,28 @@
                     android:textSize="12sp"
                     tools:text="📝 Мой рецепт · автор: Алексей · 12.11.2026 14:30" />
 
-                <!-- Разделитель -->
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="12dp"
-                    android:background="?android:attr/listDivider" />
-
-                <!-- Описание / шаги / ингредиенты -->
+                <!-- 3. Описание / шаги / ингредиенты -->
                 <TextView
                     android:id="@+id/tvDescription"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
                     android:lineSpacingMultiplier="1.15"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="15sp"
                     tools:text="Молоко, мука, яйца, сахар, соль. Жарить на разогретой сковороде." />
 
-                <!-- Кнопки -->
+                <!-- 4. Сетка медиа (фото и видео по 3 в ряд) -->
+                <GridLayout
+                    android:id="@+id/mediaGrid"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:columnCount="3"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+
+                <!-- 5. Кнопки -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
