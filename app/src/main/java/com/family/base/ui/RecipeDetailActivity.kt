@@ -152,17 +152,23 @@ class RecipeDetailActivity : AppCompatActivity() {
     // ЗАГРУЗКА И ОТОБРАЖЕНИЕ МЕДИА (сетка)
     // ============================================================
 
-    private fun loadMedia() {
+        private fun loadMedia() {
         val rid = recipeId ?: return
         lifecycleScope.launch {
-            val photos = withContext(Dispatchers.IO) {
-                try { repository.getPhotos(rid) } catch (e: Exception) { emptyList() }
-            }
-            val videos = withContext(Dispatchers.IO) {
-                try { repository.getVideos(rid) } catch (e: Exception) { emptyList() }
+            val allMedia = withContext(Dispatchers.IO) {
+                try {
+                    repository.getAllMedia(rid)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "loadMedia error: ${e.message}", e)
+                    emptyList()
+                }
             }
 
-            Logger.log(TAG, "loadMedia: photos=${photos.size}, videos=${videos.size}")
+            // Разделяем на фото и видео для отображения
+            val photos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_PHOTO }
+            val videos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_VIDEO }
+
+            Logger.log(TAG, "loadMedia: total=${allMedia.size}, photos=${photos.size}, videos=${videos.size}")
             populateMediaGrid(photos, videos)
         }
     }
