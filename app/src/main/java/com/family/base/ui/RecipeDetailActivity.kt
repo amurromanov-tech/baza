@@ -15,7 +15,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import coil.load
 import com.family.base.AppUser
+import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
@@ -49,7 +51,6 @@ class RecipeDetailActivity : AppCompatActivity() {
     private var recipeId: String? = null
     private var recipe: RecipeEntity? = null
     private var changed = false
-    private var currentFolderPath: String? = null
 
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
@@ -152,7 +153,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     // ЗАГРУЗКА И ОТОБРАЖЕНИЕ МЕДИА (сетка)
     // ============================================================
 
-        private fun loadMedia() {
+    private fun loadMedia() {
         val rid = recipeId ?: return
         lifecycleScope.launch {
             val allMedia = withContext(Dispatchers.IO) {
@@ -164,7 +165,6 @@ class RecipeDetailActivity : AppCompatActivity() {
                 }
             }
 
-            // Разделяем на фото и видео для отображения
             val photos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_PHOTO }
             val videos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_VIDEO }
 
@@ -193,7 +193,13 @@ class RecipeDetailActivity : AppCompatActivity() {
                             setMargins(4, 4, 4, 4)
                         }
                         scaleType = ImageView.ScaleType.CENTER_CROP
-                        setImageURI(Uri.fromFile(file))
+                        
+                        load(file) {
+                            crossfade(true)
+                            placeholder(R.drawable.ic_item_default)
+                            error(R.drawable.ic_item_default)
+                        }
+                        
                         setOnClickListener { openPhotoFullscreen(media) }
                         setOnLongClickListener { onMediaLongClick(media); true }
                     }
@@ -203,48 +209,57 @@ class RecipeDetailActivity : AppCompatActivity() {
         }
 
         videos.forEach { media ->
-            val fileName = media.imageUrl
-            if (!fileName.isNullOrBlank()) {
-                val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-                if (file.exists()) {
-                    val frameLayout = FrameLayout(this).apply {
-                        layoutParams = GridLayout.LayoutParams().apply {
-                            width = 0
-                            height = 0
-                            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            setMargins(4, 4, 4, 4)
+            val frameLayout = FrameLayout(this).apply {
+                layoutParams = GridLayout.LayoutParams().apply {
+                    width = 0
+                    height = 0
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                    rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                    setMargins(4, 4, 4, 4)
+                }
+                setOnClickListener { openVideo(media) }
+                setOnLongClickListener { onMediaLongClick(media); true }
+            }
+
+            val imageView = ImageView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                
+                val thumbName = media.thumbnailUrl
+                if (!thumbName.isNullOrBlank()) {
+                    val thumbFile = ImageUtils.getRecipeThumbFile(this@RecipeDetailActivity, rid, thumbName)
+                    if (thumbFile.exists()) {
+                        load(thumbFile) {
+                            crossfade(true)
+                            placeholder(R.drawable.ic_item_default)
+                            error(R.drawable.ic_item_default)
                         }
-                        setOnClickListener { openVideo(media) }
-                        setOnLongClickListener { onMediaLongClick(media); true }
+                    } else {
+                        load(R.drawable.ic_item_default)
                     }
-
-                    val imageView = ImageView(this).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT
-                        )
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        setImageURI(Uri.fromFile(file))
-                    }
-                    frameLayout.addView(imageView)
-
-                    val playIcon = TextView(this).apply {
-                        text = "▶"
-                        textSize = 32f
-                        setTextColor(Color.WHITE)
-                        gravity = Gravity.CENTER
-                        layoutParams = FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT
-                        )
-                        setBackgroundColor(Color.parseColor("#44000000"))
-                    }
-                    frameLayout.addView(playIcon)
-
-                    binding.mediaGrid.addView(frameLayout)
+                } else {
+                    load(R.drawable.ic_item_default)
                 }
             }
+            frameLayout.addView(imageView)
+
+            val playIcon = TextView(this).apply {
+                text = "▶"
+                textSize = 32f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(Color.parseColor("#44000000"))
+            }
+            frameLayout.addView(playIcon)
+
+            binding.mediaGrid.addView(frameLayout)
         }
     }
 
@@ -358,7 +373,6 @@ class RecipeDetailActivity : AppCompatActivity() {
             binding.tvDescription.text = desc
         }
 
-        // Загружаем путь
         lifecycleScope.launch {
             val path = withContext(Dispatchers.IO) {
                 try {
