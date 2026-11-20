@@ -3,41 +3,28 @@ package com.family.base.ui.adapter
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import com.family.base.R
 import com.family.base.data.local.entity.RecipeEntity
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * 🆕 v23.2.3: Переработанный адаптер списка рецептов.
- * 
- * Новый дизайн:
- *  - Название (жирное, сверху)
- *  - Описание (до 3 строк)
- *  - Сетка медиа (фото/видео по 3 в ряд)
- *  - Кнопки "Редактировать" / "Удалить" (внизу)
+ * 🆕 v21.1.0 (Шаг 1.4b-1): адаптер списка рецептов.
+ * Использует item_recipe.xml (исходный вид).
  */
 class RecipeAdapter(
     private val onRecipeClick: (RecipeEntity) -> Unit,
-    private val onRecipeLongClick: (RecipeEntity) -> Unit,
-    private val onEditClick: (RecipeEntity) -> Unit,
-    private val onDeleteClick: (RecipeEntity) -> Unit
+    private val onRecipeLongClick: (RecipeEntity) -> Unit
 ) : RecyclerView.Adapter<RecipeAdapter.ViewHolder>() {
 
-    /**
-     * Элемент списка: рецепт + список локальных файлов (фото/видео).
-     * Пока Activity передаёт только один файл (photoFile), но структура готова к списку.
-     */
     data class RecipeListItem(
         val recipe: RecipeEntity,
-        val mediaFiles: List<File> = emptyList()
+        val photoFile: java.io.File?
     )
 
     private var items: List<RecipeListItem> = emptyList()
@@ -66,6 +53,17 @@ class RecipeAdapter(
         val context = holder.itemView.context
         val recipe = item.recipe
 
+        // ---------- Фото ----------
+        if (item.photoFile != null && item.photoFile.exists()) {
+            holder.photo.load(item.photoFile) {
+                crossfade(true)
+                placeholder(R.drawable.ic_item_default)
+                error(R.drawable.ic_item_default)
+            }
+        } else {
+            holder.photo.load(R.drawable.ic_item_default)
+        }
+
         // ---------- Название ----------
         holder.title.text = recipe.title
 
@@ -76,58 +74,6 @@ class RecipeAdapter(
         } else {
             holder.description.visibility = View.VISIBLE
             holder.description.text = desc
-        }
-
-        // ---------- Сетка медиа (фото и видео) ----------
-        holder.mediaGrid.removeAllViews()
-        if (item.mediaFiles.isEmpty()) {
-            holder.mediaGrid.visibility = View.GONE
-        } else {
-            holder.mediaGrid.visibility = View.VISIBLE
-            
-            // Ограничиваем количество отображаемых превью, чтобы не раздувать карточку
-            val maxItems = 6
-            val displayFiles = item.mediaFiles.take(maxItems)
-
-            for (file in displayFiles) {
-                val imageView = ImageView(context).apply {
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = 0
-                        height = 0
-                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        setMargins(4, 4, 4, 4)
-                    }
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    
-                    // Загружаем изображение (Coil)
-                    load(file) {
-                        crossfade(true)
-                        placeholder(R.drawable.ic_item_default)
-                        error(R.drawable.ic_item_default)
-                    }
-                }
-                holder.mediaGrid.addView(imageView)
-            }
-            
-            // Если файлов больше 6, добавляем "плашку" с количеством
-            if (item.mediaFiles.size > maxItems) {
-                val moreView = TextView(context).apply {
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = 0
-                        height = 0
-                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        setMargins(4, 4, 4, 4)
-                    }
-                    text = "+${item.mediaFiles.size - maxItems}"
-                    gravity = android.view.Gravity.CENTER
-                    setBackgroundColor(android.graphics.Color.parseColor("#44000000"))
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 16f
-                }
-                holder.mediaGrid.addView(moreView)
-            }
         }
 
         // ---------- Мета: источник + дата ----------
@@ -158,20 +104,15 @@ class RecipeAdapter(
             onRecipeLongClick(recipe)
             true
         }
-        
-        holder.btnEdit.setOnClickListener { onEditClick(recipe) }
-        holder.btnDelete.setOnClickListener { onDeleteClick(recipe) }
     }
 
     override fun getItemCount(): Int = items.size
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val colorBar: View = view.findViewById(R.id.colorBar)
-        val mediaGrid: GridLayout = view.findViewById(R.id.mediaGrid)
+        val photo: ImageView = view.findViewById(R.id.ivRecipePhoto)
         val title: TextView = view.findViewById(R.id.tvRecipeTitle)
         val description: TextView = view.findViewById(R.id.tvRecipeDescription)
         val meta: TextView = view.findViewById(R.id.tvRecipeMeta)
-        val btnEdit: com.google.android.material.button.MaterialButton = view.findViewById(R.id.btnEdit)
-        val btnDelete: com.google.android.material.button.MaterialButton = view.findViewById(R.id.btnDelete)
     }
 }
