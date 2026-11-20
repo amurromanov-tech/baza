@@ -10,7 +10,7 @@ import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.repository.RecipesRepository
-import com.family.base.ui.adapter.RecipeCatalogAdapter
+import com.family.base.ui.adapter.RecipeAdapter
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import kotlinx.coroutines.Job
@@ -37,8 +37,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _folderRecipeCounts = MutableLiveData<Map<String, Int>>(emptyMap())
     val folderRecipeCounts: LiveData<Map<String, Int>> = _folderRecipeCounts
 
-    private val _recipes = MutableLiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>>(emptyList())
-    val recipes: LiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>> = _recipes
+    private val _recipes = MutableLiveData<List<RecipeAdapter.RecipeListItem>>(emptyList())
+    val recipes: LiveData<List<RecipeAdapter.RecipeListItem>> = _recipes
 
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
@@ -138,28 +138,27 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     if (hasQuery && !sortNewest) recipesList.sortedBy { it.title.lowercase() }
                     else recipesList
 
-                // 4. Подстановка медиа (ВСЕ фото и видео)
+                // 4. Подстановка локального файла первого фото
                 val appContext = getApplication<Application>()
-                val listItems: List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe> = sortedRecipes.map { recipe ->
-                    val mediaFiles = mutableListOf<File>()
-                    try {
-                        val allMedia = recipesRepository.getAllMedia(recipe.id)
-                        allMedia.forEach { media ->
-                            val name = media.imageUrl
-                            if (!name.isNullOrBlank()) {
-                                val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
-                                if (f.exists()) {
-                                    mediaFiles.add(f)
-                                }
-                            }
+                val listItems: List<RecipeAdapter.RecipeListItem> = sortedRecipes.map { recipe ->
+                    val photoFile: File? = try {
+                        val firstPhoto = recipesRepository.getPhotos(recipe.id).firstOrNull()
+                        val name = firstPhoto?.imageUrl
+                        if (!name.isNullOrBlank()) {
+                            val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
+                            if (f.exists()) f else null
+                        } else {
+                            null
                         }
                     } catch (e: Exception) {
-                        Logger.log(TAG, "loadContent: mediaFiles error for ${recipe.id}: ${e.message}", e)
+                        Logger.log(
+                            TAG,
+                            "loadContent: photoFile error for ${recipe.id}: ${e.message}",
+                            e
+                        )
+                        null
                     }
-                    RecipeCatalogAdapter.RecipeCatalogItem.Recipe(
-                        recipe = recipe,
-                        mediaFiles = mediaFiles
-                    )
+                    RecipeAdapter.RecipeListItem(recipe = recipe, photoFile = photoFile)
                 }
 
                 // 5. Имя текущей папки
@@ -178,7 +177,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     TAG,
                     "loadContent: source=$source, folderId=$folderId, query='$searchQuery', " +
                         "sortNewest=$sortNewest, folders=${foldersList.size}, recipes=${listItems.size}, " +
-                        "counts=${counts.size}"
+                        "withPhoto=${listItems.count { it.photoFile != null }}, counts=${counts.size}"
                 )
 
                 _folders.value = foldersList
@@ -371,20 +370,14 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun deleteRecipe(recipeId: String, currentUser: String, onResult: (String?) -> Unit) {
+    fun deleteRecipe(recipeId: String, currentUser: String) {
         viewModelScope.launch {
             try {
                 val ok = recipesRepository.deleteRecipe(recipeId, currentUser)
                 Logger.log(TAG, "deleteRecipe: id=$recipeId, ok=$ok")
-                if (ok) {
-                    onResult(null)
-                    loadContent()
-                } else {
-                    onResult("Не удалось удалить рецепт")
-                }
+                if (ok) loadContent()
             } catch (e: Exception) {
                 Logger.log(TAG, "deleteRecipe ERROR: ${e.message}", e)
-                onResult("Ошибка удаления: ${e.message}")
             }
         }
     }
