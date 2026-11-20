@@ -165,50 +165,21 @@ class RecipeDetailActivity : AppCompatActivity() {
                 }
             }
 
-            val photos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_PHOTO }
-            val videos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_VIDEO }
-
-            Logger.log(TAG, "loadMedia: total=${allMedia.size}, photos=${photos.size}, videos=${videos.size}")
-            populateMediaGrid(photos, videos)
+            Logger.log(TAG, "loadMedia: total=${allMedia.size}")
+            populateMediaGrid(allMedia)
         }
     }
 
-    private fun populateMediaGrid(photos: List<RecipeMediaEntity>, videos: List<RecipeMediaEntity>) {
+    private fun populateMediaGrid(mediaList: List<RecipeMediaEntity>) {
         binding.mediaGrid.removeAllViews()
-        binding.mediaGrid.visibility = if (photos.isEmpty() && videos.isEmpty()) View.GONE else View.VISIBLE
+        binding.mediaGrid.visibility = if (mediaList.isEmpty()) View.GONE else View.VISIBLE
 
         val rid = recipeId ?: return
 
-        photos.forEach { media ->
-            val fileName = media.imageUrl
-            if (!fileName.isNullOrBlank()) {
-                val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-                if (file.exists()) {
-                    val imageView = ImageView(this).apply {
-                        layoutParams = GridLayout.LayoutParams().apply {
-                            width = 0
-                            height = 0
-                            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            setMargins(4, 4, 4, 4)
-                        }
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        
-                        load(file) {
-                            crossfade(true)
-                            placeholder(R.drawable.ic_item_default)
-                            error(R.drawable.ic_item_default)
-                        }
-                        
-                        setOnClickListener { openPhotoFullscreen(media) }
-                        setOnLongClickListener { onMediaLongClick(media); true }
-                    }
-                    binding.mediaGrid.addView(imageView)
-                }
-            }
-        }
-
-        videos.forEach { media ->
+        mediaList.forEach { media ->
+            val isVideo = media.mediaType == RecipeMediaEntity.TYPE_VIDEO
+            
+            // Создаем контейнер для ячейки
             val frameLayout = FrameLayout(this).apply {
                 layoutParams = GridLayout.LayoutParams().apply {
                     width = 0
@@ -217,7 +188,9 @@ class RecipeDetailActivity : AppCompatActivity() {
                     rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                     setMargins(4, 4, 4, 4)
                 }
-                setOnClickListener { openVideo(media) }
+                setOnClickListener { 
+                    if (isVideo) openVideo(media) else openPhotoFullscreen(media) 
+                }
                 setOnLongClickListener { onMediaLongClick(media); true }
             }
 
@@ -228,36 +201,50 @@ class RecipeDetailActivity : AppCompatActivity() {
                 )
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 
-                val thumbName = media.thumbnailUrl
-                if (!thumbName.isNullOrBlank()) {
-                    val thumbFile = ImageUtils.getRecipeThumbFile(this@RecipeDetailActivity, rid, thumbName)
-                    if (thumbFile.exists()) {
-                        load(thumbFile) {
-                            crossfade(true)
-                            placeholder(R.drawable.ic_item_default)
-                            error(R.drawable.ic_item_default)
+                // ЛОГИКА ЗАГРУЗКИ КАК В RecipeMediaEditAdapter
+                if (isVideo) {
+                    val thumbName = media.thumbnailUrl
+                    if (!thumbName.isNullOrBlank()) {
+                        val thumbFile = ImageUtils.getRecipeThumbFile(this@RecipeDetailActivity, rid, thumbName)
+                        if (thumbFile.exists()) {
+                            load(thumbFile) { crossfade(true) }
+                        } else {
+                            load(R.drawable.ic_item_default)
                         }
                     } else {
                         load(R.drawable.ic_item_default)
                     }
                 } else {
-                    load(R.drawable.ic_item_default)
+                    val photoName = media.imageUrl
+                    if (!photoName.isNullOrBlank()) {
+                        val photoFile = ImageUtils.getRecipeMediaFile(this@RecipeDetailActivity, rid, photoName)
+                        if (photoFile.exists()) {
+                            load(photoFile) { crossfade(true) }
+                        } else {
+                            load(R.drawable.ic_item_default)
+                        }
+                    } else {
+                        load(R.drawable.ic_item_default)
+                    }
                 }
             }
             frameLayout.addView(imageView)
 
-            val playIcon = TextView(this).apply {
-                text = "▶"
-                textSize = 32f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                setBackgroundColor(Color.parseColor("#44000000"))
+            // Если видео — добавляем иконку Play
+            if (isVideo) {
+                val playIcon = TextView(this).apply {
+                    text = "▶"
+                    textSize = 32f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(Color.parseColor("#44000000"))
+                }
+                frameLayout.addView(playIcon)
             }
-            frameLayout.addView(playIcon)
 
             binding.mediaGrid.addView(frameLayout)
         }
@@ -266,15 +253,9 @@ class RecipeDetailActivity : AppCompatActivity() {
     private fun openPhotoFullscreen(media: RecipeMediaEntity) {
         val rid = recipeId ?: return
         val fileName = media.imageUrl
-        if (fileName.isNullOrBlank()) {
-            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-        if (!file.exists()) {
-            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (!file.exists()) return
         val intent = Intent(this, FullscreenImageActivity::class.java).apply {
             putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, file.absolutePath)
             putExtra(FullscreenImageActivity.EXTRA_TITLE, recipe?.title ?: "Фото рецепта")
@@ -285,15 +266,9 @@ class RecipeDetailActivity : AppCompatActivity() {
     private fun openVideo(media: RecipeMediaEntity) {
         val rid = recipeId ?: return
         val fileName = media.imageUrl
-        if (fileName.isNullOrBlank()) {
-            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-        if (!file.exists()) {
-            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (!file.exists()) return
         val intent = Intent(this, VideoPlayerActivity::class.java).apply {
             putExtra(VideoPlayerActivity.EXTRA_URL, Uri.fromFile(file).toString())
             putExtra(VideoPlayerActivity.EXTRA_TITLE, recipe?.title ?: "Видео рецепта")
@@ -325,17 +300,9 @@ class RecipeDetailActivity : AppCompatActivity() {
             val okDb = withContext(Dispatchers.IO) {
                 try { repository.deleteMedia(media.id, currentUser) } catch (e: Exception) { false }
             }
-            if (!okDb) {
-                Toast.makeText(this@RecipeDetailActivity, "Не удалось удалить файл", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
+            if (!okDb) return@launch
             withContext(Dispatchers.IO) {
-                RecipeMediaController.deleteMediaFiles(
-                    this@RecipeDetailActivity,
-                    rid,
-                    media.imageUrl,
-                    media.thumbnailUrl
-                )
+                RecipeMediaController.deleteMediaFiles(this@RecipeDetailActivity, rid, media.imageUrl, media.thumbnailUrl)
             }
             changed = true
             loadMedia()
@@ -422,10 +389,6 @@ class RecipeDetailActivity : AppCompatActivity() {
         return AppUser.canDelete(user) || media.createdBy == user
     }
 
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ В ПАПКУ
-    // ============================================================
-
     private fun showMoveToFolderDialog(recipe: RecipeEntity) {
         lifecycleScope.launch {
             val folders = withContext(Dispatchers.IO) {
@@ -490,10 +453,6 @@ class RecipeDetailActivity : AppCompatActivity() {
         walk(null, 0)
         return result
     }
-
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ РЕЦЕПТА
-    // ============================================================
 
     private fun openEdit(id: String) {
         val intent = Intent(this, RecipeEditActivity::class.java).apply {
