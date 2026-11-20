@@ -37,7 +37,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _folderRecipeCounts = MutableLiveData<Map<String, Int>>(emptyMap())
     val folderRecipeCounts: LiveData<Map<String, Int>> = _folderRecipeCounts
 
-    // Теперь отдаем готовые элементы для RecipeCatalogAdapter
     private val _recipes = MutableLiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>>(emptyList())
     val recipes: LiveData<List<RecipeCatalogAdapter.RecipeCatalogItem.Recipe>> = _recipes
 
@@ -146,7 +145,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         val allMedia = recipesRepository.getAllMedia(recipe.id)
                         allMedia.forEach { media ->
-                            val name = media.imageUrl // В твоей БД это имя локального файла
+                            val name = media.imageUrl
                             if (!name.isNullOrBlank()) {
                                 val f = ImageUtils.getRecipeMediaFile(appContext, recipe.id, name)
                                 if (f.exists()) {
@@ -372,14 +371,20 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun deleteRecipe(recipeId: String, currentUser: String) {
+    fun deleteRecipe(recipeId: String, currentUser: String, onResult: (String?) -> Unit) {
         viewModelScope.launch {
             try {
                 val ok = recipesRepository.deleteRecipe(recipeId, currentUser)
                 Logger.log(TAG, "deleteRecipe: id=$recipeId, ok=$ok")
-                if (ok) loadContent()
+                if (ok) {
+                    onResult(null)
+                    loadContent()
+                } else {
+                    onResult("Не удалось удалить рецепт")
+                }
             } catch (e: Exception) {
                 Logger.log(TAG, "deleteRecipe ERROR: ${e.message}", e)
+                onResult("Ошибка удаления: ${e.message}")
             }
         }
     }
