@@ -49,6 +49,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     private var recipeId: String? = null
     private var recipe: RecipeEntity? = null
     private var changed = false
+    private var currentFolderPath: String? = null
 
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
@@ -172,7 +173,6 @@ class RecipeDetailActivity : AppCompatActivity() {
 
         val rid = recipeId ?: return
 
-        // Сначала фото
         photos.forEach { media ->
             val fileName = media.imageUrl
             if (!fileName.isNullOrBlank()) {
@@ -196,7 +196,6 @@ class RecipeDetailActivity : AppCompatActivity() {
             }
         }
 
-        // Потом видео (с иконкой Play)
         videos.forEach { media ->
             val fileName = media.imageUrl
             if (!fileName.isNullOrBlank()) {
@@ -214,7 +213,6 @@ class RecipeDetailActivity : AppCompatActivity() {
                         setOnLongClickListener { onMediaLongClick(media); true }
                     }
 
-                    // Превью первого кадра (или просто серый фон)
                     val imageView = ImageView(this).apply {
                         layoutParams = FrameLayout.LayoutParams(
                             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -225,7 +223,6 @@ class RecipeDetailActivity : AppCompatActivity() {
                     }
                     frameLayout.addView(imageView)
 
-                    // Иконка Play по центру
                     val playIcon = TextView(this).apply {
                         text = "▶"
                         textSize = 32f
@@ -355,6 +352,30 @@ class RecipeDetailActivity : AppCompatActivity() {
             binding.tvDescription.text = desc
         }
 
+        // Загружаем путь
+        lifecycleScope.launch {
+            val path = withContext(Dispatchers.IO) {
+                try {
+                    var current = r.folderId
+                    if (current == null) return@withContext "📂 Корень / Мои рецепты"
+                    val parts = mutableListOf<String>()
+                    while (current != null) {
+                        val folder = AppDatabase.getInstance(this@RecipeDetailActivity).recipeFolderDao().getLiveFolderById(current)
+                        if (folder != null) {
+                            parts.add(0, folder.name)
+                            current = folder.parentId
+                        } else {
+                            break
+                        }
+                    }
+                    "📂 Корень / Мои рецепты / ${parts.joinToString(" / ")}"
+                } catch (e: Exception) {
+                    "📂 Корень / Мои рецепты"
+                }
+            }
+            binding.tvPath.text = path
+        }
+
         val sourceLabel = when (r.source) {
             RecipeEntity.SOURCE_AI -> "🤖 Рецепт ИИ"
             RecipeEntity.SOURCE_USER -> "📝 Мой рецепт"
@@ -368,11 +389,8 @@ class RecipeDetailActivity : AppCompatActivity() {
             if (created.isNotEmpty()) append(" · ").append(created)
         }
 
-        // Управление доступностью кнопок
         val canDelete = canDeleteRecipe(r, currentUser)
         binding.btnActionDelete.alpha = if (canDelete) 1f else 0.4f
-
-        // Перенос доступен только для "моих" рецептов
         binding.btnActionMove.visibility = if (r.source == RecipeEntity.SOURCE_USER) View.VISIBLE else View.GONE
     }
 
