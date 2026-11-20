@@ -1,542 +1,93 @@
-package com.family.base.ui
+package com.family.base.ui.adapter
 
-import android.content.Intent
-import android.graphics.Color
-import android.net.Uri
-import android.os.Bundle
-import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
-import android.widget.FrameLayout
-import android.widget.GridLayout
+import android.view.ViewGroup
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.RecyclerView
 import coil.load
-import com.family.base.AppUser
 import com.family.base.R
-import com.family.base.data.TokenStorage
-import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.entity.RecipeEntity
-import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
-import com.family.base.data.repository.RecipesRepository
-import com.family.base.databinding.ActivityRecipeDetailBinding
 import com.family.base.util.ImageUtils
-import com.family.base.util.Logger
-import com.family.base.util.RecipeMediaController
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-class RecipeDetailActivity : AppCompatActivity() {
+/**
+ * 🆕 v21.1.0 (Шаг 1.5-2): адаптер медиа на экране РЕДАКТИРОВАНИЯ рецепта.
+ */
+class RecipeMediaEditAdapter(
+    private val recipeId: String,
+    private val onRemoveClick: (RecipeMediaEntity) -> Unit,
+    private val onItemClick: (RecipeMediaEntity) -> Unit
+) : RecyclerView.Adapter<RecipeMediaEditAdapter.ViewHolder>() {
 
-    companion object {
-        const val TAG = "RecipeDetailActivity"
-        const val EXTRA_RECIPE_ID = "recipe_id"
-        const val EXTRA_RESULT_CHANGED = "result_changed"
+    private var items: List<RecipeMediaEntity> = emptyList()
+
+    fun submitList(newItems: List<RecipeMediaEntity>) {
+        items = newItems
+        notifyDataSetChanged()
     }
 
-    private lateinit var binding: ActivityRecipeDetailBinding
-    private lateinit var repository: RecipesRepository
-    private lateinit var tokenStorage: TokenStorage
-
-    private var recipeId: String? = null
-    private var recipe: RecipeEntity? = null
-    private var changed = false
-
-    private val currentUser: String
-        get() = tokenStorage.getCurrentUser()
-            ?: tokenStorage.getUserDisplayName()
-            ?: "Пользователь"
-
-    private val dateFormat: SimpleDateFormat by lazy {
-        SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_recipe_media_edit, parent, false)
+        return ViewHolder(view)
     }
 
-    private val editLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        Logger.log(TAG, "editLauncher result: ${result.resultCode}")
-        if (result.resultCode == RESULT_OK) {
-            changed = true
-            loadRecipe()
-            loadMedia()
-        }
-    }
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val media = items[position]
+        val context = holder.itemView.context
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        Logger.log(TAG, "=== RecipeDetailActivity onCreate START ===")
+        val isVideo = media.mediaType == RecipeMediaEntity.TYPE_VIDEO
 
-        try {
-            binding = ActivityRecipeDetailBinding.inflate(layoutInflater)
-            setContentView(binding.root)
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
-            finish()
-            return
-        }
+        holder.typeBadge.visibility = if (isVideo) View.VISIBLE else View.GONE
 
-        val db = AppDatabase.getInstance(this)
-        repository = RecipesRepository(db, applicationContext)
-        tokenStorage = TokenStorage(this)
-
-        recipeId = intent.getStringExtra(EXTRA_RECIPE_ID)
-        if (recipeId.isNullOrBlank()) {
-            Logger.log(TAG, "onCreate: no recipeId, finish")
-            Toast.makeText(this, "Рецепт не найден", Toast.LENGTH_SHORT).show()
-            finish()
-            return
-        }
-        Logger.log(TAG, "onCreate: recipeId=$recipeId, currentUser=$currentUser")
-
-        setupToolbar()
-        setupButtons()
-        loadRecipe()
-        loadMedia()
-    }
-
-    private fun setupToolbar() {
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        supportActionBar?.setDisplayShowHomeEnabled(true)
-        supportActionBar?.title = "🍳 Рецепт"
-
-        binding.toolbar.setNavigationOnClickListener {
-            Logger.log(TAG, "toolbar up clicked")
-            finishWithResultIfChanged()
-        }
-    }
-
-    private fun setupButtons() {
-        binding.btnActionEdit.setOnClickListener {
-            val r = recipe
-            if (r == null) {
-                Toast.makeText(this, "Рецепт не загружен", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            openEdit(r.id)
-        }
-
-        binding.btnActionMove.setOnClickListener {
-            val r = recipe
-            if (r == null) {
-                Toast.makeText(this, "Рецепт не загружен", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            showMoveToFolderDialog(r)
-        }
-
-        binding.btnActionDelete.setOnClickListener {
-            val r = recipe
-            if (r == null) {
-                Toast.makeText(this, "Рецепт не загружен", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (!canDeleteRecipe(r, currentUser)) {
-                Toast.makeText(this, "Удалять может только автор или Алексей", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            confirmDelete(r)
-        }
-    }
-
-    // ============================================================
-    // ЗАГРУЗКА И ОТОБРАЖЕНИЕ МЕДИА (сетка)
-    // ============================================================
-
-    private fun loadMedia() {
-        val rid = recipeId ?: return
-        lifecycleScope.launch {
-            val allMedia = withContext(Dispatchers.IO) {
-                try {
-                    repository.getAllMedia(rid)
-                } catch (e: Exception) {
-                    Logger.log(TAG, "loadMedia error: ${e.message}", e)
-                    emptyList()
-                }
-            }
-
-            val photos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_PHOTO }
-            val videos = allMedia.filter { it.mediaType == RecipeMediaEntity.TYPE_VIDEO }
-
-            Logger.log(TAG, "loadMedia: total=${allMedia.size}, photos=${photos.size}, videos=${videos.size}")
-            populateMediaGrid(photos, videos)
-        }
-    }
-
-    private fun populateMediaGrid(photos: List<RecipeMediaEntity>, videos: List<RecipeMediaEntity>) {
-        binding.mediaGrid.removeAllViews()
-        binding.mediaGrid.visibility = if (photos.isEmpty() && videos.isEmpty()) View.GONE else View.VISIBLE
-
-        val rid = recipeId ?: return
-
-        // 1. Фото
-        photos.forEach { media ->
-            val fileName = media.imageUrl
-            if (!fileName.isNullOrBlank()) {
-                val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-                if (file.exists()) {
-                    val imageView = ImageView(this).apply {
-                        layoutParams = GridLayout.LayoutParams().apply {
-                            width = 0
-                            height = 0
-                            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                            setMargins(4, 4, 4, 4)
-                        }
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        
-                        // Грузим через Coil
-                        load(file) {
-                            crossfade(true)
-                            placeholder(R.drawable.ic_item_default)
-                            error(R.drawable.ic_item_default)
-                        }
-                        
-                        setOnClickListener { openPhotoFullscreen(media) }
-                        setOnLongClickListener { onMediaLongClick(media); true }
-                    }
-                    binding.mediaGrid.addView(imageView)
-                }
-            }
-        }
-
-        // 2. Видео
-        videos.forEach { media ->
-            val frameLayout = FrameLayout(this).apply {
-                layoutParams = GridLayout.LayoutParams().apply {
-                    width = 0
-                    height = 0
-                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                    rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                    setMargins(4, 4, 4, 4)
-                }
-                setOnClickListener { openVideo(media) }
-                setOnLongClickListener { onMediaLongClick(media); true }
-            }
-
-            val imageView = ImageView(this).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                
-                // Для видео берем thumbnailUrl. Если нет — заглушка.
-                val thumbName = media.thumbnailUrl
-                if (!thumbName.isNullOrBlank()) {
-                    val thumbFile = ImageUtils.getRecipeThumbFile(this@RecipeDetailActivity, rid, thumbName)
-                    if (thumbFile.exists()) {
-                        load(thumbFile) {
-                            crossfade(true)
-                            placeholder(R.drawable.ic_item_default)
-                            error(R.drawable.ic_item_default)
-                        }
-                    } else {
-                        load(R.drawable.ic_item_default)
-                    }
-                } else {
-                    load(R.drawable.ic_item_default)
-                }
-            }
-            frameLayout.addView(imageView)
-
-            val playIcon = TextView(this).apply {
-                text = "▶"
-                textSize = 32f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                setBackgroundColor(Color.parseColor("#44000000"))
-            }
-            frameLayout.addView(playIcon)
-
-            binding.mediaGrid.addView(frameLayout)
-        }
-    }
-
-    private fun openPhotoFullscreen(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
-        val fileName = media.imageUrl
-        if (fileName.isNullOrBlank()) {
-            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-        if (!file.exists()) {
-            Toast.makeText(this, "Файл фото не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val intent = Intent(this, FullscreenImageActivity::class.java).apply {
-            putExtra(FullscreenImageActivity.EXTRA_IMAGE_PATH, file.absolutePath)
-            putExtra(FullscreenImageActivity.EXTRA_TITLE, recipe?.title ?: "Фото рецепта")
-        }
-        startActivity(intent)
-    }
-
-    private fun openVideo(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
-        val fileName = media.imageUrl
-        if (fileName.isNullOrBlank()) {
-            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
-        if (!file.exists()) {
-            Toast.makeText(this, "Файл видео не найден", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val intent = Intent(this, VideoPlayerActivity::class.java).apply {
-            putExtra(VideoPlayerActivity.EXTRA_URL, Uri.fromFile(file).toString())
-            putExtra(VideoPlayerActivity.EXTRA_TITLE, recipe?.title ?: "Видео рецепта")
-            if (!media.mimeType.isNullOrBlank()) {
-                putExtra(VideoPlayerActivity.EXTRA_MIME, media.mimeType)
-            }
-        }
-        startActivity(intent)
-    }
-
-    private fun onMediaLongClick(media: RecipeMediaEntity) {
-        val canDelete = canDeleteMedia(media, currentUser)
-        if (!canDelete) {
-            Toast.makeText(this, "Удалять можно только свои файлы", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val what = if (media.mediaType == RecipeMediaEntity.TYPE_VIDEO) "видео" else "фото"
-        AlertDialog.Builder(this)
-            .setTitle("Удалить $what?")
-            .setMessage("Файл будет удалён из рецепта. Действие нельзя отменить.")
-            .setPositiveButton("Удалить") { _, _ -> doRemoveMedia(media) }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun doRemoveMedia(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
-        lifecycleScope.launch {
-            val okDb = withContext(Dispatchers.IO) {
-                try { repository.deleteMedia(media.id, currentUser) } catch (e: Exception) { false }
-            }
-            if (!okDb) {
-                Toast.makeText(this@RecipeDetailActivity, "Не удалось удалить файл", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            withContext(Dispatchers.IO) {
-                RecipeMediaController.deleteMediaFiles(
-                    this@RecipeDetailActivity,
-                    rid,
-                    media.imageUrl,
-                    media.thumbnailUrl
-                )
-            }
-            changed = true
-            loadMedia()
-        }
-    }
-
-    // ============================================================
-    // ЗАГРУЗКА РЕЦЕПТА
-    // ============================================================
-
-    private fun loadRecipe() {
-        val id = recipeId ?: return
-        lifecycleScope.launch {
-            val loaded = withContext(Dispatchers.IO) {
-                try { repository.getRecipeById(id) } catch (e: Exception) { null }
-            }
-            if (loaded == null) {
-                Toast.makeText(this@RecipeDetailActivity, "Рецепт не найден", Toast.LENGTH_SHORT).show()
-                finishWithResultIfChanged()
-                return@launch
-            }
-            recipe = loaded
-            bindRecipe(loaded)
-        }
-    }
-
-    private fun bindRecipe(r: RecipeEntity) {
-        binding.tvTitle.text = r.title
-
-        val desc = r.description?.trim()
-        if (desc.isNullOrEmpty()) {
-            binding.tvDescription.visibility = View.GONE
-        } else {
-            binding.tvDescription.visibility = View.VISIBLE
-            binding.tvDescription.text = desc
-        }
-
-        // Загружаем путь
-        lifecycleScope.launch {
-            val path = withContext(Dispatchers.IO) {
-                try {
-                    var current = r.folderId
-                    if (current == null) return@withContext "📂 Корень / Мои рецепты"
-                    val parts = mutableListOf<String>()
-                    while (current != null) {
-                        val folder = AppDatabase.getInstance(this@RecipeDetailActivity).recipeFolderDao().getLiveFolderById(current)
-                        if (folder != null) {
-                            parts.add(0, folder.name)
-                            current = folder.parentId
-                        } else {
-                            break
-                        }
-                    }
-                    "📂 Корень / Мои рецепты / ${parts.joinToString(" / ")}"
-                } catch (e: Exception) {
-                    "📂 Корень / Мои рецепты"
-                }
-            }
-            binding.tvPath.text = path
-        }
-
-        val sourceLabel = when (r.source) {
-            RecipeEntity.SOURCE_AI -> "🤖 Рецепт ИИ"
-            RecipeEntity.SOURCE_USER -> "📝 Мой рецепт"
-            else -> "🍳 Рецепт"
-        }
-        val created = try { dateFormat.format(Date(r.createdAt)) } catch (e: Exception) { "" }
-        val author = r.createdBy.ifBlank { "—" }
-        binding.tvMeta.text = buildString {
-            append(sourceLabel)
-            append(" · автор: ").append(author)
-            if (created.isNotEmpty()) append(" · ").append(created)
-        }
-
-        val canDelete = canDeleteRecipe(r, currentUser)
-        binding.btnActionDelete.alpha = if (canDelete) 1f else 0.4f
-        binding.btnActionMove.visibility = if (r.source == RecipeEntity.SOURCE_USER) View.VISIBLE else View.GONE
-    }
-
-    private fun canDeleteRecipe(r: RecipeEntity, user: String): Boolean {
-        return AppUser.canDelete(user) || r.createdBy == user
-    }
-
-    private fun canDeleteMedia(media: RecipeMediaEntity, user: String): Boolean {
-        return AppUser.canDelete(user) || media.createdBy == user
-    }
-
-    // ============================================================
-    // ПЕРЕМЕЩЕНИЕ В ПАПКУ
-    // ============================================================
-
-    private fun showMoveToFolderDialog(recipe: RecipeEntity) {
-        lifecycleScope.launch {
-            val folders = withContext(Dispatchers.IO) {
-                try { AppDatabase.getInstance(applicationContext).recipeFolderDao().getAllLive() }
-                catch (e: Exception) { emptyList() }
-            }
-            if (folders.isEmpty()) {
-                Toast.makeText(this@RecipeDetailActivity, "Нет папок", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val ordered = buildFolderHierarchy(folders)
-            val labels = ArrayList<String>()
-            val ids = ArrayList<String?>()
-            labels.add("📁 Без папки (корень)")
-            ids.add(null)
-            ordered.forEach { (folder, depth) ->
-                val indent = if (depth > 0) "— ".repeat(depth) else ""
-                labels.add("$indent${folder.name}")
-                ids.add(folder.id)
-            }
-            AlertDialog.Builder(this@RecipeDetailActivity)
-                .setTitle("📁 Переместить в папку")
-                .setItems(labels.toTypedArray()) { _, which ->
-                    val targetId = ids[which]
-                    if (targetId == recipe.folderId) {
-                        Toast.makeText(this@RecipeDetailActivity, "Уже в этой папке", Toast.LENGTH_SHORT).show()
-                        return@setItems
-                    }
-                    viewModelMove(recipe.id, targetId)
-                }
-                .setNegativeButton("Отмена", null)
-                .show()
-        }
-    }
-
-    private fun viewModelMove(recipeId: String, targetFolderId: String?) {
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                try { repository.moveRecipeToFolder(recipeId, targetFolderId, currentUser) }
-                catch (e: Exception) { false }
-            }
-            if (ok) {
-                Toast.makeText(this@RecipeDetailActivity, "Перемещено", Toast.LENGTH_SHORT).show()
-                changed = true
-                loadRecipe()
+        if (isVideo) {
+            val thumbFile: File? = if (!media.thumbnailUrl.isNullOrBlank()) {
+                val f = ImageUtils.getRecipeThumbFile(context, recipeId, media.thumbnailUrl)
+                if (f.exists()) f else null
             } else {
-                Toast.makeText(this@RecipeDetailActivity, "Ошибка перемещения", Toast.LENGTH_SHORT).show()
+                null
             }
-        }
-    }
 
-    private fun buildFolderHierarchy(all: List<RecipeFolderEntity>): List<Pair<RecipeFolderEntity, Int>> {
-        val byParent = all.groupBy { it.parentId }
-        val result = ArrayList<Pair<RecipeFolderEntity, Int>>(all.size)
-        fun walk(parentId: String?, depth: Int) {
-            val children = byParent[parentId] ?: return
-            children.forEach { folder ->
-                result.add(folder to depth)
-                walk(folder.id, depth + 1)
-            }
-        }
-        walk(null, 0)
-        return result
-    }
-
-    // ============================================================
-    // РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ РЕЦЕПТА
-    // ============================================================
-
-    private fun openEdit(id: String) {
-        val intent = Intent(this, RecipeEditActivity::class.java).apply {
-            putExtra(RecipeEditActivity.EXTRA_RECIPE_ID, id)
-        }
-        editLauncher.launch(intent)
-    }
-
-    private fun confirmDelete(r: RecipeEntity) {
-        AlertDialog.Builder(this)
-            .setTitle("Удалить рецепт?")
-            .setMessage("«${r.title}» будет удалён. Действие нельзя отменить.")
-            .setPositiveButton("Удалить") { _, _ -> doDelete(r) }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun doDelete(r: RecipeEntity) {
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                try { repository.deleteRecipe(r.id, currentUser) } catch (e: Exception) { false }
-            }
-            if (ok) {
-                Toast.makeText(this@RecipeDetailActivity, "Рецепт удалён", Toast.LENGTH_SHORT).show()
-                changed = true
-                finishWithResultIfChanged()
+            if (thumbFile != null) {
+                holder.thumb.load(thumbFile) {
+                    crossfade(true)
+                    placeholder(R.drawable.ic_item_default)
+                    error(R.drawable.ic_item_default)
+                }
             } else {
-                Toast.makeText(this@RecipeDetailActivity, "Не удалось удалить", Toast.LENGTH_SHORT).show()
+                holder.thumb.load(R.drawable.ic_item_default)
+            }
+        } else {
+            val photoFile: File? = if (!media.imageUrl.isNullOrBlank()) {
+                val f = ImageUtils.getRecipeMediaFile(context, recipeId, media.imageUrl)
+                if (f.exists()) f else null
+            } else {
+                null
+            }
+
+            if (photoFile != null) {
+                holder.thumb.load(photoFile) {
+                    crossfade(true)
+                    placeholder(R.drawable.ic_item_default)
+                    error(R.drawable.ic_item_default)
+                }
+            } else {
+                holder.thumb.load(R.drawable.ic_item_default)
             }
         }
+
+        holder.itemView.setOnClickListener { onItemClick(media) }
+        holder.btnRemove.setOnClickListener { onRemoveClick(media) }
     }
 
-    private fun finishWithResultIfChanged() {
-        if (changed) {
-            setResult(RESULT_OK, Intent().apply { putExtra(EXTRA_RESULT_CHANGED, true) })
-        } else {
-            setResult(RESULT_CANCELED)
-        }
-        finish()
+    override fun getItemCount(): Int = items.size
+
+    inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val thumb: ImageView = view.findViewById(R.id.ivThumb)
+        val typeBadge: TextView = view.findViewById(R.id.tvTypeBadge)
+        val btnRemove: ImageButton = view.findViewById(R.id.btnRemove)
     }
 }
