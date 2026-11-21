@@ -154,7 +154,8 @@ class RecipeDetailActivity : AppCompatActivity() {
     // ============================================================
 
     private fun loadMedia() {
-        val rid = recipe?.id ?: return // <-- ФИКС: берем id из объекта, а не из Intent
+        val rid = recipe?.id ?: return
+        Logger.log(TAG, "loadMedia: recipeId=$recipeId, recipe?.id=$rid") // <-- ВРЕМЕННЫЙ ЛОГ ДЛЯ ДИАГНОСТИКИ
         lifecycleScope.launch {
             val allMedia = withContext(Dispatchers.IO) {
                 try {
