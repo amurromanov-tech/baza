@@ -101,7 +101,7 @@ class RecipeDetailActivity : AppCompatActivity() {
         setupToolbar()
         setupButtons()
         loadRecipe()
-        loadMedia()
+        // loadMedia() — УДАЛЕНО, теперь вызывается внутри loadRecipe() после загрузки рецепта
     }
 
     private fun setupToolbar() {
@@ -328,6 +328,7 @@ class RecipeDetailActivity : AppCompatActivity() {
             }
             recipe = loaded
             bindRecipe(loaded)
+            loadMedia() // <-- ФИКС: loadMedia() вызывается ПОСЛЕ загрузки рецепта
         }
     }
 
