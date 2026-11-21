@@ -239,7 +239,7 @@ class RecipeDetailActivity : AppCompatActivity() {
                     textSize = 32f
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
-                    layoutParams = FrameLayout языLayoutParams(
+                    layoutParams = FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT
                     )
