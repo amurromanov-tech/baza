@@ -176,9 +176,13 @@ class RecipeDetailActivity : AppCompatActivity() {
         binding.mediaGrid.removeAllViews()
         binding.mediaGrid.visibility = if (mediaList.isEmpty()) View.GONE else View.VISIBLE
 
+        Logger.log(TAG, "populateMediaGrid: mediaList.size=${mediaList.size}") // <-- ВРЕМЕННЫЙ ЛОГ
+
         val rid = recipe?.id ?: return // <-- ФИКС: берем id из объекта, а не из Intent
 
         mediaList.forEach { media ->
+            Logger.log(TAG, "populateMediaGrid: adding media id=${media.id}, type=${media.mediaType}, imageUrl=${media.imageUrl}, thumb=${media.thumbnailUrl}") // <-- ВРЕМЕННЫЙ ЛОГ
+
             val isVideo = media.mediaType == RecipeMediaEntity.TYPE_VIDEO
             
             // Создаем контейнер для ячейки
@@ -249,6 +253,7 @@ class RecipeDetailActivity : AppCompatActivity() {
             }
 
             binding.mediaGrid.addView(frameLayout)
+            Logger.log(TAG, "populateMediaGrid: added view for media id=${media.id}") // <-- ВРЕМЕННЫЙ ЛОГ
         }
     }
 
