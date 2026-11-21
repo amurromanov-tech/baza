@@ -1,23 +1,17 @@
 package com.family.base.ui
 
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.View
-import android.widget.FrameLayout
-import android.widget.GridLayout
-import android.widget.ImageView
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import coil.load
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.family.base.AppUser
-import com.family.base.R
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.RecipeEntity
@@ -25,13 +19,13 @@ import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.local.entity.RecipeMediaEntity
 import com.family.base.data.repository.RecipesRepository
 import com.family.base.databinding.ActivityRecipeDetailBinding
+import com.family.base.ui.adapter.RecipeMediaGridAdapter
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.family.base.util.RecipeMediaController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,6 +46,9 @@ class RecipeDetailActivity : AppCompatActivity() {
     private var recipe: RecipeEntity? = null
     private var changed = false
 
+    /** 🆕 Адаптер сетки медиа. Создаётся лениво в loadMedia, когда известен recipeId. */
+    private var mediaAdapter: RecipeMediaGridAdapter? = null
+
     private val currentUser: String
         get() = tokenStorage.getCurrentUser()
             ?: tokenStorage.getUserDisplayName()
@@ -68,7 +65,6 @@ class RecipeDetailActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             changed = true
             loadRecipe()
-            loadMedia()
         }
     }
 
@@ -98,10 +94,12 @@ class RecipeDetailActivity : AppCompatActivity() {
         }
         Logger.log(TAG, "onCreate: recipeId=$recipeId, currentUser=$currentUser")
 
+        // 🆕 Настраиваем RecyclerView сразу (до загрузки данных).
+        setupMediaGrid()
+
         setupToolbar()
         setupButtons()
         loadRecipe()
-        // loadMedia() — УДАЛЕНО, теперь вызывается внутри loadRecipe() после загрузки рецепта
     }
 
     private fun setupToolbar() {
@@ -150,13 +148,18 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ЗАГРУЗКА И ОТОБРАЖЕНИЕ МЕДИА (сетка)
+    // 🆕 СЕТКА МЕДИА (RecyclerView + GridLayoutManager 3)
     // ============================================================
 
+    private fun setupMediaGrid() {
+        binding.mediaGrid.layoutManager = GridLayoutManager(this, 3)
+        binding.mediaGrid.isNestedScrollingEnabled = false
+        // adapter установим в loadMedia, когда узнаем recipeId (после загрузки recipe).
+    }
+
     private fun loadMedia() {
-        Logger.log(TAG, "loadMedia: START") // <-- ВРЕМЕННЫЙ ЛОГ ДЛЯ ДИАГНОСТИКИ
         val rid = recipe?.id ?: return
-        Logger.log(TAG, "loadMedia: recipeId=$recipeId, recipe?.id=$rid") // <-- ВРЕМЕННЫЙ ЛОГ ДЛЯ ДИАГНОСТИКИ
+        Logger.log(TAG, "loadMedia: recipeId=$rid")
         lifecycleScope.launch {
             val allMedia = withContext(Dispatchers.IO) {
                 try {
@@ -166,99 +169,32 @@ class RecipeDetailActivity : AppCompatActivity() {
                     emptyList()
                 }
             }
-
             Logger.log(TAG, "loadMedia: total=${allMedia.size}")
-            populateMediaGrid(allMedia)
+            populateMediaGrid(rid, allMedia)
         }
     }
 
-    private fun populateMediaGrid(mediaList: List<RecipeMediaEntity>) {
-        binding.mediaGrid.removeAllViews()
+    private fun populateMediaGrid(rid: String, mediaList: List<RecipeMediaEntity>) {
         binding.mediaGrid.visibility = if (mediaList.isEmpty()) View.GONE else View.VISIBLE
 
-        Logger.log(TAG, "populateMediaGrid: mediaList.size=${mediaList.size}") // <-- ВРЕМЕННЫЙ ЛОГ
-
-        val rid = recipe?.id ?: return // <-- ФИКС: берем id из объекта, а не из Intent
-
-        mediaList.forEach { media ->
-            Logger.log(TAG, "populateMediaGrid: adding media id=${media.id}, type=${media.mediaType}, imageUrl=${media.imageUrl}, thumb=${media.thumbnailUrl}") // <-- ВРЕМЕННЫЙ ЛОГ
-
-            val isVideo = media.mediaType == RecipeMediaEntity.TYPE_VIDEO
-            
-            // Создаем контейнер для ячейки
-            val frameLayout = FrameLayout(this).apply {
-                layoutParams = GridLayout.LayoutParams().apply {
-                    width = 0
-                    height = 0
-                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                    rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                    setMargins(4, 4, 4, 4)
-                }
-                setOnClickListener { 
-                    if (isVideo) openVideo(media) else openPhotoFullscreen(media) 
-                }
-                setOnLongClickListener { onMediaLongClick(media); true }
-            }
-
-            val imageView = ImageView(this).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                
-                // ЛОГИКА ЗАГРУЗКИ КАК В RecipeMediaEditAdapter
-                if (isVideo) {
-                    val thumbName = media.thumbnailUrl
-                    if (!thumbName.isNullOrBlank()) {
-                        val thumbFile = ImageUtils.getRecipeThumbFile(this@RecipeDetailActivity, rid, thumbName)
-                        if (thumbFile.exists()) {
-                            load(thumbFile) { crossfade(true) }
-                        } else {
-                            load(R.drawable.ic_item_default)
-                        }
-                    } else {
-                        load(R.drawable.ic_item_default)
-                    }
-                } else {
-                    val photoName = media.imageUrl
-                    if (!photoName.isNullOrBlank()) {
-                        val photoFile = ImageUtils.getRecipeMediaFile(this@RecipeDetailActivity, rid, photoName)
-                        if (photoFile.exists()) {
-                            load(photoFile) { crossfade(true) }
-                        } else {
-                            load(R.drawable.ic_item_default)
-                        }
-                    } else {
-                        load(R.drawable.ic_item_default)
-                    }
-                }
-            }
-            frameLayout.addView(imageView)
-
-            // Если видео — добавляем иконку Play
-            if (isVideo) {
-                val playIcon = TextView(this).apply {
-                    text = "▶"
-                    textSize = 32f
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    layoutParams = FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    )
-                    setBackgroundColor(Color.parseColor("#44000000"))
-                }
-                frameLayout.addView(playIcon)
-            }
-
-            binding.mediaGrid.addView(frameLayout)
-            Logger.log(TAG, "populateMediaGrid: added view for media id=${media.id}") // <-- ВРЕМЕННЫЙ ЛОГ
+        val adapter = mediaAdapter ?: RecipeMediaGridAdapter(
+            recipeId = rid,
+            onItemClick = { media ->
+                if (media.mediaType == RecipeMediaEntity.TYPE_VIDEO) openVideo(media)
+                else openPhotoFullscreen(media)
+            },
+            onItemLongClick = { media -> onMediaLongClick(media) }
+        ).also {
+            mediaAdapter = it
+            binding.mediaGrid.adapter = it
         }
+
+        Logger.log(TAG, "populateMediaGrid: submitting ${mediaList.size} items")
+        adapter.submitList(mediaList)
     }
 
     private fun openPhotoFullscreen(media: RecipeMediaEntity) {
-        val rid = recipe?.id ?: return // <-- ФИКС
+        val rid = recipe?.id ?: return
         val fileName = media.imageUrl
         if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
@@ -271,7 +207,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun openVideo(media: RecipeMediaEntity) {
-        val rid = recipe?.id ?: return // <-- ФИКС
+        val rid = recipe?.id ?: return
         val fileName = media.imageUrl
         if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
@@ -302,14 +238,19 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun doRemoveMedia(media: RecipeMediaEntity) {
-        val rid = recipe?.id ?: return // <-- ФИКС
+        val rid = recipe?.id ?: return
         lifecycleScope.launch {
             val okDb = withContext(Dispatchers.IO) {
                 try { repository.deleteMedia(media.id, currentUser) } catch (e: Exception) { false }
             }
             if (!okDb) return@launch
             withContext(Dispatchers.IO) {
-                RecipeMediaController.deleteMediaFiles(this@RecipeDetailActivity, rid, media.imageUrl, media.thumbnailUrl)
+                RecipeMediaController.deleteMediaFiles(
+                    this@RecipeDetailActivity,
+                    rid,
+                    media.imageUrl,
+                    media.thumbnailUrl
+                )
             }
             changed = true
             loadMedia()
@@ -333,7 +274,7 @@ class RecipeDetailActivity : AppCompatActivity() {
             }
             recipe = loaded
             bindRecipe(loaded)
-            loadMedia() // <-- ФИКС: loadMedia() вызывается ПОСЛЕ загрузки рецепта
+            loadMedia()
         }
     }
 
@@ -355,7 +296,8 @@ class RecipeDetailActivity : AppCompatActivity() {
                     if (current == null) return@withContext "📂 Корень / Мои рецепты"
                     val parts = mutableListOf<String>()
                     while (current != null) {
-                        val folder = AppDatabase.getInstance(this@RecipeDetailActivity).recipeFolderDao().getLiveFolderById(current)
+                        val folder = AppDatabase.getInstance(this@RecipeDetailActivity)
+                            .recipeFolderDao().getLiveFolderById(current)
                         if (folder != null) {
                             parts.add(0, folder.name)
                             current = folder.parentId
