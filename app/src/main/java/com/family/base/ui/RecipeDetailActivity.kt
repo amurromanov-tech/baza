@@ -154,6 +154,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     // ============================================================
 
     private fun loadMedia() {
+        Logger.log(TAG, "loadMedia: START") // <-- ВРЕМЕННЫЙ ЛОГ ДЛЯ ДИАГНОСТИКИ
         val rid = recipe?.id ?: return
         Logger.log(TAG, "loadMedia: recipeId=$recipeId, recipe?.id=$rid") // <-- ВРЕМЕННЫЙ ЛОГ ДЛЯ ДИАГНОСТИКИ
         lifecycleScope.launch {
@@ -238,7 +239,7 @@ class RecipeDetailActivity : AppCompatActivity() {
                     textSize = 32f
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
-                    layoutParams = FrameLayout.LayoutParams(
+                    layoutParams = FrameLayout языLayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT
                     )
