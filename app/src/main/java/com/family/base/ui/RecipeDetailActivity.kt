@@ -154,7 +154,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     // ============================================================
 
     private fun loadMedia() {
-        val rid = recipeId ?: return
+        val rid = recipe?.id ?: return // <-- ФИКС: берем id из объекта, а не из Intent
         lifecycleScope.launch {
             val allMedia = withContext(Dispatchers.IO) {
                 try {
@@ -174,7 +174,7 @@ class RecipeDetailActivity : AppCompatActivity() {
         binding.mediaGrid.removeAllViews()
         binding.mediaGrid.visibility = if (mediaList.isEmpty()) View.GONE else View.VISIBLE
 
-        val rid = recipeId ?: return
+        val rid = recipe?.id ?: return // <-- ФИКС: берем id из объекта, а не из Intent
 
         mediaList.forEach { media ->
             val isVideo = media.mediaType == RecipeMediaEntity.TYPE_VIDEO
@@ -251,7 +251,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun openPhotoFullscreen(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
+        val rid = recipe?.id ?: return // <-- ФИКС
         val fileName = media.imageUrl
         if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
@@ -264,7 +264,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun openVideo(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
+        val rid = recipe?.id ?: return // <-- ФИКС
         val fileName = media.imageUrl
         if (fileName.isNullOrBlank()) return
         val file = ImageUtils.getRecipeMediaFile(this, rid, fileName)
@@ -295,7 +295,7 @@ class RecipeDetailActivity : AppCompatActivity() {
     }
 
     private fun doRemoveMedia(media: RecipeMediaEntity) {
-        val rid = recipeId ?: return
+        val rid = recipe?.id ?: return // <-- ФИКС
         lifecycleScope.launch {
             val okDb = withContext(Dispatchers.IO) {
                 try { repository.deleteMedia(media.id, currentUser) } catch (e: Exception) { false }
