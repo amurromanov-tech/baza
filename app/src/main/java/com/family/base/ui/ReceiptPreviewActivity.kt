@@ -46,6 +46,12 @@ import java.util.Locale
  *    из поля dateTime чека (а не «сейчас»). updatedDate — всё ещё now;
  *  - после успеха возвращает RESULT_OK с navigate_to_folder_id;
  *  - кнопка «Отмена» — закрывает экран, ничего не сохраняя.
+ *
+ * 🆕 v23.3.x (фикс диалога B):
+ *  В AlertDialog нельзя одновременно вызывать setMessage(...) и setItems(...) —
+ *  message выигрывает, список не создаётся, диалог «залипает» без кнопок
+ *  и без вариантов (при setCancelable(false) — приходится убивать приложение).
+ *  Теперь: .setItems(...) + .setNegativeButton("Отмена импорта") + setCancelable(true).
  */
 class ReceiptPreviewActivity : AppCompatActivity() {
 
@@ -60,6 +66,12 @@ class ReceiptPreviewActivity : AppCompatActivity() {
     private var receiptData: ReceiptRepository.ReceiptData? = null
     private var isLoading = false
     private var isSaving = false
+
+    /**
+     * 🆕 Флаг отмены импорта (из диалога B). Если true — processPosition
+     * больше не продолжает цепочку, templates не накапливаются дальше.
+     */
+    private var processingCancelled = false
 
     /**
      * 🆕 Для каждой позиции чека — список найденных эталонов.
@@ -254,6 +266,7 @@ class ReceiptPreviewActivity : AppCompatActivity() {
      */
     private fun startProcessing(receipt: ReceiptRepository.ReceiptData) {
         isSaving = true
+        processingCancelled = false
         showLoading(true, "Обрабатываю позиции…")
 
         val now = System.currentTimeMillis()
@@ -283,6 +296,12 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         receiptDateMillis: Long,
         user: String
     ) {
+        // 🆕 Если пользователь отменил импорт — не продолжаем.
+        if (processingCancelled) {
+            Logger.log(TAG, "processPosition[$index]: cancelled, aborting")
+            return
+        }
+
         if (index >= receipt.items.size) {
             // Все позиции обработаны — сохраняем
             saveReceiptWithTemplates(receipt, templates, now, receiptDateMillis, user)
@@ -319,7 +338,14 @@ class ReceiptPreviewActivity : AppCompatActivity() {
 
     /**
      * 🆕 B: диалог выбора эталона для позиции.
-     * Показываем список «name (статус, дата)» + пункт «Создать новый».
+     *
+     * ⚠️ ВАЖНО (фикс v23.3.x): НЕ вызываем .setMessage(...) вместе с .setItems(...) —
+     * AlertDialog в этом случае игнорирует список и показывает только текст,
+     * без кнопок (а при setCancelable(false) — вообще не закрывается).
+     *
+     * Теперь: только заголовок + список (последний пункт «➕ Создать новый»),
+     * + кнопка «Отмена импорта» (корректно прерывает обработку),
+     * setCancelable(true) — можно закрыть «Назад» (это равносильно отмене).
      */
     private fun showMatchDialog(
         receipt: ReceiptRepository.ReceiptData,
@@ -338,9 +364,10 @@ class ReceiptPreviewActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("«${receiptItem.name}»")
-            .setMessage("Найдено в истории: ${matches.size}. Выберите эталон:")
             .setItems(labels.toTypedArray()) { dialog, which ->
                 dialog.dismiss()
+                if (processingCancelled) return@setItems
+
                 val chosen: ItemEntity? = if (which < matches.size) matches[which] else null
                 templates.add(chosen)
                 Logger.log(
@@ -351,7 +378,26 @@ class ReceiptPreviewActivity : AppCompatActivity() {
                 showLoading(true, "Обрабатываю позиции…")
                 processPosition(receipt, index + 1, templates, now, receiptDateMillis, user)
             }
-            .setCancelable(false)
+            .setNegativeButton("Отмена импорта") { dialog, _ ->
+                dialog.dismiss()
+                processingCancelled = true
+                isSaving = false
+                showLoading(false)
+                Logger.log(TAG, "processPosition[$index]: user cancelled import")
+                Toast.makeText(
+                    this@ReceiptPreviewActivity,
+                    "Импорт отменён",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .setOnCancelListener {
+                // «Назад» / тап вне диалога — тоже считаем отменой импорта.
+                processingCancelled = true
+                isSaving = false
+                showLoading(false)
+                Logger.log(TAG, "processPosition[$index]: dialog cancelled (back/outside)")
+            }
+            .setCancelable(true)
             .show()
     }
 
@@ -368,6 +414,10 @@ class ReceiptPreviewActivity : AppCompatActivity() {
         receiptDateMillis: Long,
         user: String
     ) {
+        if (processingCancelled) {
+            Logger.log(TAG, "saveReceiptWithTemplates: cancelled, aborting")
+            return
+        }
         showLoading(true, "Создаю папку покупки…")
 
         lifecycleScope.launch {
