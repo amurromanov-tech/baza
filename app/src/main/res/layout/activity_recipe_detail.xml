@@ -58,18 +58,18 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="4dp"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="14sp"
-                    android:lineSpacingExtra="4dp"
                     tools:text="📂 Корень / Мои рецепты / Выпечка" />
 
                 <!-- 4. Сетка медиа (фото и видео по 3 в ряд) -->
-                <GridLayout
+                <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/mediaGrid"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:columnCount="3"
+                    android:nestedScrollingEnabled="false"
                     android:visibility="gone"
                     tools:visibility="visible" />
 
@@ -84,16 +84,16 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
                     android:orientation="horizontal"
-                    android:weightSum="3"
-                    android:layout_marginBottom="12dp">
+                    android:weightSum="3">
 
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center">
+                        android:gravity="center"
+                        android:orientation="vertical">
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnActionEdit"
                             style="@style/RoundActionButton.Edit"
@@ -109,8 +109,8 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center">
+                        android:gravity="center"
+                        android:orientation="vertical">
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnActionMove"
                             style="@style/RoundActionButton.Move"
@@ -126,8 +126,8 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center">
+                        android:gravity="center"
+                        android:orientation="vertical">
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnActionDelete"
                             style="@style/RoundActionButton.Delete"
