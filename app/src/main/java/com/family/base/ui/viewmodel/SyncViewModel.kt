@@ -304,20 +304,27 @@ class SyncViewModel(
                     }
                 }
 
+                // ============================================================
+                // 🆕 ФИКС: загрузка фото и медиа вынесена из-под outboxPendingCount > 0
+                // ============================================================
+                // Если сеть отвалилась в прошлый раз, файлы остались локально с
+                // флагом imageSynced = false, но outbox уже мог уйти (pending=0).
+                // Теперь мы ВСЕГДА проверяем наличие незагруженных файлов.
+
                 val tPhotoBlock = System.currentTimeMillis()
-                if (outboxPendingCount > 0) {
-                    val tUploadImages = System.currentTimeMillis()
-                    uploadUnsyncedImages()
-                    Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - tUploadImages}ms")
 
-                    val tUploadFolderImages = System.currentTimeMillis()
-                    uploadUnsyncedFolderImages()
-                    Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
+                val tUploadImages = System.currentTimeMillis()
+                uploadUnsyncedImages()
+                Logger.log(TAG, "TIMING: uploadUnsyncedImages took ${System.currentTimeMillis() - tUploadImages}ms")
 
-                    val tUploadRecipeMedia = System.currentTimeMillis()
-                    uploadUnsyncedRecipeMedia()
-                    Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia took ${System.currentTimeMillis() - tUploadRecipeMedia}ms")
-                }
+                val tUploadFolderImages = System.currentTimeMillis()
+                uploadUnsyncedFolderImages()
+                Logger.log(TAG, "TIMING: uploadUnsyncedFolderImages took ${System.currentTimeMillis() - tUploadFolderImages}ms")
+
+                val tUploadRecipeMedia = System.currentTimeMillis()
+                uploadUnsyncedRecipeMedia()
+                Logger.log(TAG, "TIMING: uploadUnsyncedRecipeMedia took ${System.currentTimeMillis() - tUploadRecipeMedia}ms")
+
                 val tSyncImages = System.currentTimeMillis()
                 syncImages()
                 Logger.log(TAG, "TIMING: syncImages took ${System.currentTimeMillis() - tSyncImages}ms")
@@ -375,7 +382,13 @@ class SyncViewModel(
         val pendingCount = db.outboxDao().getPendingCount()
         Logger.log(TAG, "TIMING: finalizeSync getPendingCount took ${System.currentTimeMillis() - tPendingCount}ms")
 
-        if (pendingCount > 0) {
+        // 🆕 ФИКС: проверяем наличие незагруженных файлов (imageSynced = false), чтобы
+        // не показывать зеленый маркер, если файлы остались в очереди на загрузку.
+        val unsyncedMediaCount = withContext(Dispatchers.IO) {
+            db.recipeMediaDao().getAllRaw().count { !it.imageSynced && !it.isDeleted }
+        }
+
+        if (pendingCount > 0 || unsyncedMediaCount > 0) {
             onSyncStatusChanged(SyncStatus.PENDING)
         } else {
             onSyncStatusChanged(SyncStatus.SYNCED)
@@ -394,7 +407,8 @@ class SyncViewModel(
         Logger.log(
             TAG,
             "Sync finished in ${elapsed}ms: uploaded=$uploadedCount, downloaded=$downloadedCount, " +
-                "pending=$pendingCount, localItems=$localItemsCount, localFolders=$localFoldersCount"
+                "pending=$pendingCount, unsyncedMedia=$unsyncedMediaCount, " +
+                "localItems=$localItemsCount, localFolders=$localFoldersCount"
         )
 
         if (forceSyncRequested) {
@@ -403,6 +417,7 @@ class SyncViewModel(
                 append("⬆️ Отправлено: $uploadedCount\n")
                 append("⬇️ Получено: $downloadedCount")
                 if (pendingCount > 0) append("\n⏳ Осталось в очереди: $pendingCount")
+                if (unsyncedMediaCount > 0) append("\n⏳ Медиа в очереди: $unsyncedMediaCount")
             }
             notifySyncResult(msg)
             forceSyncRequested = false
@@ -861,11 +876,9 @@ class SyncViewModel(
     /**
      * Скачивание медиа рецептов с Диска.
      *
-     * 🔧 ФИКС (2026-11-16): убрана проверка `if (!media.imageSynced)`. Причина:
-     * при PULL через changelog `imageSynced` у Римы остаётся false (ChangelogParser
-     * его не выставляет), и файлы не скачивались. Теперь скачиваем ВСЕ живые
-     * медиа, у которых НЕТ локального файла. Если на Диске файла нет —
-     * downloadRecipeMediaBytes вернёт null, и мы просто пропустим (без ошибки).
+     * 🔧 ФИКС (2026-11-23): добавлена обработка 404.
+     * Если файла нет на Диске — мы сбрасываем imageSynced = false,
+     * чтобы приложение перестало долбить сервер одним и тем же файлом.
      */
     private suspend fun syncRecipeMedia() {
         if (!repository.isNetworkAvailable()) {
@@ -919,6 +932,13 @@ class SyncViewModel(
                 val bytes = repository.downloadRecipeMediaBytes(media.recipeId, fileName)
                 if (bytes == null) {
                     notFoundOnDisk++
+                    // 🆕 ФИКС: если файла нет на Диске (404) — сбрасываем флаг в false,
+                    // чтобы не пытаться скачать его снова.
+                    if (media.imageSynced) {
+                        val updated = media.copy(imageSynced = false)
+                        withContext(Dispatchers.IO) { db.recipeMediaDao().updateMedia(updated) }
+                        Logger.log(TAG, "syncRecipeMedia: reset imageSynced=false for ${media.id} (404)")
+                    }
                     return@forEachIndexed
                 }
                 val localFile = File(dir, fileName)
