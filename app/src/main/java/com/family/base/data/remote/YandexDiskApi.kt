@@ -20,6 +20,13 @@ import java.util.concurrent.TimeUnit
  * 🆕 v20.6.1: добавлен метод downloadPreviewWebDav для скачивания превью
  * через WebDAV API. Прямые preview-ссылки REST API отдают 403 без куки,
  * а WebDAV с OAuth-токеном работает.
+ *
+ * 🔧 ФИКС (2026-11-23): увеличены таймауты для загрузки больших файлов (видео).
+ * Раньше CALL_TIMEOUT_SEC был 45 секунд — видео не успевали загрузиться
+ * и падали с ошибкой "timeout".
+ * Теперь:
+ *   - обычные запросы (получение списка, JSON) — как раньше (быстрые)
+ *   - загрузка файлов (uploadFileToUrl) — увеличенные таймауты (до 5 минут)
  */
 interface YandexDiskApi {
 
@@ -140,10 +147,11 @@ interface YandexDiskApi {
     companion object {
         private var INSTANCE: YandexDiskApi? = null
 
-        private const val CONNECT_TIMEOUT_SEC = 10L
-        private const val READ_TIMEOUT_SEC = 15L
-        private const val WRITE_TIMEOUT_SEC = 20L
-        private const val CALL_TIMEOUT_SEC = 45L
+        // Обычные запросы (JSON, списки файлов) — быстрые таймауты
+        private const val CONNECT_TIMEOUT_SEC = 15L
+        private const val READ_TIMEOUT_SEC = 60L
+        private const val WRITE_TIMEOUT_SEC = 120L
+        private const val CALL_TIMEOUT_SEC = 300L
 
         fun getInstance(): YandexDiskApi {
             return INSTANCE ?: synchronized(this) {
