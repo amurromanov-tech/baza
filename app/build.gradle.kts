@@ -12,8 +12,8 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 285
-        versionName = "23.3.16"
+        versionCode = 286
+        versionName = "23.3.17"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
@@ -47,8 +47,6 @@ android {
                 "proguard-rules.pro"
             )
 
-            // 🆕 v14.1.0: подключаем release-подпись, если keystore доступен.
-            // Иначе — fallback на debug (для локальной сборки без секретов).
             val releaseSigning = signingConfigs.findByName("release")
             if (releaseSigning?.storeFile != null) {
                 signingConfig = releaseSigning
@@ -70,6 +68,20 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+
+    // 🆕 v23.3.17: FFmpegKit содержит нативные библиотеки .so.
+    // Без этого блока возможны конфликты libc++_shared.so при сборке.
+    packaging {
+        jniLibs {
+            pickFirsts += listOf(
+                "lib/**/libc++_shared.so",
+                "lib/**/libavcodec.so",
+                "lib/**/libavformat.so",
+                "lib/**/libavutil.so",
+                "lib/**/libswscale.so"
+            )
+        }
     }
 }
 
@@ -97,7 +109,7 @@ dependencies {
     // ===== ROOM =====
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")           // ← kapt вместо annotationProcessor
+    kapt("androidx.room:room-compiler:2.6.1")
 
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -128,18 +140,19 @@ dependencies {
     // ===== ML KIT (BARCODE) =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
 
-    // ===== 🆕 v21.0.10: Google Code Scanner (PDF417/DataMatrix/QR) =====
-    // Системный сканер Google Play Services. Умеет авто-зум (с 16.1.0),
-    // не требует разрешения камеры в манифесте, поддерживает PDF417.
-    // При локальной сборке при первом запуске может выдать
-    // CODE_SCANNER_UNAVAILABLE — подождать и повторить (модуль докачается).
+    // ===== Google Code Scanner (PDF417/DataMatrix/QR) =====
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // ===== 🆕 v20.5.14: ВИДЕО (ExoPlayer / Media3) =====
-    // MP4, MKV, WebM, 3GP, MOV — играет.
-    // AVI — НЕ играет (нет поддержки контейнера), уходит во внешний плеер.
+    // ===== ВИДЕО (ExoPlayer / Media3) =====
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
+
+    // ===== 🆕 v23.3.17: FFmpegKit для сжатия видео =====
+    // Оригинальный arthenica/ffmpeg-kit умер в 2025.
+    // Используем поддерживаемый форк dev.ffmpegkit-maintained.
+    // ffmpeg-kit-full (LGPL-3.0) — безопасно для закрытого приложения,
+    // содержит H.264 энкодер и MediaCodec hardware acceleration.
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
 
     // ===== TEST =====
     testImplementation("junit:junit:4.13.2")
