@@ -16,27 +16,22 @@ import java.util.UUID
  *  - сохранение фото из Uri в filesDir/recipe_media/<recipeId>/<mediaId>.jpg
  *    (с EXIF-поворотом и сжатием до 1024px, как processImage);
  *  - сохранение видео из Uri в filesDir/recipe_media/<recipeId>/<mediaId>.<ext>
- *    (без перекодирования — копируем байт-в-байт, чтобы не терять качество);
+ *    (байт-в-байт, затем СЖАТИЕ через FFmpeg для уменьшения размера);
  *  - генерацию превью видео через MediaMetadataRetriever → <mediaId>_thumb.jpg;
  *  - удаление файла медиа (фото/видео/превью).
+ *
+ * 🔧 v23.3.17: добавлено сжатие видео через VideoCompressor (H.264/CRF28/720p).
+ * Видео теперь сохраняется → сжимается → превью генерируется уже из сжатого.
+ * Плюс метод recompressExistingVideos() для пережатия старых файлов.
  *
  * ВАЖНО:
  *  - Всё работает ЛОКАЛЬНО, без интернета. Это критично для «Моих рецептов».
  *  - Синк на Яндекс.Диск — Шаг 1.6 (SyncManager + CatalogRepository).
- *  - mediaId генерируется здесь (UUID) и передаётся в RecipesRepository.addMedia
- *    как часть локального имени файла. См. ниже про сигнатуры.
  *
  * Соглашение по именам:
  *  - фото:  "<mediaId>.jpg"
  *  - видео: "<mediaId>.<ext>" (ext из mime или из имени Uri; по умолчанию mp4)
  *  - превью видео: "<mediaId>_thumb.jpg"
- *
- * Почему mediaId генерируется ДО записи в БД:
- *  - чтобы имя файла и id строки recipe_media совпадали (удобно при синке:
- *    imageUrl = "<id>.jpg", и по id сразу понятно, что за файл);
- *  - RecipesRepository.addMedia принимает localName/thumbName — controller
- *    возвращает их вместе с mimeType, а id строки БД = UUID, сгенерированный
- *    здесь же. Так проще: один UUID на всё.
  */
 object RecipeMediaController {
 
@@ -55,15 +50,11 @@ object RecipeMediaController {
     private const val THUMB_MAX_WIDTH = 512
 
     /**
-     * Результат сохранения медиа.
-     *
-     * @param mediaId     UUID, который нужно передать в RecipesRepository.addMedia
-     *                    (он же станет id строки recipe_media).
-     * @param localName   имя файла в filesDir/recipe_media/<recipeId>/ (например "abc.jpg").
-     * @param thumbName   имя файла превью (для видео; для фото — null).
-     * @param mimeType    MIME-тип ("image/jpeg", "video/mp4", ...).
-     * @param fileSize    размер файла в байтах (для логов/диагностики).
+     * 🆕 v23.3.17: порог, выше которого видео считается "несжатым".
+     * Для recompressExistingVideos: сжимаем только файлы больше 10 МБ.
      */
+    private const val RECOMPRESS_MIN_SIZE_BYTES = 10L * 1024L * 1024L
+
     data class SavedMedia(
         val mediaId: String,
         val localName: String,
@@ -76,18 +67,6 @@ object RecipeMediaController {
     // ФОТО
     // ============================================================
 
-    /**
-     * Сохранить фото из Uri в filesDir/recipe_media/<recipeId>/<mediaId>.jpg.
-     *
-     * Шаги:
-     *  1. mediaId = UUID.randomUUID().
-     *  2. ensureRecipeMediaDir(context, recipeId) — создаёт папку, если нет.
-     *  3. loadBitmapWithExif(context, uri) — читает Bitmap с поворотом по EXIF.
-     *  4. processImage(bitmap) — сжимает до 1024px / JPEG q=85.
-     *  5. Пишет байты в <mediaId>.jpg.
-     *
-     * Возвращает SavedMedia или null при ошибке.
-     */
     fun savePhotoFromUri(context: Context, recipeId: String, uri: Uri): SavedMedia? {
         return try {
             val mediaId = UUID.randomUUID().toString()
@@ -103,10 +82,7 @@ object RecipeMediaController {
                 return null
             }
 
-            // Масштабируем до PHOTO_MAX_SIZE (processImage уже это делает, но
-            // проверим на всякий случай — вдруг bitmap меньше, тогда оставляем как есть).
             val scaled = scaleDownIfNeeded(bitmap, PHOTO_MAX_SIZE)
-
             val bytes = ImageUtils.bitmapToJpegBytes(scaled, PHOTO_JPEG_QUALITY)
             if (scaled !== bitmap) {
                 try { scaled.recycle() } catch (_: Exception) {}
@@ -144,13 +120,11 @@ object RecipeMediaController {
      *
      * Шаги:
      *  1. mediaId = UUID.randomUUID().
-     *  2. Определяем mime и расширение (из ContentResolver.getType(uri),
-     *     а если пусто — из имени Uri; fallback — mp4).
-     *  3. Копируем байт-в-байт из contentResolver.openInputStream(uri)
-     *     в файл. Никакого перекодирования — сохраняем оригинал.
-     *  4. Генерируем превью: MediaMetadataRetriever → Bitmap первого кадра
-     *     → сжимаем в <mediaId>_thumb.jpg (если не удалось — thumbName = null,
-     *     это не ошибка, просто не будет превью).
+     *  2. Определяем mime и расширение.
+     *  3. Копируем байт-в-байт из contentResolver.openInputStream(uri) во временный файл.
+     *  4. 🆕 v23.3.17: сжимаем через VideoCompressor.compress() (H.264/CRF28/720p).
+     *     Если сжатие упало — оставляем оригинал (не теряем данные).
+     *  5. Генерируем превью уже из сжатого файла.
      *
      * Возвращает SavedMedia или null при ошибке.
      */
@@ -172,7 +146,7 @@ object RecipeMediaController {
             val localName = "$mediaId.$ext"
             val file = File(dir, localName)
 
-            // Копируем байт-в-байт.
+            // 1. Копируем байт-в-байт.
             val input = context.contentResolver.openInputStream(uri)
             if (input == null) {
                 Logger.log(TAG, "saveVideoFromUri: cannot open input stream uri=$uri")
@@ -184,20 +158,44 @@ object RecipeMediaController {
                 }
             }
 
+            val originalSize = file.length()
             Logger.log(
                 TAG,
-                "saveVideoFromUri: OK recipeId=$recipeId, mediaId=$mediaId, ext=$ext, mime=$mime, size=${file.length()}"
+                "saveVideoFromUri: copied original recipeId=$recipeId, mediaId=$mediaId, " +
+                    "ext=$ext, mime=$mime, size=$originalSize"
             )
 
-            // Превью (не критично — если не получилось, thumbName = null).
+            // 2. 🆕 Сжимаем (если файл похож на видео и не пуст).
+            if (originalSize > 0L && VideoCompressor.isVideoFile(file)) {
+                val t0 = System.currentTimeMillis()
+                val result = VideoCompressor.compress(file)
+                val elapsed = System.currentTimeMillis() - t0
+                if (result.success) {
+                    Logger.log(
+                        TAG,
+                        "saveVideoFromUri: compressed $originalSize → ${result.compressedSize} " +
+                            "(${String.format("%.0f", result.ratio * 100)}%), elapsed=${elapsed}ms"
+                    )
+                } else {
+                    Logger.log(
+                        TAG,
+                        "saveVideoFromUri: compression skipped/failed " +
+                            "(originalSize=$originalSize, error=${result.errorMessage}), " +
+                            "keeping original. elapsed=${elapsed}ms"
+                    )
+                }
+            }
+
+            // 3. Превью генерируем ПОСЛЕ сжатия (из актуального файла).
             val thumbName = tryGenerateVideoThumb(dir, mediaId, file)
+            val finalSize = file.length()
 
             SavedMedia(
                 mediaId = mediaId,
                 localName = localName,
                 thumbName = thumbName,
                 mimeType = mime ?: mimeFromExt(ext),
-                fileSize = file.length()
+                fileSize = finalSize
             )
         } catch (e: Exception) {
             Logger.log(TAG, "saveVideoFromUri ERROR: ${e.message}", e)
@@ -206,18 +204,108 @@ object RecipeMediaController {
     }
 
     /**
-     * Сгенерировать превью видео (первый кадр) в <mediaId>_thumb.jpg.
-     * Возвращает имя файла или null, если не удалось.
+     * 🆕 v23.3.17: пройтись по всем существующим видеофайлам в filesDir/recipe_media/
+     * и сжать те, что больше RECOMPRESS_MIN_SIZE_BYTES.
+     *
+     * Возвращает Pair(compressedCount, skippedCount).
+     *
+     * ВАЖНО: этот метод НЕ обновляет БД. Если файл был сжат, его размер уменьшился,
+     * но имя и mime не изменились — синк продолжит работать. Если хочется заново
+     * отправить сжатый файл на Диск (потому что предыдущий не залился из-за размера) —
+     * нужно сбросить у этой строки recipe_media флаг imageSynced = false.
+     *
+     * Проще всего: после вызова recompressExistingVideos() нажать "Синхронизировать",
+     * и незалитые видео поедут уже в сжатом виде (их imageSynced = false).
      */
+    fun recompressExistingVideos(context: Context): Pair<Int, Int> {
+        val rootDir = File(context.filesDir, "recipe_media")
+        if (!rootDir.exists() || !rootDir.isDirectory) {
+            Logger.log(TAG, "recompressExistingVideos: no recipe_media dir")
+            return 0 to 0
+        }
+
+        var compressed = 0
+        var skipped = 0
+
+        val recipeDirs = rootDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
+        Logger.log(TAG, "recompressExistingVideos: found ${recipeDirs.size} recipe dirs")
+
+        recipeDirs.forEach { recipeDir ->
+            val videoFiles = recipeDir.listFiles()?.filter { file ->
+                file.isFile &&
+                    VideoCompressor.isVideoFile(file) &&
+                    !file.name.endsWith("_thumb.jpg") &&
+                    !file.name.endsWith(".compressed.tmp")
+            } ?: emptyList()
+
+            videoFiles.forEach { file ->
+                if (file.length() < RECOMPRESS_MIN_SIZE_BYTES) {
+                    skipped++
+                    Logger.log(
+                        TAG,
+                        "recompressExistingVideos: skip ${file.name} (${file.length()} bytes < $RECOMPRESS_MIN_SIZE_BYTES)"
+                    )
+                    return@forEach
+                }
+                val t0 = System.currentTimeMillis()
+                val result = VideoCompressor.compress(file)
+                val elapsed = System.currentTimeMillis() - t0
+                if (result.success) {
+                    compressed++
+                    Logger.log(
+                        TAG,
+                        "recompressExistingVideos: OK ${file.parentFile?.name}/${file.name} " +
+                            "$(result.originalSize) → ${result.compressedSize} " +
+                            "(${String.format("%.0f", result.ratio * 100)}%), elapsed=${elapsed}ms"
+                    )
+                } else {
+                    skipped++
+                    Logger.log(
+                        TAG,
+                        "recompressExistingVideos: FAIL ${file.name}: ${result.errorMessage}, elapsed=${elapsed}ms"
+                    )
+                }
+            }
+        }
+
+        Logger.log(
+            TAG,
+            "recompressExistingVideos: DONE — compressed=$compressed, skipped=$skipped"
+        )
+        return compressed to skipped
+    }
+
+    // ============================================================
+    // УДАЛЕНИЕ
+    // ============================================================
+
+    fun deleteMediaFiles(
+        context: Context,
+        recipeId: String,
+        localName: String?,
+        thumbName: String?
+    ): Boolean {
+        val okMain = ImageUtils.deleteRecipeMediaFile(context, recipeId, localName)
+        val okThumb = if (!thumbName.isNullOrBlank()) {
+            ImageUtils.deleteRecipeMediaFile(context, recipeId, thumbName)
+        } else {
+            true
+        }
+        return okMain && okThumb
+    }
+
+    // ============================================================
+    // ВСПОМОГАТЕЛЬНОЕ
+    // ============================================================
+
     private fun tryGenerateVideoThumb(dir: File, mediaId: String, videoFile: File): String? {
         var retriever: MediaMetadataRetriever? = null
         return try {
             retriever = MediaMetadataRetriever()
             retriever.setDataSource(videoFile.absolutePath)
 
-            // Берём кадр на 0.5 сек (обычно уже не чёрный экран).
             val frame: Bitmap? = retriever.getFrameAtTime(
-                500_000L, // микросекунды
+                500_000L,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC
             ) ?: retriever.frameAtTime
 
@@ -250,37 +338,6 @@ object RecipeMediaController {
         }
     }
 
-    // ============================================================
-    // УДАЛЕНИЕ
-    // ============================================================
-
-    /**
-     * Удалить файл медиа (и превью, если есть).
-     * Возвращает true, если файлов не было или удаление прошло успешно.
-     */
-    fun deleteMediaFiles(
-        context: Context,
-        recipeId: String,
-        localName: String?,
-        thumbName: String?
-    ): Boolean {
-        val okMain = ImageUtils.deleteRecipeMediaFile(context, recipeId, localName)
-        val okThumb = if (!thumbName.isNullOrBlank()) {
-            ImageUtils.deleteRecipeMediaFile(context, recipeId, thumbName)
-        } else {
-            true
-        }
-        return okMain && okThumb
-    }
-
-    // ============================================================
-    // ВСПОМОГАТЕЛЬНОЕ
-    // ============================================================
-
-    /**
-     * Уменьшить Bitmap, если его большая сторона больше maxSize.
-     * Если меньше — возвращает исходный bitmap (без копии).
-     */
     private fun scaleDownIfNeeded(src: Bitmap, maxSize: Int): Bitmap {
         val w = src.width
         val h = src.height
@@ -293,12 +350,7 @@ object RecipeMediaController {
         return Bitmap.createScaledBitmap(src, newW, newH, true)
     }
 
-    /**
-     * Определить расширение видео.
-     * Приоритет: mime → имя Uri → "mp4".
-     */
     private fun resolveVideoExtension(mime: String?, uri: Uri): String {
-        // 1. По mime
         if (!mime.isNullOrBlank()) {
             val fromMime = MimeTypeMap.getSingleton()
                 .getExtensionFromMimeType(mime)
@@ -306,7 +358,6 @@ object RecipeMediaController {
                 return sanitizeExt(fromMime)
             }
         }
-        // 2. По имени Uri
         val lastSegment = uri.lastPathSegment
         if (!lastSegment.isNullOrBlank()) {
             val dot = lastSegment.lastIndexOf('.')
@@ -315,7 +366,6 @@ object RecipeMediaController {
                 if (ext.length in 1..5) return sanitizeExt(ext)
             }
         }
-        // 3. Fallback
         return "mp4"
     }
 
