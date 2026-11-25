@@ -17,8 +17,6 @@ import com.family.base.data.sync.SyncManagerApi
 import com.family.base.ui.SyncStatus
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
-import com.family.base.util.RecipeMediaController
-import com.family.base.util.VideoCompressor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -123,11 +121,6 @@ class SyncViewModel(
                 }
 
                 onSyncStatusChanged(SyncStatus.SYNCING)
-
-                // 🆕 v23.3.17: сжимаем видео, которые ещё не загружены на Диск
-                // (imageSynced = false) и весят больше 10 МБ. Это уменьшит объём
-                // трафика и время загрузки. Файлы уже сжатые (маленькие) пропускаем.
-                recompressPendingVideos()
 
                 val tMetrics = System.currentTimeMillis()
                 val localItemsCount = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw().size }
@@ -428,118 +421,6 @@ class SyncViewModel(
             delay(2000)
             onSyncResultMessage("")
         }
-    }
-
-    // ============================================================
-    // 🆕 v23.3.17: СЖАТИЕ ВИДЕО ПЕРЕД СИНКОМ
-    // ============================================================
-
-    /**
-     * Проходится по всем строкам recipe_media, у которых:
-     *  - mediaType = "video"
-     *  - imageSynced = false (файл ещё не отправлен на Диск)
-     *  - isDeleted = false
-     *  - локальный файл существует и весит > 10 МБ
-     *
-     * Сжимает через VideoCompressor. Если сжатие успешно — файл на диске
-     * уменьшился (имя и mime не изменились), поэтому следующий вызов
-     * uploadUnsyncedRecipeMedia зальёт уже сжатый файл.
-     *
-     * Если у видео нет локального файла (например, его нет на телефоне,
-     * но imageSynced = false по какой-то причине) — пропускаем, чтобы
-     * не тратить время.
-     */
-    private suspend fun recompressPendingVideos() {
-        val appContext = appContext()
-
-        val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
-
-        val candidates = allMedia.filter { media ->
-            if (media.mediaType != RecipeMediaEntity.TYPE_VIDEO) return@filter false
-            if (media.imageSynced) return@filter false
-            if (media.isDeleted) return@filter false
-            val name = media.imageUrl
-            if (name.isNullOrBlank()) return@filter false
-            val f = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, name)
-            f.exists() && f.length() > 0L
-        }
-
-        if (candidates.isEmpty()) {
-            Logger.log(TAG, "recompressPendingVideos: nothing to compress")
-            return
-        }
-
-        Logger.log(TAG, "recompressPendingVideos: ${candidates.size} video(s) to compress")
-
-        var compressed = 0
-        var skipped = 0
-        var failed = 0
-        val total = candidates.size
-
-        candidates.forEachIndexed { index, media ->
-            onSyncProgressChanged(
-                SyncProgress(
-                    SyncPhase.UPLOADING_PHOTOS,
-                    index + 1,
-                    total,
-                    "Сжатие видео (${index + 1}/$total)…"
-                )
-            )
-
-            val name = media.imageUrl ?: return@forEachIndexed
-            val file = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, name)
-
-            if (!file.exists() || file.length() == 0L) {
-                skipped++
-                return@forEachIndexed
-            }
-
-            val originalSize = file.length()
-            // Если файл уже меньше 10 МБ — скорее всего, он уже сжат.
-            if (originalSize < 10L * 1024L * 1024L) {
-                skipped++
-                return@forEachIndexed
-            }
-
-            val t0 = System.currentTimeMillis()
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    VideoCompressor.compress(file)
-                } catch (e: Exception) {
-                    Logger.log(TAG, "recompressPendingVideos: compress error for ${media.id}: ${e.message}", e)
-                    null
-                }
-            }
-            val elapsed = System.currentTimeMillis() - t0
-
-            when {
-                result == null -> {
-                    failed++
-                    Logger.log(TAG, "recompressPendingVideos: null result for ${media.id}, elapsed=${elapsed}ms")
-                }
-                result.success -> {
-                    compressed++
-                    Logger.log(
-                        TAG,
-                        "recompressPendingVideos: OK ${media.id} $originalSize → ${result.compressedSize} " +
-                            "(${String.format("%.0f", result.ratio * 100)}%), elapsed=${elapsed}ms"
-                    )
-                }
-                else -> {
-                    skipped++
-                    Logger.log(
-                        TAG,
-                        "recompressPendingVideos: skip ${media.id}, reason=${result.errorMessage}, " +
-                            "elapsed=${elapsed}ms"
-                    )
-                }
-            }
-        }
-
-        Logger.log(
-            TAG,
-            "recompressPendingVideos: DONE — compressed=$compressed, skipped=$skipped, failed=$failed, total=$total"
-        )
     }
 
     // ============================================================
