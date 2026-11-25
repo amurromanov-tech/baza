@@ -40,9 +40,14 @@ object Config {
     /** Логин для Basic Auth локального WebDAV */
     const val LOCAL_WEBDAV_USER = "baza"
 
-    /** Пароль для Basic Auth локального WebDAV */
+    /**
+     * Пароль для Basic Auth локального WebDAV.
+     * ⚠️ ДОЛЖЕН ТОЧНО СОВПАДАТЬ с --pass в start-baza-server.bat на ПК!
+     * Если браузер по новому паролю пускает, а приложение даёт красный индикатор —
+     * значит здесь зашит старый пароль. Замените значение на актуальное.
+     */
     // TODO (техдолг): вынести в шифрованное хранилище (EncryptedSharedPreferences)
-    const val LOCAL_WEBDAV_PASSWORD = "MySuperSecretPassword2026"
+    const val LOCAL_WEBDAV_PASSWORD = "Aa123123!"
 
     // ============================================================
     // ОБНОВЛЕНИЯ ПРИЛОЖЕНИЯ
