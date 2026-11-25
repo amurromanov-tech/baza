@@ -12,14 +12,19 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 287
-        versionName = "23.3.18"
+        versionCode = 288
+        versionName = "23.3.19"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // ============================================================
+    // 🆕 v14.1.0: RELEASE-ПОДПИСЬ (постоянный keystore)
+    // Читает секреты из переменных окружения (GitHub Secrets).
+    // Если секретов нет (локальная сборка) — release подписывается debug-ключом.
+    // ============================================================
     signingConfigs {
         create("release") {
             val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/baza-upload-key.jks"
@@ -64,40 +69,6 @@ android {
         viewBinding = true
         buildConfig = true
     }
-
-    // ============================================================
-    // 🔧 ФИКС КРАША FFmpegKit (v23.3.18):
-    // Указываем ТОЧНЫЕ пути для каждой архитектуры, а не wildcard.
-    // Это гарантирует, что Gradle возьмёт libc++_shared.so,
-    // совместимый с FFmpegKit, а не "чужой" (например, от другой библиотеки).
-    // ============================================================
-    packaging {
-        jniLibs {
-            pickFirsts += listOf(
-                "lib/arm64-v8a/libc++_shared.so",
-                "lib/armeabi-v7a/libc++_shared.so",
-                "lib/x86/libc++_shared.so",
-                "lib/x86_64/libc++_shared.so",
-                // Остальные библиотеки FFmpegKit — тоже явно:
-                "lib/arm64-v8a/libavcodec.so",
-                "lib/armeabi-v7a/libavcodec.so",
-                "lib/x86/libavcodec.so",
-                "lib/x86_64/libavcodec.so",
-                "lib/arm64-v8a/libavformat.so",
-                "lib/armeabi-v7a/libavformat.so",
-                "lib/x86/libavformat.so",
-                "lib/x86_64/libavformat.so",
-                "lib/arm64-v8a/libavutil.so",
-                "lib/armeabi-v7a/libavutil.so",
-                "lib/x86/libavutil.so",
-                "lib/x86_64/libavutil.so",
-                "lib/arm64-v8a/libswscale.so",
-                "lib/armeabi-v7a/libswscale.so",
-                "lib/x86/libswscale.so",
-                "lib/x86_64/libswscale.so"
-            )
-        }
-    }
 }
 
 dependencies {
@@ -129,7 +100,7 @@ dependencies {
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ===== WORKMANAGER =====
+    // ===== WORKMANAGER (напоминания) =====
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // ===== IMAGES =====
@@ -152,16 +123,15 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.0")
     implementation("androidx.camera:camera-view:1.3.0")
 
-    // ===== ML KIT =====
+    // ===== ML KIT (BARCODE) =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
+
+    // ===== Google Code Scanner (PDF417/DataMatrix/QR) =====
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // ===== ВИДЕО =====
+    // ===== ВИДЕО (ExoPlayer / Media3) =====
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
-
-    // ===== FFmpegKit =====
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
 
     // ===== TEST =====
     testImplementation("junit:junit:4.13.2")
