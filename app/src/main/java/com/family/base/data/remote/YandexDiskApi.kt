@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -52,12 +53,16 @@ class YandexDiskApi private constructor() {
 
         // 1. Клиент для Яндекса (REST API + публичные ссылки + превью галереи)
         private val yandexClient: OkHttpClient by lazy {
+            val logging = HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            }
             OkHttpClient.Builder()
                 .connectTimeout(CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .writeTimeout(WRITE_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
+                .addInterceptor(logging)
                 .addInterceptor { chain ->
                     val request = chain.request()
                     val newRequest = request.newBuilder()
@@ -70,6 +75,7 @@ class YandexDiskApi private constructor() {
         }
 
         // 2. Клиент для локального WebDAV (Rclone на ПК через ZeroTier)
+        // Без логирования BODY, чтобы не забивать память при загрузке больших видео
         private val webdavClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
                 .connectTimeout(10L, TimeUnit.SECONDS)
@@ -129,6 +135,7 @@ class YandexDiskApi private constructor() {
         /**
          * Определяет, должен ли путь идти на локальный WebDAV.
          * Правило: путь начинается с /BAZA (или /BAZA/...) → WebDAV, иначе → Яндекс.
+         * Это гарантирует, что галерея (/Романовы) всегда останется на Яндексе.
          */
         private fun shouldUseWebdav(path: String): Boolean {
             if (!Config.USE_LOCAL_WEBDAV_SYNC) return false
@@ -171,10 +178,6 @@ class YandexDiskApi private constructor() {
         }
     }
 
-    /**
-     * Скачивание превью через WebDAV API Яндекс.Диска.
-     * Всегда идёт на Яндекс (для галереи «Романовы»), не зависит от Config.USE_LOCAL_WEBDAV_SYNC.
-     */
     suspend fun downloadPreviewWebDav(
         url: String,
         authorization: String
@@ -210,9 +213,7 @@ class YandexDiskApi private constructor() {
 
     /**
      * Универсальный метод скачивания по URL.
-     * URL может быть:
-     *  - временной ссылкой Яндекса (из getDiskDownloadUrl) → yandexClient
-     *  - локальным WebDAV-URL (из normalizeWebdavPath) → webdavClient
+     * URL может быть временной ссылкой Яндекса или локальным WebDAV-URL.
      */
     suspend fun downloadFile(url: String): Response<ResponseBody> {
         val request = Request.Builder().url(url).get().build()
@@ -255,7 +256,7 @@ class YandexDiskApi private constructor() {
         path: String
     ): Response<LinkResponse> {
         return if (shouldUseWebdav(path)) {
-            // Для WebDAV проверяем существование файла через HEAD
+            // Для WebDAV честно проверяем существование файла через HEAD-запрос
             val exists = webdavCheckExists(path)
             if (exists) {
                 Response.success(LinkResponse(href = normalizeWebdavPath(path), method = "GET"))
@@ -383,43 +384,42 @@ class YandexDiskApi private constructor() {
         val size: Long?
     )
 
+    /**
+     * Парсинг WebDAV PROPFIND ответа через Regex.
+     * Это на 100% защищает от ошибок компиляции "Unresolved reference",
+     * которые возникают при использовании org.w3c.dom в Android/Kotlin.
+     */
     private fun parseWebdavXml(xml: String, basePath: String): List<WebdavItem> {
         val items = mutableListOf<WebdavItem>()
         try {
-            val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
-            factory.isNamespaceAware = true
-            val builder = factory.newDocumentBuilder()
-            
-            // ЯВНОЕ указание типа org.w3c.dom.Document исключает любые конфликты импортов
-            val doc: org.w3c.dom.Document = builder.parse(java.io.ByteArrayInputStream(xml.toByteArray()))
-            
-            val responses = doc.getElementsByTagNameNS("DAV:", "response")
-            val basePathNormalized = basePath.trimStart('/').trimEnd('/')
-            for (i in 0 until responses.length) {
-                val node = responses.item(i) as org.w3c.dom.Element
-                val hrefNode = node.getElementsByTagNameNS("DAV:", "href").item(0) ?: continue
-                val href = hrefNode.textContent.trim().trimStart('/').trimEnd('/')
-                if (href == basePathNormalized) continue
+            val responseRegex = Regex("<[^>]*:response[^>]*>(.*?)</[^>]*:response>", RegexOption.DOT_MATCHES_ALL)
+            val hrefRegex = Regex("<[^>]*:href[^>]*>(.*?)</[^>]*:href>")
+            val nameRegex = Regex("<[^>]*:displayname[^>]*>(.*?)</[^>]*:displayname>")
+            val lengthRegex = Regex("<[^>]*:getcontentlength[^>]*>(.*?)</[^>]*:getcontentlength>")
+            val collectionRegex = Regex("<[^>]*:collection[^>]*/>")
+
+            for (match in responseRegex.findAll(xml)) {
+                val block = match.groupValues[1]
+                val hrefMatch = hrefRegex.find(block) ?: continue
                 
-                val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? org.w3c.dom.Element ?: continue
-                val propNode = propstatNode.getElementsByTagNameNS("DAV:", "prop").item(0) as? org.w3c.dom.Element ?: continue
+                val href = hrefMatch.groupValues[1].trim().trimStart('/').trimEnd('/')
+                val basePathNormalized = basePath.trimStart('/').trimEnd('/')
+                if (href == basePathNormalized || href.isEmpty()) continue
+
+                val isDirectory = collectionRegex.containsMatchIn(block)
+                val nameMatch = nameRegex.find(block)
+                val lengthMatch = lengthRegex.find(block)
                 
-                val resourcetypeNode = propNode.getElementsByTagNameNS("DAV:", "resourcetype").item(0)
-                val collectionNode = resourcetypeNode?.getElementsByTagNameNS("DAV:", "collection")?.item(0)
-                val isDir = collectionNode != null
+                val displayName = nameMatch?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+                val size = lengthMatch?.groupValues?.getOrNull(1)?.trim()?.toLongOrNull()
                 
-                val displayNameNode = propNode.getElementsByTagNameNS("DAV:", "displayname").item(0)
-                val name = displayNameNode?.textContent ?: href.substringAfterLast('/')
-                
-                val contentLengthNode = propNode.getElementsByTagNameNS("DAV:", "getcontentlength").item(0)
-                val size = contentLengthNode?.textContent?.toLongOrNull()
-                
-                if (name.isNotEmpty()) {
-                    items.add(WebdavItem(name, isDir, size))
+                val finalName = displayName ?: href.substringAfterLast('/')
+                if (finalName.isNotEmpty()) {
+                    items.add(WebdavItem(finalName, isDirectory, size))
                 }
             }
         } catch (e: Exception) {
-            // XML parse error — возвращаем пустой список
+            // XML parse error — игнорируем и возвращаем то, что успели
         }
         return items
     }
