@@ -14,17 +14,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
-import org.w3c.dom.Document
-import org.w3c.dom.Element
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Query
-import java.io.ByteArrayInputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
-import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * Фасад для работы с хранилищем данных.
@@ -390,21 +386,23 @@ class YandexDiskApi private constructor() {
     private fun parseWebdavXml(xml: String, basePath: String): List<WebdavItem> {
         val items = mutableListOf<WebdavItem>()
         try {
-            val factory = DocumentBuilderFactory.newInstance()
+            val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
             val builder = factory.newDocumentBuilder()
-            // Явное приведение типа для корректного разрешения getElementsByTagNameNS
-            val doc = builder.parse(ByteArrayInputStream(xml.toByteArray())) as Document
+            
+            // ЯВНОЕ указание типа org.w3c.dom.Document исключает любые конфликты импортов
+            val doc: org.w3c.dom.Document = builder.parse(java.io.ByteArrayInputStream(xml.toByteArray()))
+            
             val responses = doc.getElementsByTagNameNS("DAV:", "response")
             val basePathNormalized = basePath.trimStart('/').trimEnd('/')
             for (i in 0 until responses.length) {
-                val node = responses.item(i) as Element
+                val node = responses.item(i) as org.w3c.dom.Element
                 val hrefNode = node.getElementsByTagNameNS("DAV:", "href").item(0) ?: continue
                 val href = hrefNode.textContent.trim().trimStart('/').trimEnd('/')
                 if (href == basePathNormalized) continue
                 
-                val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? Element ?: continue
-                val propNode = propstatNode.getElementsByTagNameNS("DAV:", "prop").item(0) as? Element ?: continue
+                val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? org.w3c.dom.Element ?: continue
+                val propNode = propstatNode.getElementsByTagNameNS("DAV:", "prop").item(0) as? org.w3c.dom.Element ?: continue
                 
                 val resourcetypeNode = propNode.getElementsByTagNameNS("DAV:", "resourcetype").item(0)
                 val collectionNode = resourcetypeNode?.getElementsByTagNameNS("DAV:", "collection")?.item(0)
@@ -421,7 +419,7 @@ class YandexDiskApi private constructor() {
                 }
             }
         } catch (e: Exception) {
-            // XML parse error
+            // XML parse error — возвращаем пустой список
         }
         return items
     }
