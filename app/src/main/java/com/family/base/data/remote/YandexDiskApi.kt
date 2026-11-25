@@ -28,12 +28,12 @@ import javax.xml.parsers.DocumentBuilderFactory
  * Фасад для работы с хранилищем данных.
  *
  * 🆕 v23.3.19: Поддержка локального WebDAV (Rclone через ZeroTier) через флаг Config.USE_LOCAL_WEBDAV_SYNC.
- * - Если true: приватные методы (upload, download, list, delete, mkdir) работают через WebDAV (Basic Auth).
+ * - Если true: приватные методы для путей внутри /BAZA работают через WebDAV (Basic Auth).
  * - Если false: работает через Яндекс.Диск REST API (OAuth).
- * - Публичные методы (getPublic*, downloadPreviewWebDav) всегда идут на Яндекс.Диск (не зависят от флага).
+ * - Пути ВНЕ /BAZA (например, /Романовы для галереи) всегда идут на Яндекс.Диск.
+ * - Публичные методы (getPublic*, downloadPreviewWebDav) всегда идут на Яндекс.Диск.
  *
- * Стратегия «Фасад»: все сигнатуры методов сохранены, вызывающий код (CatalogRepository, SyncManagerApi,
- * DiskUploader, BackupManagerV2, SyncViewModel) не требует изменений.
+ * Стратегия «Фасад»: все сигнатуры методов сохранены, вызывающий код не требует изменений.
  */
 class YandexDiskApi private constructor() {
 
@@ -47,7 +47,6 @@ class YandexDiskApi private constructor() {
             }
         }
 
-        // --- Таймауты (сохранены из предыдущей версии) ---
         private const val CONNECT_TIMEOUT_SEC = 15L
         private const val READ_TIMEOUT_SEC = 60L
         private const val WRITE_TIMEOUT_SEC = 120L
@@ -75,7 +74,7 @@ class YandexDiskApi private constructor() {
         // 2. Клиент для локального WebDAV (Rclone на ПК через ZeroTier)
         private val webdavClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
-                .connectTimeout(10L, TimeUnit.SECONDS) // Локальная сеть — быстро
+                .connectTimeout(10L, TimeUnit.SECONDS)
                 .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .writeTimeout(WRITE_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
@@ -94,7 +93,7 @@ class YandexDiskApi private constructor() {
                 .build()
         }
 
-        // 3. Retrofit для публичных методов Яндекса (getPublicResources, getPublicDownloadUrl)
+        // 3. Retrofit для публичных методов Яндекса
         private val yandexRetrofit: Retrofit by lazy {
             Retrofit.Builder()
                 .baseUrl(Config.YANDEX_DISK_API_BASE)
@@ -109,7 +108,6 @@ class YandexDiskApi private constructor() {
 
         private val gson = Gson()
 
-        // Внутренний Retrofit-интерфейс только для публичных методов Яндекса
         private interface PublicYandexService {
             @GET("disk/public/resources")
             suspend fun getPublicResources(
@@ -128,6 +126,16 @@ class YandexDiskApi private constructor() {
 
         private fun emptyBody(): ResponseBody {
             return "".toResponseBody("text/plain".toMediaType())
+        }
+
+        /**
+         * Определяет, должен ли путь идти на локальный WebDAV.
+         * Правило: путь начинается с /BAZA (или /BAZA/...) → WebDAV, иначе → Яндекс.
+         */
+        private fun shouldUseWebdav(path: String): Boolean {
+            if (!Config.USE_LOCAL_WEBDAV_SYNC) return false
+            val normalizedPath = path.trimStart('/')
+            return normalizedPath.startsWith(Config.SHARED_FOLDER_NAME)
         }
     }
 
@@ -166,7 +174,7 @@ class YandexDiskApi private constructor() {
     }
 
     /**
-     * 🆕 v20.6.1: Скачивание превью через WebDAV API Яндекс.Диска.
+     * Скачивание превью через WebDAV API Яндекс.Диска.
      * Всегда идёт на Яндекс (для галереи «Романовы»), не зависит от Config.USE_LOCAL_WEBDAV_SYNC.
      */
     suspend fun downloadPreviewWebDav(
@@ -187,67 +195,23 @@ class YandexDiskApi private constructor() {
     }
 
     // ============================================================
-    // ПРИВАТНЫЕ МЕТОДЫ (Яндекс / WebDAV — по флагу)
+    // ПРИВАТНЫЕ МЕТОДЫ (Яндекс / WebDAV — по флагу и пути)
     // ============================================================
 
     suspend fun getUploadUrl(
-        auth: String,
+        authorization: String,
         path: String,
         overwrite: Boolean = true
     ): Response<LinkResponse> {
-        return if (Config.USE_LOCAL_WEBDAV_SYNC) {
-            // Для WebDAV возвращаем прямой URL для PUT
+        return if (shouldUseWebdav(path)) {
             Response.success(LinkResponse(href = normalizeWebdavPath(path), method = "PUT"))
         } else {
-            yandexGetUploadUrl(auth, path, overwrite)
+            yandexGetUploadUrl(authorization, path, overwrite)
         }
     }
 
     /**
-     * Загрузка файла по прямому URL.
-     * URL может быть:
-     *  - временной ссылкой Яндекса (из getUploadUrl) → yandexClient
-     *  - локальным WebDAV-URL (из normalizeWebdavPath) → webdavClient
-     */
-    suspend fun uploadFileToUrl(
-        url: String,
-        file: okhttp3.RequestBody
-    ): Response<Void> {
-        val request = Request.Builder().url(url).put(file).build()
-        val client = if (url.startsWith(Config.LOCAL_WEBDAV_URL)) webdavClient else yandexClient
-        val response = client.newCall(request).execute()
-        return if (response.isSuccessful) {
-            Response.success(null)
-        } else {
-            Response.error(response.code, response.body ?: emptyBody())
-        }
-    }
-
-    suspend fun createFolder(
-        auth: String,
-        path: String
-    ): Response<Void> {
-        return if (Config.USE_LOCAL_WEBDAV_SYNC) {
-            webdavMkdir(path)
-        } else {
-            yandexCreateFolder(auth, path)
-        }
-    }
-
-    suspend fun getDiskDownloadUrl(
-        auth: String,
-        path: String
-    ): Response<LinkResponse> {
-        return if (Config.USE_LOCAL_WEBDAV_SYNC) {
-            // Для WebDAV возвращаем прямой URL для GET
-            Response.success(LinkResponse(href = normalizeWebdavPath(path), method = "GET"))
-        } else {
-            yandexGetDownloadUrl(auth, path)
-        }
-    }
-
-    /**
-     * Скачивание файла по прямому URL.
+     * Универсальный метод скачивания по URL.
      * URL может быть:
      *  - временной ссылкой Яндекса (из getDiskDownloadUrl) → yandexClient
      *  - локальным WebDAV-URL (из normalizeWebdavPath) → webdavClient
@@ -263,29 +227,71 @@ class YandexDiskApi private constructor() {
         }
     }
 
+    suspend fun uploadFileToUrl(
+        url: String,
+        file: okhttp3.RequestBody
+    ): Response<Void> {
+        val request = Request.Builder().url(url).put(file).build()
+        val client = if (url.startsWith(Config.LOCAL_WEBDAV_URL)) webdavClient else yandexClient
+        val response = client.newCall(request).execute()
+        return if (response.isSuccessful) {
+            Response.success(null)
+        } else {
+            Response.error(response.code, response.body ?: emptyBody())
+        }
+    }
+
+    suspend fun createFolder(
+        authorization: String,
+        path: String
+    ): Response<Void> {
+        return if (shouldUseWebdav(path)) {
+            webdavMkdir(path)
+        } else {
+            yandexCreateFolder(authorization, path)
+        }
+    }
+
+    suspend fun getDiskDownloadUrl(
+        authorization: String,
+        path: String
+    ): Response<LinkResponse> {
+        return if (shouldUseWebdav(path)) {
+            // Для WebDAV проверяем существование файла через HEAD
+            val exists = webdavCheckExists(path)
+            if (exists) {
+                Response.success(LinkResponse(href = normalizeWebdavPath(path), method = "GET"))
+            } else {
+                Response.error(404, emptyBody())
+            }
+        } else {
+            yandexGetDownloadUrl(authorization, path)
+        }
+    }
+
     suspend fun getDiskResources(
-        auth: String,
+        authorization: String,
         path: String,
         limit: Int = 200,
         offset: Int = 0,
         previewSize: String? = null
     ): Response<DiskResourcesResponse> {
-        return if (Config.USE_LOCAL_WEBDAV_SYNC) {
+        return if (shouldUseWebdav(path)) {
             webdavList(path)
         } else {
-            yandexGetResources(auth, path, limit, offset, previewSize)
+            yandexGetResources(authorization, path, limit, offset, previewSize)
         }
     }
 
     suspend fun deleteFile(
-        auth: String,
+        authorization: String,
         path: String,
         permanently: Boolean = false
     ): Response<Unit> {
-        return if (Config.USE_LOCAL_WEBDAV_SYNC) {
+        return if (shouldUseWebdav(path)) {
             webdavDelete(path)
         } else {
-            yandexDelete(auth, path, permanently)
+            yandexDelete(authorization, path, permanently)
         }
     }
 
@@ -294,9 +300,19 @@ class YandexDiskApi private constructor() {
     // ============================================================
 
     private fun normalizeWebdavPath(path: String): String {
-        // path вида "/BAZA/data/items.json" → "http://10.251.135.94:8080/BAZA/data/items.json"
         val cleanPath = path.trimStart('/')
         return "${Config.LOCAL_WEBDAV_URL}$cleanPath"
+    }
+
+    private suspend fun webdavCheckExists(path: String): Boolean {
+        val url = normalizeWebdavPath(path)
+        val request = Request.Builder().url(url).head().build()
+        return try {
+            val response = webdavClient.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private suspend fun webdavMkdir(path: String): Response<Void> {
@@ -304,7 +320,7 @@ class YandexDiskApi private constructor() {
         val request = Request.Builder().url(url).method("MKCOL", null).build()
         val response = webdavClient.newCall(request).execute()
         return when {
-            response.isSuccessful || response.code == 405 -> Response.success(null) // 405 = уже существует
+            response.isSuccessful || response.code == 405 -> Response.success(null)
             else -> Response.error(response.code, response.body ?: emptyBody())
         }
     }
@@ -314,7 +330,7 @@ class YandexDiskApi private constructor() {
         val request = Request.Builder().url(url).delete().build()
         val response = webdavClient.newCall(request).execute()
         return when {
-            response.isSuccessful || response.code == 404 -> Response.success(Unit) // 404 = уже удалён
+            response.isSuccessful || response.code == 404 -> Response.success(Unit)
             else -> Response.error(response.code, response.body ?: emptyBody())
         }
     }
@@ -382,7 +398,6 @@ class YandexDiskApi private constructor() {
                 val node = responses.item(i) as org.w3c.dom.Element
                 val hrefNode = node.getElementsByTagNameNS("DAV:", "href").item(0) ?: continue
                 val href = hrefNode.textContent.trim().trimStart('/').trimEnd('/')
-                // Исключаем саму запрашиваемую папку (первый response в PROPFIND)
                 if (href == basePathNormalized) continue
                 val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? org.w3c.dom.Element
                     ?: continue
@@ -400,7 +415,7 @@ class YandexDiskApi private constructor() {
                 }
             }
         } catch (e: Exception) {
-            // XML parse error — возвращаем пустой список
+            // XML parse error
         }
         return items
     }
@@ -410,12 +425,12 @@ class YandexDiskApi private constructor() {
     // ============================================================
 
     private suspend fun yandexGetUploadUrl(
-        auth: String,
+        authorization: String,
         path: String,
         overwrite: Boolean
     ): Response<LinkResponse> {
         val url = "${Config.YANDEX_DISK_API_BASE}disk/resources/upload?path=${URLEncoder.encode(path, "UTF-8")}&overwrite=$overwrite"
-        val request = Request.Builder().url(url).header("Authorization", auth).get().build()
+        val request = Request.Builder().url(url).header("Authorization", authorization).get().build()
         val response = yandexClient.newCall(request).execute()
         if (!response.isSuccessful) {
             return Response.error(response.code, response.body ?: emptyBody())
@@ -426,11 +441,11 @@ class YandexDiskApi private constructor() {
     }
 
     private suspend fun yandexGetDownloadUrl(
-        auth: String,
+        authorization: String,
         path: String
     ): Response<LinkResponse> {
         val url = "${Config.YANDEX_DISK_API_BASE}disk/resources/download?path=${URLEncoder.encode(path, "UTF-8")}"
-        val request = Request.Builder().url(url).header("Authorization", auth).get().build()
+        val request = Request.Builder().url(url).header("Authorization", authorization).get().build()
         val response = yandexClient.newCall(request).execute()
         if (!response.isSuccessful) {
             return Response.error(response.code, response.body ?: emptyBody())
@@ -441,7 +456,7 @@ class YandexDiskApi private constructor() {
     }
 
     private suspend fun yandexGetResources(
-        auth: String,
+        authorization: String,
         path: String,
         limit: Int,
         offset: Int,
@@ -451,7 +466,7 @@ class YandexDiskApi private constructor() {
         if (previewSize != null) {
             urlBuilder.append("&preview_size=$previewSize")
         }
-        val request = Request.Builder().url(urlBuilder.toString()).header("Authorization", auth).get().build()
+        val request = Request.Builder().url(urlBuilder.toString()).header("Authorization", authorization).get().build()
         val response = yandexClient.newCall(request).execute()
         if (!response.isSuccessful) {
             return Response.error(response.code, response.body ?: emptyBody())
@@ -462,13 +477,13 @@ class YandexDiskApi private constructor() {
     }
 
     private suspend fun yandexCreateFolder(
-        auth: String,
+        authorization: String,
         path: String
     ): Response<Void> {
         val url = "${Config.YANDEX_DISK_API_BASE}disk/resources?path=${URLEncoder.encode(path, "UTF-8")}"
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", auth)
+            .header("Authorization", authorization)
             .put("".toRequestBody("application/json".toMediaType()))
             .build()
         val response = yandexClient.newCall(request).execute()
@@ -480,12 +495,12 @@ class YandexDiskApi private constructor() {
     }
 
     private suspend fun yandexDelete(
-        auth: String,
+        authorization: String,
         path: String,
         permanently: Boolean
     ): Response<Unit> {
         val url = "${Config.YANDEX_DISK_API_BASE}disk/resources?path=${URLEncoder.encode(path, "UTF-8")}&permanently=$permanently"
-        val request = Request.Builder().url(url).header("Authorization", auth).delete().build()
+        val request = Request.Builder().url(url).header("Authorization", authorization).delete().build()
         val response = yandexClient.newCall(request).execute()
         return if (response.isSuccessful) {
             Response.success(Unit)
