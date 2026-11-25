@@ -14,6 +14,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.w3c.dom.Document
+import org.w3c.dom.Element
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -391,25 +393,29 @@ class YandexDiskApi private constructor() {
             val factory = DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
             val builder = factory.newDocumentBuilder()
-            val doc = builder.parse(ByteArrayInputStream(xml.toByteArray()))
+            // Явное приведение типа для корректного разрешения getElementsByTagNameNS
+            val doc = builder.parse(ByteArrayInputStream(xml.toByteArray())) as Document
             val responses = doc.getElementsByTagNameNS("DAV:", "response")
             val basePathNormalized = basePath.trimStart('/').trimEnd('/')
             for (i in 0 until responses.length) {
-                val node = responses.item(i) as org.w3c.dom.Element
+                val node = responses.item(i) as Element
                 val hrefNode = node.getElementsByTagNameNS("DAV:", "href").item(0) ?: continue
                 val href = hrefNode.textContent.trim().trimStart('/').trimEnd('/')
                 if (href == basePathNormalized) continue
-                val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? org.w3c.dom.Element
-                    ?: continue
-                val propNode = propstatNode.getElementsByTagNameNS("DAV:", "prop").item(0) as? org.w3c.dom.Element
-                    ?: continue
+                
+                val propstatNode = node.getElementsByTagNameNS("DAV:", "propstat").item(0) as? Element ?: continue
+                val propNode = propstatNode.getElementsByTagNameNS("DAV:", "prop").item(0) as? Element ?: continue
+                
                 val resourcetypeNode = propNode.getElementsByTagNameNS("DAV:", "resourcetype").item(0)
                 val collectionNode = resourcetypeNode?.getElementsByTagNameNS("DAV:", "collection")?.item(0)
                 val isDir = collectionNode != null
+                
                 val displayNameNode = propNode.getElementsByTagNameNS("DAV:", "displayname").item(0)
                 val name = displayNameNode?.textContent ?: href.substringAfterLast('/')
+                
                 val contentLengthNode = propNode.getElementsByTagNameNS("DAV:", "getcontentlength").item(0)
                 val size = contentLengthNode?.textContent?.toLongOrNull()
+                
                 if (name.isNotEmpty()) {
                     items.add(WebdavItem(name, isDir, size))
                 }
