@@ -12,19 +12,14 @@ android {
         applicationId = "com.family.base"
         minSdk = 24
         targetSdk = 34
-        versionCode = 286
-        versionName = "23.3.17"
+        versionCode = 287
+        versionName = "23.3.18"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.family.base"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // ============================================================
-    // 🆕 v14.1.0: RELEASE-ПОДПИСЬ (постоянный keystore)
-    // Читает секреты из переменных окружения (GitHub Secrets).
-    // Если секретов нет (локальная сборка) — release подписывается debug-ключом.
-    // ============================================================
     signingConfigs {
         create("release") {
             val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/baza-upload-key.jks"
@@ -70,16 +65,36 @@ android {
         buildConfig = true
     }
 
-    // 🆕 v23.3.17: FFmpegKit содержит нативные библиотеки .so.
-    // Без этого блока возможны конфликты libc++_shared.so при сборке.
+    // ============================================================
+    // 🔧 ФИКС КРАША FFmpegKit (v23.3.18):
+    // Указываем ТОЧНЫЕ пути для каждой архитектуры, а не wildcard.
+    // Это гарантирует, что Gradle возьмёт libc++_shared.so,
+    // совместимый с FFmpegKit, а не "чужой" (например, от другой библиотеки).
+    // ============================================================
     packaging {
         jniLibs {
             pickFirsts += listOf(
-                "lib/**/libc++_shared.so",
-                "lib/**/libavcodec.so",
-                "lib/**/libavformat.so",
-                "lib/**/libavutil.so",
-                "lib/**/libswscale.so"
+                "lib/arm64-v8a/libc++_shared.so",
+                "lib/armeabi-v7a/libc++_shared.so",
+                "lib/x86/libc++_shared.so",
+                "lib/x86_64/libc++_shared.so",
+                // Остальные библиотеки FFmpegKit — тоже явно:
+                "lib/arm64-v8a/libavcodec.so",
+                "lib/armeabi-v7a/libavcodec.so",
+                "lib/x86/libavcodec.so",
+                "lib/x86_64/libavcodec.so",
+                "lib/arm64-v8a/libavformat.so",
+                "lib/armeabi-v7a/libavformat.so",
+                "lib/x86/libavformat.so",
+                "lib/x86_64/libavformat.so",
+                "lib/arm64-v8a/libavutil.so",
+                "lib/armeabi-v7a/libavutil.so",
+                "lib/x86/libavutil.so",
+                "lib/x86_64/libavutil.so",
+                "lib/arm64-v8a/libswscale.so",
+                "lib/armeabi-v7a/libswscale.so",
+                "lib/x86/libswscale.so",
+                "lib/x86_64/libswscale.so"
             )
         }
     }
@@ -114,7 +129,7 @@ dependencies {
     // ===== COROUTINES =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ===== WORKMANAGER (напоминания) =====
+    // ===== WORKMANAGER =====
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // ===== IMAGES =====
@@ -137,21 +152,15 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.0")
     implementation("androidx.camera:camera-view:1.3.0")
 
-    // ===== ML KIT (BARCODE) =====
+    // ===== ML KIT =====
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
-
-    // ===== Google Code Scanner (PDF417/DataMatrix/QR) =====
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // ===== ВИДЕО (ExoPlayer / Media3) =====
+    // ===== ВИДЕО =====
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
 
-    // ===== 🆕 v23.3.17: FFmpegKit для сжатия видео =====
-    // Оригинальный arthenica/ffmpeg-kit умер в 2025.
-    // Используем поддерживаемый форк dev.ffmpegkit-maintained.
-    // ffmpeg-kit-full (LGPL-3.0) — безопасно для закрытого приложения,
-    // содержит H.264 энкодер и MediaCodec hardware acceleration.
+    // ===== FFmpegKit =====
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
 
     // ===== TEST =====
