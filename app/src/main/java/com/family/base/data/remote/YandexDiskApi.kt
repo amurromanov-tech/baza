@@ -1,7 +1,9 @@
 package com.family.base.data.remote
 
 import android.util.Base64
+import com.family.base.BaseApplication
 import com.family.base.Config
+import com.family.base.data.TokenStorage
 import com.family.base.data.remote.model.DiskEmbedded
 import com.family.base.data.remote.model.DiskResourceItem
 import com.family.base.data.remote.model.DiskResourcesResponse
@@ -31,6 +33,9 @@ import java.util.concurrent.TimeUnit
  * - Если false: работает через Яндекс.Диск REST API (OAuth).
  * - Пути ВНЕ /BAZA (например, /Романовы для галереи) всегда идут на Яндекс.Диск.
  * - Публичные методы (getPublic*, downloadPreviewWebDav) всегда идут на Яндекс.Диск.
+ *
+ * 🆕 v23.4.2: Пароль WebDAV загружается из TokenStorage (EncryptedSharedPreferences).
+ * Если он не задан, используется fallback из Config.LOCAL_WEBDAV_PASSWORD.
  *
  * Стратегия «Фасад»: все сигнатуры методов сохранены, вызывающий код не требует изменений.
  */
@@ -76,7 +81,15 @@ class YandexDiskApi private constructor() {
 
         // 2. Клиент для локального WebDAV (Rclone на ПК через ZeroTier)
         // Без логирования BODY, чтобы не забивать память при загрузке больших видео
+        // 🆕 v23.4.2: пароль берётся из TokenStorage (EncryptedSharedPreferences)
         private val webdavClient: OkHttpClient by lazy {
+            val password = try {
+                val context = BaseApplication.getAppContext()
+                val tokenStorage = TokenStorage(context)
+                tokenStorage.getWebDavPassword() ?: Config.LOCAL_WEBDAV_PASSWORD
+            } catch (e: Exception) {
+                Config.LOCAL_WEBDAV_PASSWORD
+            }
             OkHttpClient.Builder()
                 .connectTimeout(10L, TimeUnit.SECONDS)
                 .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
@@ -84,7 +97,7 @@ class YandexDiskApi private constructor() {
                 .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
                 .addInterceptor { chain ->
-                    val credentials = "${Config.LOCAL_WEBDAV_USER}:${Config.LOCAL_WEBDAV_PASSWORD}"
+                    val credentials = "${Config.LOCAL_WEBDAV_USER}:$password"
                     val basicAuth = "Basic " + Base64.encodeToString(
                         credentials.toByteArray(),
                         Base64.NO_WRAP
@@ -211,10 +224,6 @@ class YandexDiskApi private constructor() {
         }
     }
 
-    /**
-     * Универсальный метод скачивания по URL.
-     * URL может быть временной ссылкой Яндекса или локальным WebDAV-URL.
-     */
     suspend fun downloadFile(url: String): Response<ResponseBody> {
         val request = Request.Builder().url(url).get().build()
         val client = if (url.startsWith(Config.LOCAL_WEBDAV_URL)) webdavClient else yandexClient
@@ -256,7 +265,6 @@ class YandexDiskApi private constructor() {
         path: String
     ): Response<LinkResponse> {
         return if (shouldUseWebdav(path)) {
-            // Для WebDAV честно проверяем существование файла через HEAD-запрос
             val exists = webdavCheckExists(path)
             if (exists) {
                 Response.success(LinkResponse(href = normalizeWebdavPath(path), method = "GET"))
@@ -384,11 +392,6 @@ class YandexDiskApi private constructor() {
         val size: Long?
     )
 
-    /**
-     * Парсинг WebDAV PROPFIND ответа через Regex.
-     * Это на 100% защищает от ошибок компиляции "Unresolved reference",
-     * которые возникают при использовании org.w3c.dom в Android/Kotlin.
-     */
     private fun parseWebdavXml(xml: String, basePath: String): List<WebdavItem> {
         val items = mutableListOf<WebdavItem>()
         try {
