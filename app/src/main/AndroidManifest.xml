@@ -31,19 +31,36 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- ============================================================ -->
+    <!-- 🆕 v23.4.3: <queries> — видимость установленных приложений  -->
+    <!-- Android 11+ (API 30) скрывает установленные приложения,      -->
+    <!-- если они явно не перечислены здесь. Без этого                 -->
+    <!-- packageManager.getPackageInfo("com.zerotier.one") всегда     -->
+    <!-- возвращает NameNotFoundException, даже если ZeroTier         -->
+    <!-- реально установлен.                                           -->
+    <!-- ============================================================ -->
     <queries>
+        <!-- 🆕 v23.4.3: ZeroTier One — для проверки установки и запуска -->
+        <package android:name="com.zerotier.one" />
+
+        <!-- Установка APK (обновления) -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/vnd.android.package-archive" />
         </intent>
+
+        <!-- Открытие HTTPS-ссылок (обновления, Google Play) -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+
+        <!-- Отправка email (диагностика) -->
         <intent>
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="mailto" />
         </intent>
+
         <!-- 🆕 v20.5.14: внешний видеоплеер (для AVI и fallback) -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -113,7 +130,6 @@
         <!-- 🆕 v20.4.1: все Activity зафиксированы в портрете,           -->
         <!-- кроме FullscreenImageActivity и сканеров (у сканеров уже был)-->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.LoginActivity"
             android:exported="true"
@@ -151,7 +167,6 @@
         <!-- ============================================================ -->
         <!-- ЭКРАНЫ ДОБАВЛЕНИЯ И РЕДАКТИРОВАНИЯ -->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.AddItemActivity"
             android:screenOrientation="portrait"
@@ -205,7 +220,6 @@
         <!-- ============================================================ -->
         <!-- НАСТРОЙКИ И РАЗДЕЛЫ -->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.SettingsActivity"
             android:screenOrientation="portrait"
@@ -251,17 +265,6 @@
 
         <!-- ============================================================ -->
         <!-- 🆕 v21.1.0: РЕЦЕПТЫ                                         -->
-        <!-- Один экран для трёх режимов (source = "ai" | "user" | "all"),-->
-        <!-- задаётся через EXTRA_SOURCE. Портретная ориентация,          -->
-        <!-- adjustResize — как у остальных экранов.                      -->
-        <!--                                                              -->
-        <!-- RecipeEditActivity: создание/редактирование рецепта.         -->
-        <!-- Режим создания — обязателен EXTRA_SOURCE; режим              -->
-        <!-- редактирования — EXTRA_RECIPE_ID.                            -->
-        <!--                                                              -->
-        <!-- 🆕 v21.1.0 (Шаг 1.4b-2): RecipeDetailActivity — просмотр     -->
-        <!-- рецепта. Принимает EXTRA_RECIPE_ID. Кнопка «Удалить» —       -->
-        <!-- только Алексей или автор (см. RecipeDetailActivity).         -->
         <!-- ============================================================ -->
         <activity
             android:name=".ui.RecipeListActivity"
@@ -287,7 +290,6 @@
         <!-- ============================================================ -->
         <!-- СТАТИСТИКА, АРХИВ, ЗАЙМЫ -->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.StatisticsActivity"
             android:screenOrientation="portrait"
@@ -312,7 +314,6 @@
         <!-- ============================================================ -->
         <!-- ДОМАШНИЕ ДЕЛА -->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.TaskListActivity"
             android:exported="false"
@@ -323,7 +324,6 @@
         <!-- ============================================================ -->
         <!-- СПИСОК ПОКУПОК -->
         <!-- ============================================================ -->
-
         <activity
             android:name=".ui.ShoppingListActivity"
             android:exported="false"
@@ -333,10 +333,6 @@
 
         <!-- ============================================================ -->
         <!-- 🆕 ЧЕКИ ЧЕРЕЗ proverkacheka.com (QR → API)                  -->
-        <!-- ReceiptPreviewActivity: предпросмотр чека + создание        -->
-        <!-- папки покупки с позициями. Портретная ориентация.           -->
-        <!-- Старые CheckScannerActivity / CheckPreviewActivity удалены  -->
-        <!-- (OCR Tesseract не пригодился).                              -->
         <!-- ============================================================ -->
         <activity
             android:name=".ui.ReceiptPreviewActivity"
