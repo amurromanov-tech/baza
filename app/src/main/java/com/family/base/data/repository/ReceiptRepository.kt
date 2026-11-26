@@ -1,5 +1,7 @@
 package com.family.base.data.repository
 
+import com.family.base.BaseApplication
+import com.family.base.data.TokenStorage
 import com.family.base.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -10,33 +12,29 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * 🆕 Сканирование чеков через API proverkacheka.com.
- *
- * Логика:
- *  1. Приложение сканирует QR-код чека (BarcodeScannerActivity, FORMAT_QR_CODE)
- *     и получает строку вида:
- *     t=20200924T1837&s=349.93&fn=9282440300682838&i=46534&fp=1273019065&n=1
- *  2. Строка уходит POST-запросом на https://proverkacheka.com/api/v1/check/get
- *     с параметрами token и qrraw (см. документацию, формат запроса 2).
- *  3. Сервис возвращает JSON с полями code и data.
- *     code = 1 — данные получены, code = 3 — превышен лимит запросов и т.д.
- *
- * ⚠️ Обязательный заголовок Cookie: ENGID=1.1 — без него сервис возвращает 401.
- *
- * Токен пока хранится константой (техдолг — вынести в шифрованное хранилище,
- * как и пароль WebDAV). НЕ логировать токен в Logger.
- */
+🆕 Сканирование чеков через API proverkacheka.com.
+Логика:
+Приложение сканирует QR-код чека (BarcodeScannerActivity, FORMAT_QR_CODE)
+и получает строку вида:
+t=20200924T1837&s=349.93&fn=9282440300682838&i=46534&fp=1273019065&n=1
+Строка уходит POST-запросом на https://proverkacheka.com/api/v1/check/get
+с параметрами token и qrraw (см. документацию, формат запроса 2).
+Сервис возвращает JSON с полями code и data.
+code = 1 — данные получены, code = 3 — превышен лимит запросов и т.д.
+⚠️ Обязательный заголовок Cookie: ENGID=1.1 — без него сервис возвращает 401.
+🆕 v23.4.2: Токен загружается из TokenStorage (EncryptedSharedPreferences).
+Если он не задан, используется fallback-значение, чтобы не ломать работу.
+*/
 class ReceiptRepository {
-
     companion object {
         private const val TAG = "ReceiptRepository"
         private const val API_URL = "https://proverkacheka.com/api/v1/check/get"
-
+        
         /**
-         * Токен доступа proverkacheka.com.
-         * ⚠️ Техдолг: вынести в TokenStorage/SharedPreferences с шифрованием.
+         * Fallback-токен на случай, если в TokenStorage ещё ничего не сохранено
+         * или произошла ошибка чтения.
          */
-        private const val API_TOKEN = "56268.93FfZlggf9GV59mdT"
+        private const val FALLBACK_API_TOKEN = "56268.93FfZlggf9GV59mdT"
     }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -48,11 +46,10 @@ class ReceiptRepository {
     // ============================================================
     // МОДЕЛИ ОТВЕТА
     // ============================================================
-
     /**
-     * Результат запроса к API.
-     *  - Success  — чек получен и распарсен.
-     *  - Error    — сервис вернул ошибку (code != 1) или сеть упала.
+     Результат запроса к API.
+     Success  — чек получен и распарсен.
+     Error    — сервис вернул ошибку (code != 1) или сеть упала.
      */
     sealed class Result {
         data class Success(val receipt: ReceiptData) : Result()
@@ -60,7 +57,7 @@ class ReceiptRepository {
     }
 
     /**
-     * Разобранные данные чека (то, что нужно для UI и для создания позиций).
+     Разобранные данные чека (то, что нужно для UI и для создания позиций).
      */
     data class ReceiptData(
         val retailPlace: String,        // название магазина (или ФИО ИП)
@@ -73,8 +70,8 @@ class ReceiptRepository {
     )
 
     /**
-     * Позиция чека.
-     * Суммы и цены — в КОПЕЙКАХ (как отдаёт API). Конвертация в рубли — в UI.
+     Позиция чека.
+     Суммы и цены — в КОПЕЙКАХ (как отдаёт API). Конвертация в рубли — в UI.
      */
     data class ReceiptItem(
         val name: String,
@@ -84,21 +81,35 @@ class ReceiptRepository {
     )
 
     // ============================================================
+    // ПОЛУЧЕНИЕ ТОКЕНА
+    // ============================================================
+    /**
+     * 🆕 v23.4.2: Безопасное получение токена из EncryptedSharedPreferences.
+     */
+    private fun getApiToken(): String {
+        return try {
+            val context = BaseApplication.getAppContext()
+            TokenStorage(context).getProverkachekaToken() ?: FALLBACK_API_TOKEN
+        } catch (e: Exception) {
+            Logger.log(TAG, "getApiToken error, using fallback: ${e.message}")
+            FALLBACK_API_TOKEN
+        }
+    }
+
+    // ============================================================
     // ЗАПРОС
     // ============================================================
-
     /**
-     * Отправить сырую строку QR-кода на сервис и получить данные чека.
-     *
-     * @param qrRaw строка из QR-кода чека (t=...&s=...&fn=...&i=...&fp=...&n=1)
-     * @return Result.Success(receipt) или Result.Error(code, message)
+     Отправить сырую строку QR-кода на сервис и получить данные чека.
+     @param qrRaw строка из QR-кода чека (t=...&s=...&fn=...&i=...&fp=...&n=1)
+     @return Result.Success(receipt) или Result.Error(code, message)
      */
     suspend fun fetchReceipt(qrRaw: String): Result = withContext(Dispatchers.IO) {
         Logger.log(TAG, "fetchReceipt: start, qrRaw.length=${qrRaw.length}")
-
         try {
+            val token = getApiToken()
             val body = FormBody.Builder()
-                .add("token", API_TOKEN)
+                .add("token", token)
                 .add("qrraw", qrRaw)
                 .build()
 
@@ -121,7 +132,6 @@ class ReceiptRepository {
 
             Logger.log(TAG, "fetchReceipt: HTTP 200, body.length=${responseBody.length}")
             parseResponse(responseBody)
-
         } catch (e: Exception) {
             Logger.log(TAG, "fetchReceipt error: ${e.message}", e)
             Result.Error(code = -1, message = e.message ?: "Ошибка сети")
@@ -131,23 +141,21 @@ class ReceiptRepository {
     // ============================================================
     // ПАРСИНГ ОТВЕТА
     // ============================================================
-
     /**
-     * Разобрать JSON-ответ API.
-     *
-     * Структура (по реальному ответу и документации):
-     * {
-     *   "code": 1,
-     *   "first": 1,
-     *   "data": {
-     *     "json": {
-     *       "user": "...", "retailPlace": "...", "retailPlaceAddress": "...",
-     *       "userInn": "...", "dateTime": "...", "totalSum": 46560,
-     *       "operationType": 1,
-     *       "items": [ { "name": "...", "price": 8000, "quantity": 1, "sum": 8000 }, ... ]
-     *     }
-     *   }
-     * }
+     Разобрать JSON-ответ API.
+     Структура (по реальному ответу и документации):
+     {
+       "code": 1,
+       "first": 1,
+       "data": {
+         "json": {
+           "user": "...", "retailPlace": "...", "retailPlaceAddress": "...",
+           "userInn": "...", "dateTime": "...", "totalSum": 46560,
+           "operationType": 1,
+           "items": [ { "name": "...", "price": 8000, "quantity": 1, "sum": 8000 }, ... ]
+         }
+       }
+     }
      */
     private fun parseResponse(raw: String): Result {
         return try {
@@ -208,7 +216,6 @@ class ReceiptRepository {
                     "totalSum=${receipt.totalSumKopecks}, items=${receipt.items.size}"
             )
             Result.Success(receipt)
-
         } catch (e: Exception) {
             Logger.log(TAG, "parseResponse error: ${e.message}", e)
             Result.Error(code = -3, message = "Ошибка разбора ответа: ${e.message}")
