@@ -1,5 +1,4 @@
 package com.family.base.ui
-
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -61,1671 +60,1592 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
-
 class MainActivity : AppCompatActivity() {
-    private lateinit var binding: ActivityMainBinding
-    private lateinit var viewModel: MainViewModel
-    private lateinit var adapter: CatalogAdapter
-    private lateinit var tokenStorage: TokenStorage
-    private var syncRotationAnim: RotateAnimation? = null
-    private var pathTextView: TextView? = null
-    private val TAG = "MainActivity"
-    private val db by lazy { AppDatabase.getInstance(this) }
-    private var newFolderImageBytes: ByteArray? = null
-    private var currentFolderForImage: FolderEntity? = null
-    private var hideProgressJob: Job? = null
-    private var pendingRootFolderType: String? = null
-    private var todayDialogShownInThisResume = false
-    private val repeatHandler = Handler(Looper.getMainLooper())
-    private var repeatRunnable: Runnable? = null
-    
-    // 🆕 v23.4.3: флаг — нужно ли запустить синк после возврата из ZeroTier
-    private var pendingSyncAfterZeroTier = false
-    
-    // 🆕 v23.4.3: package name ZeroTier One
-    private const val ZEROTIER_PACKAGE = "com.zerotier.one"
-
-    private val postNotificationsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        Logger.log(TAG, "POST_NOTIFICATIONS result: granted=$granted")
-        if (granted) {
-            Toast.makeText(
-                this,
-                "Напоминания включены",
-                Toast.LENGTH_SHORT
-            ).show()
-        } else {
-            Toast.makeText(
-                this,
-                "Без разрешения на уведомления напоминания не придут.\n" +
-                    "Включите их в Настройки → Приложения → БАЗА → Уведомления",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    private val selectUserLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
-        if (result.resultCode == RESULT_OK) {
-            viewModel.loadContents()
-            handlePendingRootFolder()
-        } else {
-            Logger.log(TAG, "User not selected, finishing")
-            finish()
-        }
-    }
-
-    private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let {
-            try {
-                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
-                val processedBytes = ImageUtils.processImage(bitmap)
-                newFolderImageBytes = processedBytes
-                Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error picking folder image", e)
-                Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let {
-            try {
-                val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
-                val processedBytes = ImageUtils.processImage(bitmap)
-                val folder = currentFolderForImage
-                if (folder != null) {
-                    lifecycleScope.launch {
-                        try {
-                            ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
-                            val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
-                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                            viewModel.uploadFolderImage(folder.id, processedBytes)
-                            viewModel.loadContents()
-                            Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Logger.log(TAG, "Error updating folder image", e)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error picking folder image", e)
-            }
-        }
-    }
-
-    private val barcodeSearchLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val scanned = result.data?.getStringExtra("barcode")
-            if (!scanned.isNullOrEmpty()) {
-                searchByBarcode(scanned)
-            }
-        }
-    }
-
+private lateinit var binding: ActivityMainBinding
+ private lateinit var viewModel: MainViewModel
+ private lateinit var adapter: CatalogAdapter
+ private lateinit var tokenStorage: TokenStorage
+ private var syncRotationAnim: RotateAnimation? = null
+ private var pathTextView: TextView? = null
+ private val TAG = "MainActivity"
+ private val db by lazy { AppDatabase.getInstance(this) }
+ private var newFolderImageBytes: ByteArray? = null
+ private var currentFolderForImage: FolderEntity? = null
+ private var hideProgressJob: Job? = null
+ private var pendingRootFolderType: String? = null
+ private var todayDialogShownInThisResume = false
+ private val repeatHandler = Handler(Looper.getMainLooper())
+ private var repeatRunnable: Runnable? = null
+ // 🆕 v23.4.3: флаг — нужно ли запустить синк после возврата из ZeroTier
+ private var pendingSyncAfterZeroTier = false
+ private val postNotificationsLauncher = registerForActivityResult(
+     ActivityResultContracts.RequestPermission()
+ ) { granted ->
+     Logger.log(TAG, "POST_NOTIFICATIONS result: granted=$granted")
+     if (granted) {
+         Toast.makeText(
+             this,
+             "Напоминания включены",
+             Toast.LENGTH_SHORT
+         ).show()
+     } else {
+         Toast.makeText(
+             this,
+             "Без разрешения на уведомления напоминания не придут.\n" +
+                 "Включите их в Настройки → Приложения → БАЗА → Уведомления",
+             Toast.LENGTH_LONG
+         ).show()
+     }
+ }
+ private val selectUserLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     Logger.log(TAG, "SelectUserActivity result: ${result.resultCode}")
+     if (result.resultCode == RESULT_OK) {
+         viewModel.loadContents()
+         handlePendingRootFolder()
+     } else {
+         Logger.log(TAG, "User not selected, finishing")
+         finish()
+     }
+ }
+ private val pickFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+     uri?.let {
+         try {
+             val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
+             val processedBytes = ImageUtils.processImage(bitmap)
+             newFolderImageBytes = processedBytes
+             Toast.makeText(this, "Изображение выбрано, оно будет загружено после создания папки", Toast.LENGTH_SHORT).show()
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error picking folder image", e)
+             Toast.makeText(this, "Ошибка выбора фото", Toast.LENGTH_SHORT).show()
+         }
+     }
+ }
+ private val pickExistingFolderImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+     uri?.let {
+         try {
+             val bitmap = ImageUtils.loadBitmapWithExif(this, it) ?: return@let
+             val processedBytes = ImageUtils.processImage(bitmap)
+             val folder = currentFolderForImage
+             if (folder != null) {
+                 lifecycleScope.launch {
+                     try {
+                         ImageUtils.saveImageLocally(applicationContext, "folder_${folder.id}", processedBytes)
+                         val updated = folder.copy(iconUrl = "folder_${folder.id}.jpg")
+                         withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                         viewModel.uploadFolderImage(folder.id, processedBytes)
+                         viewModel.loadContents()
+                         Toast.makeText(this@MainActivity, "Иконка обновлена", Toast.LENGTH_SHORT).show()
+                     } catch (e: Exception) {
+                         Logger.log(TAG, "Error updating folder image", e)
+                     }
+                 }
+             }
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error picking folder image", e)
+         }
+     }
+ }
+ private val barcodeSearchLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     if (result.resultCode == RESULT_OK) {
+         val scanned = result.data?.getStringExtra("barcode")
+         if (!scanned.isNullOrEmpty()) {
+             searchByBarcode(scanned)
+         }
+     }
+ }
     private val itemDetailLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
-            if (!folderId.isNullOrEmpty()) {
-                Logger.log(TAG, "Navigate to folder from ItemDetail: $folderId")
-                viewModel.navigateToFolder(folderId)
-            }
-        }
-    }
-
-    private val shoppingListLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
-            if (!folderId.isNullOrEmpty()) {
-                Logger.log(TAG, "Navigate to folder from ShoppingList: $folderId")
-                viewModel.navigateToFolder(folderId)
-            } else {
-                loadSystemFolderCounters()
-            }
-        } else {
-            loadSystemFolderCounters()
-        }
-    }
-
-    private val recipeListLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        Logger.log(TAG, "RecipeListActivity result: ${result.resultCode}")
-        loadSystemFolderCounters()
-    }
-
-    private val receiptPreviewLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val folderId = result.data?.getStringExtra("navigate_to_folder_id")
-            if (!folderId.isNullOrEmpty()) {
-                Logger.log(TAG, "Navigate to purchase folder (receipt): $folderId")
-                Toast.makeText(this, "Открываю папку с покупкой…", Toast.LENGTH_SHORT).show()
-                viewModel.navigateToFolder(folderId)
-            } else {
-                viewModel.loadContents()
-                loadSystemFolderCounters()
-            }
-        } else {
-            Logger.log(TAG, "Receipt preview cancelled or failed")
-            loadSystemFolderCounters()
-        }
-    }
-
-    private val connectFamilyLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            launchSelectUserIfNeeded()
-            viewModel.loadContents()
-        }
-    }
-
-    // 🆕 v23.4.3: launcher для открытия ZeroTier
-    private val zeroTierLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        Logger.log(TAG, "ZeroTier launcher result: ${result.resultCode}")
-        // После возврата из ZeroTier — если был pending sync, запускаем его
-        if (pendingSyncAfterZeroTier) {
-            pendingSyncAfterZeroTier = false
-            Logger.log(TAG, "Returned from ZeroTier, starting sync...")
-            // Небольшая задержка, чтобы ZeroTier успел установить соединение
-            lifecycleScope.launch {
-                delay(2000)
-                if (isVpnConnected()) {
-                    Logger.log(TAG, "VPN connected after ZeroTier, starting sync")
-                    val started = viewModel.forceSync()
-                    val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                } else {
-                    Logger.log(TAG, "VPN not connected after ZeroTier, showing message")
-                    Snackbar.make(
-                        binding.root,
-                        "⚠️ ZeroTier не подключён. Подключитесь вручную и нажмите синхронизацию ещё раз.",
-                        Snackbar.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        Logger.log(TAG, "=== MainActivity onCreate START ===")
-        try {
-            binding = ActivityMainBinding.inflate(layoutInflater)
-            setContentView(binding.root)
-        } catch (e: Exception) {
-            Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
-            return
-        }
-        Logger.init(applicationContext)
-        tokenStorage = TokenStorage(this)
-        viewModel = BaseApplication.mainViewModel
-        pendingRootFolderType = intent.getStringExtra("open_root_folder")
-        if (pendingRootFolderType != null) {
-            Logger.log(TAG, "onCreate: requested open_root_folder=$pendingRootFolderType")
-        }
-        try {
-            val appLifecycleObserver = AppLifecycleObserver(viewModel)
-            ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
-        } catch (e: Exception) {
-            Logger.log(TAG, "Error registering AppLifecycleObserver", e)
-        }
-        val publicKey = tokenStorage.getPublicKey()
-        if (publicKey == null) {
-            connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
-        }
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(false)
-        pathTextView = TextView(this).apply {
-            text = "BAZA"
-            textSize = 18f
-            maxLines = 3
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
-        }
-        supportActionBar?.setCustomView(pathTextView)
-        supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
-        adapter = CatalogAdapter(
-            onFolderClick = { folder ->
-                when (folder.systemKey) {
-                    FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
-                        Logger.log(TAG, "onFolderClick: opening TaskListActivity for home_tasks")
-                        startActivity(Intent(this, TaskListActivity::class.java))
-                    }
-                    FolderEntity.SYSTEM_KEY_PURCHASES -> {
-                        Logger.log(TAG, "onFolderClick: navigating into purchases folder")
-                        navigateToFolder(folder)
-                    }
-                    FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
-                        Logger.log(TAG, "onFolderClick: opening ShoppingListActivity")
-                        shoppingListLauncher.launch(
-                            Intent(this, ShoppingListActivity::class.java)
-                        )
-                    }
-                    FolderEntity.SYSTEM_KEY_GALLERY -> {
-                        Logger.log(TAG, "onFolderClick: opening GalleryActivity")
-                        startActivity(Intent(this, GalleryActivity::class.java))
-                    }
-                    FolderEntity.SYSTEM_KEY_RECIPES -> {
-                        Logger.log(TAG, "onFolderClick: navigating into recipes root folder")
-                        navigateToFolder(folder)
-                    }
-                    FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
-                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=ai)")
-                        recipeListLauncher.launch(
-                            Intent(this, RecipeListActivity::class.java).apply {
-                                putExtra(
-                                    RecipeListActivity.EXTRA_SOURCE,
-                                    RecipeEntity.SOURCE_AI
-                                )
-                            }
-                        )
-                    }
-                    FolderEntity.SYSTEM_KEY_RECIPES_MY -> {
-                        Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=user)")
-                        recipeListLauncher.launch(
-                            Intent(this, RecipeListActivity::class.java).apply {
-                                putExtra(
-                                    RecipeListActivity.EXTRA_SOURCE,
-                                    RecipeEntity.SOURCE_USER
-                                )
-                            }
-                        )
-                    }
-                    else -> navigateToFolder(folder)
-                }
-            },
-            onItemClick = { item -> openItemDetail(item) },
-            onFolderLongClick = { folder ->
-                if (folder.isSystem) {
-                    if (folder.systemKey == FolderEntity.SYSTEM_KEY_HOME_TASKS) {
-                        Logger.log(TAG, "onFolderLongClick: home_tasks menu")
-                        showHomeTasksSystemMenu(folder)
-                    } else {
-                        Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
-                        Toast.makeText(
-                            this,
-                            "Системная папка — действия недоступны",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                } else {
-                    showFolderContextMenu(folder)
-                }
-            },
-            onItemLongClick = { item -> showItemContextMenu(item) }
-        )
-        binding.rvCatalog.layoutManager = LinearLayoutManager(this)
-        binding.rvCatalog.adapter = adapter
-        viewModel.currentEntries.observe(this) { entries ->
-            adapter.submitList(entries)
-            updatePathTitle()
-            loadSystemFolderCounters()
-        }
-        viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
-        viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
-        viewModel.syncProgress.observe(this) { progress ->
-            if (progress != null) {
-                updateSyncProgressCard(progress)
-            } else {
-                hideSyncProgressCard()
-            }
-        }
-        // 🆕 v23.4.3: показ сообщения о результате синка (Snackbar)
-        viewModel.syncResultMessage.observe(this) { message ->
-            if (!message.isNullOrEmpty()) {
-                Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
-            }
-        }
-        binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
-        binding.btnAddItem.setOnClickListener {
-            val intent = Intent(this, AddItemActivity::class.java)
-            intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-            startActivity(intent)
-        }
-        binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
-        binding.btnUp.setOnClickListener { viewModel.navigateUp() }
-        binding.btnSearch.setOnClickListener { showSearchDialog() }
-        
-        // 🆕 v23.4.3: умная кнопка синка с проверкой ZeroTier
-        binding.btnForceSync.setOnClickListener {
-            handleSyncButtonClick()
-        }
-        
-        binding.btnSettings.setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-        binding.btnScanCheck.setOnClickListener {
-            Logger.log(TAG, "Scan receipt QR clicked")
-            receiptPreviewLauncher.launch(
-                Intent(this, BarcodeScannerActivity::class.java).apply {
-                    putExtra(
-                        BarcodeScannerActivity.EXTRA_SCAN_MODE,
-                        BarcodeScannerActivity.MODE_RECEIPT_QR
-                    )
-                }
-            )
-        }
-        viewModel.navigateToFolder(null)
-        updateSearchIcon(viewModel.searchQueryLiveData.value)
-        if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
-            launchSelectUserIfNeeded()
-        }
-        maybeRequestPostNotifications()
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                val searchActive = !viewModel.getSearchQuery().isNullOrEmpty()
-                val inSubfolder = viewModel.getCurrentFolderId() != null
-                when {
-                    searchActive -> {
-                        Logger.log(TAG, "onBack: clearing search")
-                        viewModel.clearSearch()
-                    }
-                    inSubfolder -> {
-                        Logger.log(TAG, "onBack: navigateUp from ${viewModel.getCurrentFolderId()}")
-                        viewModel.navigateUp()
-                    }
-                    else -> {
-                        Logger.log(TAG, "onBack: at root, showing exit dialog")
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Выйти из приложения?")
-                            .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
-                            .setPositiveButton("Выйти") { _, _ ->
-                                isEnabled = false
-                                onBackPressedDispatcher.onBackPressed()
-                            }
-                            .setNegativeButton("Отмена", null)
-                            .show()
-                    }
-                }
-            }
-        })
-    }
-
-    // ============================================================
-    // 🆕 v23.4.3: УМНАЯ КНОПКА СИНКА С ПРОВЕРКОЙ ZEROTIER
-    // ============================================================
-    
-    /**
-     * Обработчик кнопки синка.
-     * Три сценария:
-     * 1. ZeroTier подключён (VPN активен) → сразу запускаем синк
-     * 2. ZeroTier установлен, но не подключён → открываем ZeroTier, после возврата автозапуск синка
-     * 3. ZeroTier не установлен → показываем диалог "Необходимо подключение к ПК"
-     */
-    private fun handleSyncButtonClick() {
-        Logger.log(TAG, "handleSyncButtonClick: checking ZeroTier status")
-        
-        // Проверяем, установлен ли ZeroTier
-        val isZeroTierInstalled = isZeroTierInstalled()
-        
-        if (!isZeroTierInstalled) {
-            // Сценарий 3: ZeroTier не установлен
-            Logger.log(TAG, "handleSyncButtonClick: ZeroTier not installed, showing dialog")
-            showZeroTierNotInstalledDialog()
-            return
-        }
-        
-        // ZeroTier установлен, проверяем подключение
-        val isVpnConnected = isVpnConnected()
-        
-        if (isVpnConnected) {
-            // Сценарий 1: VPN подключён, запускаем синк
-            Logger.log(TAG, "handleSyncButtonClick: VPN connected, starting sync")
-            val started = viewModel.forceSync()
-            val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-        } else {
-            // Сценарий 2: ZeroTier установлен, но не подключён
-            Logger.log(TAG, "handleSyncButtonClick: ZeroTier installed but not connected, opening ZeroTier")
-            pendingSyncAfterZeroTier = true
-            openZeroTier()
-        }
-    }
-    
-    /**
-     * Проверяет, установлен ли ZeroTier One.
-     */
-    private fun isZeroTierInstalled(): Boolean {
-        return try {
-            packageManager.getPackageInfo(ZEROTIER_PACKAGE, 0)
-            true
-        } catch (e: PackageManager.NameNotFoundException) {
-            false
-        }
-    }
-    
-    /**
-     * Проверяет, есть ли активное VPN-подключение.
-     * Возвращает true, если любая активная сеть имеет тип TRANSPORT_VPN.
-     */
-    private fun isVpnConnected(): Boolean {
-        return try {
-            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val network = connectivityManager.activeNetwork ?: return false
-                val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-            } else {
-                @Suppress("DEPRECATION")
-                val networkInfo = connectivityManager.activeNetworkInfo
-                networkInfo?.type == java.net.Proxy.Type.SOCKS.ordinal // грубая проверка для старых версий
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "isVpnConnected error: ${e.message}")
-            false
-        }
-    }
-    
-    /**
-     * Открывает ZeroTier One.
-     */
-    private fun openZeroTier() {
-        try {
-            val intent = packageManager.getLaunchIntentForPackage(ZEROTIER_PACKAGE)
-            if (intent != null) {
-                Logger.log(TAG, "openZeroTier: launching ZeroTier")
-                zeroTierLauncher.launch(intent)
-            } else {
-                Logger.log(TAG, "openZeroTier: failed to get launch intent")
-                Toast.makeText(this, "Не удалось открыть ZeroTier", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "openZeroTier error: ${e.message}", e)
-            Toast.makeText(this, "Ошибка открытия ZeroTier: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-    
-    /**
-     * Показывает диалог, если ZeroTier не установлен.
-     */
-    private fun showZeroTierNotInstalledDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("⚠️ Необходимо подключение к ПК")
-            .setMessage(
-                "Для синхронизации данных необходимо установить ZeroTier One.\n\n" +
-                "ZeroTier создаёт защищённую виртуальную сеть между вашим телефоном и домашним ПК.\n\n" +
-                "Установите ZeroTier One из Google Play, подключитесь к сети Baza-sinc и нажмите синхронизацию ещё раз."
-            )
-            .setPositiveButton("Открыть Google Play") { _, _ ->
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW)
-                    intent.data = android.net.Uri.parse("https://play.google.com/store/apps/details?id=$ZEROTIER_PACKAGE")
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Logger.log(TAG, "Failed to open Google Play: ${e.message}")
-                    Toast.makeText(this, "Не удалось открыть Google Play", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun maybeRequestPostNotifications() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            Logger.log(TAG, "maybeRequestPostNotifications: Android < 13, no permission needed")
-            return
-        }
-        val granted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-        if (granted) {
-            Logger.log(TAG, "maybeRequestPostNotifications: already granted")
-            return
-        }
-        val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
-        val alreadyAsked = prefs.getBoolean(KEY_POST_NOTIFICATIONS_ASKED, false)
-        if (alreadyAsked) {
-            Logger.log(TAG, "maybeRequestPostNotifications: already asked before, skip")
-            return
-        }
-        prefs.edit().putBoolean(KEY_POST_NOTIFICATIONS_ASKED, true).apply()
-        Logger.log(TAG, "maybeRequestPostNotifications: launching permission request")
-        try {
-            postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } catch (e: Exception) {
-            Logger.log(TAG, "maybeRequestPostNotifications: launch error: ${e.message}")
-        }
-    }
-
-    private fun loadSystemFolderCounters() {
-        lifecycleScope.launch {
-            try {
-                val counters = withContext(Dispatchers.IO) {
-                    val homeTasks = db.taskDao().getActiveCount()
-                    val purchasesStats = db.itemDao()
-                        .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
-                        .firstOrNull()
-                    val purchasesItems = purchasesStats?.itemCount ?: 0
-                    val shoppingList = db.itemDao()
-                        .countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
-                    val recipesAi = try {
-                        db.recipeDao().countBySource(RecipeEntity.SOURCE_AI)
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "countBySource(ai) error: ${e.message}")
-                        0
-                    }
-                    val recipesMy = try {
-                        db.recipeDao().countBySource(RecipeEntity.SOURCE_USER)
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "countBySource(user) error: ${e.message}")
-                        0
-                    }
-                    CatalogAdapter.SystemFolderCounters(
-                        homeTasksActive = homeTasks,
-                        purchasesItems = purchasesItems,
-                        shoppingListItems = shoppingList,
-                        recipesAiCount = recipesAi,
-                        recipesMyCount = recipesMy
-                    )
-                }
-                adapter.setSystemFolderCounters(counters)
-                loadFolderStats()
-            } catch (e: Exception) {
-                Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
-            }
-        }
-    }
-
-    private fun loadFolderStats() {
-        lifecycleScope.launch {
-            try {
-                val entries = viewModel.currentEntries.value ?: return@launch
-                val ordinaryFolderIds = entries
-                    .filterIsInstance<FolderEntity>()
-                    .filter { !it.isSystem }
-                    .map { it.id }
-                val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
-                    val map: Map<String, FolderStatsRow> =
-                        if (ordinaryFolderIds.isEmpty()) {
-                            emptyMap()
-                        } else {
-                            db.itemDao()
-                                .getFolderStatsDeep(ordinaryFolderIds)
-                                .associateBy { it.folderId }
-                        }
-                    val pStats = db.itemDao()
-                        .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
-                        .firstOrNull()
-                    Pair(map, pStats)
-                }
-                adapter.setFolderStats(statsMap)
-                adapter.setPurchasesStats(purchasesStats)
-            } catch (e: Exception) {
-                Logger.log(TAG, "loadFolderStats error: ${e.message}")
-            }
-        }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        Logger.log(TAG, "onNewIntent called")
-        setIntent(intent)
-        val type = intent.getStringExtra("open_root_folder")
-        if (type != null) {
-            Logger.log(TAG, "onNewIntent: open_root_folder=$type")
-            pendingRootFolderType = type
-        }
-    }
-
-    private fun handlePendingRootFolder() {
-        val type = pendingRootFolderType ?: return
-        pendingRootFolderType = null
-        val folderName = when (type) {
-            "food" -> "Продукты"
-            "medicine" -> "Лекарства"
-            "thing" -> "Вещи"
-            else -> {
-                Logger.log(TAG, "Unknown open_root_folder type: $type")
-                return
-            }
-        }
-        lifecycleScope.launch {
-            try {
-                delay(300)
-                val rootFolders = withContext(Dispatchers.IO) {
-                    db.folderDao().getRootFolders()
-                }
-                val target = rootFolders.firstOrNull {
-                    it.name.equals(folderName, ignoreCase = true)
-                }
-                if (target != null) {
-                    Logger.log(TAG, "Navigating to root folder '$folderName' (id=${target.id})")
-                    viewModel.navigateToFolder(target.id)
-                } else {
-                    Logger.log(TAG, "Root folder '$folderName' not found")
-                    Toast.makeText(this@MainActivity, "Папка «$folderName» не найдена", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error navigating to root folder", e)
-            }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        viewModel.loadContents()
-        handlePendingRootFolder()
-        loadSystemFolderCounters()
-        lifecycleScope.launch {
-            delay(300)
-            maybeShowTodayDialog()
-        }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        stopSyncAnimation()
-        todayDialogShownInThisResume = false
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        stopSyncAnimation()
-        hideProgressJob?.cancel()
-        stopRepeat()
-    }
-
-    private suspend fun maybeShowTodayDialog() {
-        try {
-            if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
-                Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
-                return
-            }
-            if (todayDialogShownInThisResume) {
-                Logger.log(TAG, "maybeShowTodayDialog: already shown in this onResume")
-                return
-            }
-            val now = System.currentTimeMillis()
-            val todayAt7 = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.TODAY_DIALOG_HOUR)
-                set(Calendar.MINUTE, TaskReminderPreferences.TODAY_DIALOG_MINUTE)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-            if (now < todayAt7) {
-                Logger.log(TAG, "maybeShowTodayDialog: too early (now=$now, todayAt7=$todayAt7)")
-                return
-            }
-            val lastShown = TaskReminderPreferences.getLastTodayDialogTimestamp(this)
-            if (lastShown >= todayAt7) {
-                Logger.log(TAG, "maybeShowTodayDialog: already shown after 07:00 today (lastShown=$lastShown)")
-                return
-            }
-            todayDialogShownInThisResume = true
-            val shown = showTodayTasksDialog(onOpenTasks = {
-                startActivity(Intent(this, TaskListActivity::class.java))
-            })
-            if (shown) {
-                TaskReminderPreferences.setLastTodayDialogTimestamp(this, now)
-                Logger.log(TAG, "maybeShowTodayDialog: shown and timestamp set ($now)")
-            } else {
-                Logger.log(TAG, "maybeShowTodayDialog: show() returned false, timestamp NOT set")
-            }
-        } catch (e: Exception) {
-            Logger.log(TAG, "maybeShowTodayDialog error: ${e.message}", e)
-        }
-    }
-
-    private suspend fun showTodayTasksDialog(onOpenTasks: (() -> Unit)? = null): Boolean {
-        return try {
-            val now = System.currentTimeMillis()
-            val cal = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 23)
-                set(Calendar.MINUTE, 59)
-                set(Calendar.SECOND, 59)
-                set(Calendar.MILLISECOND, 999)
-            }
-            val endOfDay = cal.timeInMillis
-            val tasks: List<TaskEntity> = viewModel.getTodayTasks(now, endOfDay)
-            Logger.log(TAG, "showTodayTasksDialog: ${tasks.size} tasks for today")
-            TodayTasksDialog.show(
-                activity = this@MainActivity,
-                tasks = tasks,
-                onOpenTasks = onOpenTasks
-            )
-        } catch (e: Exception) {
-            Logger.log(TAG, "showTodayTasksDialog error: ${e.message}", e)
-            false
-        }
-    }
-
-    private fun showHomeTasksSystemMenu(folder: FolderEntity) {
-        val items = arrayOf(
-            "📅 Показать сводку на сегодня",
-            "⚙️ Настройки напоминаний"
-        )
-        AlertDialog.Builder(this)
-            .setTitle("🏠 Домашние дела")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> {
-                        Logger.log(TAG, "HomeTasks menu: show today dialog (manual)")
-                        lifecycleScope.launch {
-                            showTodayTasksDialog(onOpenTasks = {
-                                startActivity(Intent(this@MainActivity, TaskListActivity::class.java))
-                            })
-                        }
-                    }
-                    1 -> {
-                        Logger.log(TAG, "HomeTasks menu: open AppSettingsActivity")
-                        startActivity(Intent(this, AppSettingsActivity::class.java))
-                    }
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun launchSelectUserIfNeeded() {
-        if (tokenStorage.getCurrentUser() == null) {
-            Logger.log(TAG, "No user selected, launching SelectUserActivity")
-            try {
-                selectUserLauncher.launch(Intent(this, SelectUserActivity::class.java))
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
-            }
-        }
-    }
-
-    private fun updateSyncProgressCard(progress: SyncProgress) {
-        hideProgressJob?.cancel()
-        val icon = when (progress.phase) {
-            SyncPhase.SENDING -> "📤"
-            SyncPhase.DOWNLOADING -> "📥"
-            SyncPhase.UPLOADING_PHOTOS -> "📷"
-            SyncPhase.DOWNLOADING_PHOTOS -> "🖼️"
-            SyncPhase.DONE -> "✅"
-        }
-        binding.tvSyncPhaseIcon.text = icon
-        binding.tvSyncPhaseText.text = progress.message
-        if (progress.total > 0) {
-            binding.tvSyncCounter.text = "${progress.current} / ${progress.total}"
-            binding.tvSyncCounter.visibility = View.VISIBLE
-        } else {
-            binding.tvSyncCounter.visibility = View.GONE
-        }
-        if (progress.total > 0) {
-            binding.syncProgressBar.max = progress.total
-            binding.syncProgressBar.setProgressCompat(progress.current, true)
-        } else {
-            binding.syncProgressBar.max = 100
-            binding.syncProgressBar.setProgressCompat(0, false)
-        }
-        if (binding.syncProgressCard.visibility != View.VISIBLE) {
-            binding.syncProgressCard.alpha = 0f
-            binding.syncProgressCard.translationY = 80f
-            binding.syncProgressCard.visibility = View.VISIBLE
-            binding.syncProgressCard.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(250)
-                .start()
-        }
-        if (progress.phase == SyncPhase.DONE) {
-            hideProgressJob = lifecycleScope.launch {
-                delay(2000)
-                hideSyncProgressCard()
-            }
-        }
-    }
-
-    private fun hideSyncProgressCard() {
-        if (binding.syncProgressCard.visibility != View.VISIBLE) return
-        binding.syncProgressCard.animate()
-            .alpha(0f)
-            .translationY(80f)
-            .setDuration(250)
-            .withEndAction {
-                binding.syncProgressCard.visibility = View.GONE
-                binding.syncProgressCard.alpha = 1f
-                binding.syncProgressCard.translationY = 0f
-            }
-            .start()
-    }
-
-    private fun updatePathTitle() {
-        pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
-    }
-
-    private fun navigateToFolder(folder: FolderEntity) {
-        viewModel.navigateToFolder(folder.id)
-    }
-
-    private fun openItemDetail(item: ItemEntity) {
-        val intent = Intent(this, ItemDetailActivity::class.java)
-        intent.putExtra("item_id", item.id)
-        itemDetailLauncher.launch(intent)
-    }
-
-    private fun showSearchDialog() {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 16, 48, 8)
-        }
-        val editText = EditText(this).apply {
-            hint = "Поиск предметов (рецепты — в 📝 Мои рецепты)"
-            viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) setText(it) }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        container.addView(editText)
-        val scanButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_scan)
-            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.btn_dark_circle)
-            contentDescription = "Сканировать штрих-код"
-            setColorFilter(ContextCompat.getColor(this@MainActivity, android.R.color.black))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 24
-                gravity = android.view.Gravity.CENTER_HORIZONTAL
-            }
-        }
-        container.addView(scanButton)
-        val scanLabel = TextView(this).apply {
-            text = "Сканировать штрих-код"
-            textSize = 14f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 4
-            }
-        }
-        container.addView(scanLabel)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Поиск")
-            .setView(container)
-            .setPositiveButton("Искать") { _, _ ->
-                val q = editText.text.toString().trim()
-                if (q.isNotEmpty()) viewModel.search(q) else viewModel.clearSearch()
-            }
-            .setNegativeButton("Сбросить") { _, _ -> viewModel.clearSearch() }
-            .setNeutralButton("Отмена", null)
-            .create()
-        scanButton.setOnClickListener {
-            dialog.dismiss()
-            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
-        }
-        scanLabel.setOnClickListener {
-            dialog.dismiss()
-            barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
-        }
-        dialog.show()
-    }
-
-    private fun searchByBarcode(barcode: String) {
-        lifecycleScope.launch {
-            try {
-                val items = withContext(Dispatchers.IO) { db.itemDao().getItemsByBarcode(barcode) }
-                when {
-                    items.isEmpty() -> {
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Ничего не найдено")
-                            .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
-                            .setPositiveButton("Создать") { _, _ ->
-                                val intent = Intent(this@MainActivity, AddItemActivity::class.java)
-                                intent.putExtra("parent_id", viewModel.getCurrentFolderId())
-                                intent.putExtra("barcode", barcode)
-                                startActivity(intent)
-                            }
-                            .setNegativeButton("Отмена", null)
-                            .show()
-                    }
-                    items.size == 1 -> openItemDetail(items.first())
-                    else -> {
-                        val names = items.map { "${it.name}  (×${it.quantity})" }.toTypedArray()
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Найдено ${items.size} предметов")
-                            .setItems(names) { _, which -> openItemDetail(items[which]) }
-                            .setNegativeButton("Отмена", null)
-                            .show()
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error searching by barcode", e)
-            }
-        }
-    }
-
-    private fun showCreateFolderDialog() {
-        val editText = EditText(this)
-        editText.hint = "Название папки"
-        AlertDialog.Builder(this)
-            .setTitle("Новая папка")
-            .setView(editText)
-            .setPositiveButton("Создать") { _, _ ->
-                val name = editText.text.toString().trim()
-                if (name.isNotEmpty()) createFolderWithImage(name) else Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
-            }
-            .setNeutralButton("Выбрать иконку") { _, _ ->
-                val name = editText.text.toString().trim()
-                if (name.isNotEmpty()) {
-                    newFolderImageBytes = null
-                    pickFolderImageLauncher.launch("image/*")
-                } else Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Отмена") { _, _ -> newFolderImageBytes = null }
-            .show()
-    }
-
-    private fun createFolderWithImage(name: String) {
-        lifecycleScope.launch {
-            try {
-                viewModel.createFolder(name)
-                delay(100)
-                newFolderImageBytes?.let { bytes ->
-                    try {
-                        val folders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
-                        val lastFolder = folders.maxByOrNull { it.createdAt }
-                        if (lastFolder != null) {
-                            ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
-                            val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
-                            withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
-                            viewModel.uploadFolderImage(lastFolder.id, bytes)
-                        }
-                    } catch (e: Exception) {
-                        Logger.log(TAG, "Failed to upload folder image", e)
-                    }
-                    newFolderImageBytes = null
-                }
-                viewModel.loadContents()
-                Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error creating folder", e)
-            }
-        }
-    }
-
-    private fun showFolderContextMenu(folder: FolderEntity) {
-        if (folder.isSystem) {
-            Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
-        val items = if (canDelete) {
-            arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
-        } else {
-            arrayOf("Переименовать", "Сменить иконку", "Статистика", "Переместить")
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Действия с папкой")
-            .setItems(items) { _, which ->
-                if (canDelete) {
-                    when (which) {
-                        0 -> showRenameFolderDialog(folder)
-                        1 -> changeFolderImage(folder)
-                        2 -> confirmDeleteFolder(folder)
-                        3 -> showFolderStats(folder)
-                        4 -> showMoveFolderDialog(folder)
-                    }
-                } else {
-                    when (which) {
-                        0 -> showRenameFolderDialog(folder)
-                        1 -> changeFolderImage(folder)
-                        2 -> showFolderStats(folder)
-                        3 -> showMoveFolderDialog(folder)
-                    }
-                }
-            }
-            .show()
-    }
-
-    private fun showItemContextMenu(item: ItemEntity) {
-        val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
-        val items = if (canDelete) {
-            arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
-        } else {
-            arrayOf("Редактировать", "Списать / В архив", "История", "Переместить")
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Действия с предметом")
-            .setItems(items) { _, which ->
-                if (canDelete) {
-                    when (which) {
-                        0 -> editItem(item)
-                        1 -> showWriteOffOrArchiveDialog(item)
-                        2 -> confirmDeleteItem(item)
-                        3 -> showItemHistory(item)
-                        4 -> showMoveItemDialog(item)
-                    }
-                } else {
-                    when (which) {
-                        0 -> editItem(item)
-                        1 -> showWriteOffOrArchiveDialog(item)
-                        2 -> showItemHistory(item)
-                        3 -> showMoveItemDialog(item)
-                    }
-                }
-            }
-            .show()
-    }
-
-    private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
-        AlertDialog.Builder(this)
-            .setTitle("⚠️ Нельзя архивировать")
-            .setMessage(message)
-            .setPositiveButton("Отвязать всех детей") { _, _ ->
-                viewModel.detachAllChildren(item.id) { count ->
-                    Toast.makeText(
-                        this,
-                        "Отвязано: $count. Теперь можно архивировать.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
-        if (item.quantity <= 1) {
-            showWriteOffReasonDialog(item, item.quantity.coerceAtLeast(1))
-        } else {
-            showWriteOffCountDialog(item)
-        }
-    }
-
-    private fun getWriteOffNoun(item: ItemEntity): String {
-        return when (item.itemType) {
-            "food" -> "продукт"
-            "medicine" -> "лекарство"
-            "thing" -> "вещь"
-            else -> "предмет"
-        }
-    }
-
-    private fun getWriteOffTitle(item: ItemEntity): String {
-        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
-        val noun = getWriteOffNoun(item)
-        return "Списать $noun: $shortName"
-    }
-
-    private fun getMoveTitle(item: ItemEntity): String {
-        val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
-        val noun = getWriteOffNoun(item)
-        return "Переместить $noun: $shortName"
-    }
-
-    private fun showWriteOffCountDialog(item: ItemEntity) {
-        val stepper = buildStepperLayout(item.quantity, withCheckAll = false)
-        AlertDialog.Builder(this)
-            .setTitle(getWriteOffTitle(item))
-            .setView(stepper.container)
-            .setPositiveButton("Далее") { _, _ ->
-                val count = stepper.getValue()
-                if (count <= 0) {
-                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                if (count > item.quantity) {
-                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                showWriteOffReasonDialog(item, count)
-            }
-            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
-            .setOnDismissListener { stopRepeat() }
-            .show()
-    }
-
-    private fun showWriteOffReasonDialog(item: ItemEntity, count: Int) {
-        val noun = getWriteOffNoun(item)
-        val totalQty = item.quantity
-        val title = if (count == totalQty) {
-            "Списываешь последнюю $noun.\nПредмет уйдёт в архив."
-        } else {
-            "Списать $count шт. — в архив.\nВыберите причину:"
-        }
-        val reasons = arrayOf(
-            "🧴 Израсходовано",
-            "🍽 Съедено",
-            "🔧 Сломано",
-            "🗑 Выброшено",
-            "🎁 Подарено",
-            "💰 Продано",
-            "⏰ Истёк срок",
-            "📦 Другое"
-        )
-        val reasonKeys = arrayOf(
-            "used_up",
-            "eaten",
-            "broken",
-            "thrown",
-            "gifted",
-            "sold",
-            "expired",
-            "other"
-        )
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setItems(reasons) { _, which ->
-                viewModel.writeOffItem(
-                    item.id,
-                    count,
-                    reasonKeys[which],
-                    null,
-                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
-                )
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun showMoveItemDialog(item: ItemEntity) {
-        if (item.quantity <= 1) {
-            openMoveFolderPicker(item, 1)
-            return
-        }
-        val stepper = buildStepperLayout(item.quantity, withCheckAll = true)
-        AlertDialog.Builder(this)
-            .setTitle(getMoveTitle(item))
-            .setView(stepper.container)
-            .setPositiveButton("Далее") { _, _ ->
-                val count = stepper.getValue()
-                if (count <= 0) {
-                    Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                if (count > item.quantity) {
-                    Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                openMoveFolderPicker(item, count)
-            }
-            .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
-            .setOnDismissListener { stopRepeat() }
-            .show()
-    }
-
-    private fun openMoveFolderPicker(item: ItemEntity, count: Int) {
-        Logger.log(
-            TAG,
-            "Show move item dialog: ${item.name}, current parentId=${item.parentId}, " +
-                "current parentItemId=${item.parentItemId}, count=$count"
-        )
-        MoveDialogHelper.show(
-            context = this,
-            scope = lifecycleScope,
-            db = db,
-            title = "Переместить «${item.name}»",
-            startFromId = item.parentId,
-            startFromItemId = item.parentItemId,
-            excludedIds = emptySet(),
-            onConfirm = { newParentId, newParentItemId ->
-                if (newParentId == item.parentId && newParentItemId == item.parentItemId) {
-                    Toast.makeText(this, "Предмет уже здесь", Toast.LENGTH_SHORT).show()
-                } else {
-                    viewModel.splitAndMoveItem(item.id, count, newParentId, newParentItemId)
-                    Toast.makeText(this, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
-                }
-            }
-        )
-    }
-
-    private class StepperResult(
-        val container: LinearLayout,
-        val editText: EditText,
-        val checkAll: CheckBox,
-        val minusBtn: View,
-        val plusBtn: View,
-        val maxQty: Int
-    ) {
-        fun getValue(): Int = editText.text.toString().toIntOrNull() ?: 1
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun buildStepperLayout(maxQty: Int, withCheckAll: Boolean): StepperResult {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 8)
-        }
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER
-        }
-        val minusBtn = Button(this).apply {
-            text = "−"
-            textSize = 22f
-            minWidth = 0
-            minimumWidth = 0
-            width = 120
-            height = 120
-            setPadding(0, 0, 0, 0)
-        }
-        val editText = EditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setText("1")
-            gravity = android.view.Gravity.CENTER
-            textSize = 20f
-            setSelectAllOnFocus(true)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = 16
-                marginEnd = 16
-            }
-        }
-        val plusBtn = Button(this).apply {
-            text = "+"
-            textSize = 22f
-            minWidth = 0
-            minimumWidth = 0
-            width = 120
-            height = 120
-            setPadding(0, 0, 0, 0)
-        }
-        row.addView(minusBtn)
-        row.addView(editText)
-        row.addView(plusBtn)
-        container.addView(row)
-        val checkAll = CheckBox(this).apply {
-            text = "Переместить всё ($maxQty шт.)"
-            textSize = 15f
-            visibility = if (withCheckAll) View.VISIBLE else View.GONE
-            setPadding(0, 16, 0, 0)
-        }
-        if (withCheckAll) container.addView(checkAll)
-        val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
-        val changeBy = { delta: Int ->
-            if (!(withCheckAll && checkAll.isChecked)) {
-                val cur = result.getValue()
-                val next = (cur + delta).coerceIn(1, maxQty)
-                if (next != cur) {
-                    editText.setText(next.toString())
-                    editText.setSelection(editText.text.length)
-                }
-            }
-        }
-        minusBtn.setOnClickListener { changeBy(-1) }
-        plusBtn.setOnClickListener { changeBy(+1) }
-        setupRepeatButton(minusBtn) { changeBy(-1) }
-        setupRepeatButton(plusBtn) { changeBy(+1) }
-        if (withCheckAll) {
-            checkAll.setOnCheckedChangeListener { _, checked ->
-                if (checked) {
-                    editText.setText(maxQty.toString())
-                    editText.isEnabled = false
-                    minusBtn.isEnabled = false
-                    plusBtn.isEnabled = false
-                } else {
-                    editText.setText("1")
-                    editText.isEnabled = true
-                    minusBtn.isEnabled = true
-                    plusBtn.isEnabled = true
-                }
-            }
-        }
-        return result
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupRepeatButton(view: View, action: () -> Unit) {
-        view.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    repeatRunnable = object : Runnable {
-                        override fun run() {
-                            action()
-                            repeatHandler.postDelayed(this, 100)
-                        }
-                    }
-                    repeatHandler.postDelayed(repeatRunnable!!, 400)
-                    v.isPressed = true
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    stopRepeat()
-                    v.isPressed = false
-                    v.performClick()
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-
-    private fun stopRepeat() {
-        repeatRunnable?.let { repeatHandler.removeCallbacks(it) }
-        repeatRunnable = null
-    }
-
-    private fun showArchiveDialog(item: ItemEntity) {
-        val reasons = arrayOf(
-            "🧴 Израсходовано",
-            "🍽 Съедено",
-            "🔧 Сломано",
-            "🗑 Выброшено",
-            "🎁 Подарено",
-            "💰 Продано",
-            "⏰ Истёк срок",
-            "📦 Другое"
-        )
-        val reasonKeys = arrayOf(
-            "used_up",
-            "eaten",
-            "broken",
-            "thrown",
-            "gifted",
-            "sold",
-            "expired",
-            "other"
-        )
-        AlertDialog.Builder(this)
-            .setTitle("В архив: ${item.name}")
-            .setItems(reasons) { _, which -> showArchiveNoteDialog(item, reasonKeys[which]) }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
-        val editText = EditText(this)
-        editText.hint = "Комментарий (необязательно)"
-        AlertDialog.Builder(this)
-            .setTitle("Комментарий")
-            .setView(editText)
-            .setPositiveButton("В архив") { _, _ ->
-                val note = editText.text.toString().trim().ifEmpty { null }
-                viewModel.archiveItem(
-                    item.id,
-                    reason,
-                    note,
-                    onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
-                )
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun showRenameFolderDialog(folder: FolderEntity) {
-        if (folder.isSystem) {
-            Toast.makeText(this, "Системную папку нельзя переименовать", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val editText = EditText(this).apply { setText(folder.name) }
-        AlertDialog.Builder(this)
-            .setTitle("Переименовать папку")
-            .setView(editText)
-            .setPositiveButton("OK") { _, _ ->
-                viewModel.renameFolder(folder.id, editText.text.toString().trim())
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun confirmDeleteFolder(folder: FolderEntity) {
-        if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
-            Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (folder.isSystem) {
-            Toast.makeText(this, "Системную папку нельзя удалить", Toast.LENGTH_SHORT).show()
-            return
-        }
-        viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
-            val total = folderCount + itemCount
-            if (total > 0) {
-                val message = buildString {
-                    append("Папка «${folder.name}» не пуста:\n\n")
-                    if (itemCount > 0) append("• Предметов: $itemCount\n")
-                    if (folderCount > 0) append("• Подпапок: $folderCount\n")
-                    append("\nНельзя удалить, пока есть вложенные.\n")
-                    append("Сначала отвяжите их — они поднимутся в корень.")
-                }
-                AlertDialog.Builder(this)
-                    .setTitle("⚠️ Нельзя удалить")
-                    .setMessage(message)
-                    .setPositiveButton("Отвязать всех детей") { _, _ ->
-                        viewModel.detachAllFolderChildren(folder.id) { count ->
-                            Toast.makeText(
-                                this,
-                                "Отвязано: $count. Теперь можно удалить.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                    .setNegativeButton("Отмена", null)
-                    .show()
-            } else {
-                AlertDialog.Builder(this)
-                    .setTitle("Удалить папку «${folder.name}»?")
-                    .setPositiveButton("Да") { _, _ ->
-                        viewModel.deleteFolder(folder.id)
-                        Toast.makeText(this, "Папка удалена", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Нет", null)
-                    .show()
-            }
-        }
-    }
-
-    private fun changeFolderImage(folder: FolderEntity) {
-        if (folder.isSystem) {
-            Toast.makeText(this, "Системную папку нельзя менять", Toast.LENGTH_SHORT).show()
-            return
-        }
-        currentFolderForImage = folder
-        pickExistingFolderImageLauncher.launch("image/*")
-    }
-
-    private fun showFolderStats(folder: FolderEntity) {
-        if (folder.isSystem) {
-            lifecycleScope.launch {
-                try {
-                    val active = withContext(Dispatchers.IO) { db.taskDao().getActiveCount() }
-                    val all = withContext(Dispatchers.IO) { db.taskDao().getAllForSync().size }
-                    val done = all - active
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Статистика «${folder.name}»")
-                        .setMessage(
-                            "📋 Активных: $active\n" +
-                                "✅ Выполненных: ${done.coerceAtLeast(0)}\n" +
-                                "📊 Всего: $all"
-                        )
-                        .setPositiveButton("OK", null)
-                        .show()
-                } catch (e: Exception) {
-                    Logger.log(TAG, "showFolderStats (system) error: ${e.message}")
-                }
-            }
-            return
-        }
-        lifecycleScope.launch {
-            viewModel.getFolderStats(folder.id) { stats ->
-                val (itemCount, folderCount) = stats
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Статистика «${folder.name}»")
-                    .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
-                    .setPositiveButton("OK", null)
-                    .show()
-            }
-        }
-    }
-
-    private fun showMoveFolderDialog(folder: FolderEntity) {
-        if (folder.isSystem) {
-            Toast.makeText(this, "Системную папку нельзя переместить", Toast.LENGTH_SHORT).show()
-            return
-        }
-        Logger.log(
-            TAG,
-            "Show move folder dialog: ${folder.name}, " +
-                "current parentId=${folder.parentId}, current parentItemId=${folder.parentItemId}"
-        )
-        lifecycleScope.launch {
-            try {
-                val excluded = withContext(Dispatchers.IO) {
-                    collectDescendantIds(folder.id) + folder.id
-                }
-                MoveDialogHelper.show(
-                    context = this@MainActivity,
-                    scope = lifecycleScope,
-                    db = db,
-                    title = "Переместить «${folder.name}»",
-                    startFromId = folder.parentId,
-                    startFromItemId = folder.parentItemId,
-                    excludedIds = excluded,
-                    onConfirm = { newParentId, newParentItemId ->
-                        if (newParentId == folder.parentId && newParentItemId == folder.parentItemId) {
-                            Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.moveFolder(folder.id, newParentId, newParentItemId)
-                            Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                Logger.log(TAG, "Error showing move folder dialog", e)
-                Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private suspend fun collectDescendantIds(folderId: String): Set<String> {
-        val result = mutableSetOf<String>()
-        val stack = ArrayDeque<String>()
-        stack.addLast(folderId)
-        while (stack.isNotEmpty()) {
-            val id = stack.removeLast()
-            val children = db.folderDao().getFoldersByParent(id)
-            for (child in children) {
-                if (result.add(child.id)) {
-                    stack.addLast(child.id)
-                }
-            }
-        }
-        return result
-    }
-
-    private fun editItem(item: ItemEntity) {
-        val intent = Intent(this, ItemDetailActivity::class.java)
-        intent.putExtra("item_id", item.id)
-        intent.putExtra("edit_mode", true)
-        itemDetailLauncher.launch(intent)
-    }
-
-    private fun confirmDeleteItem(item: ItemEntity) {
-        if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
-            Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
-            return
-        }
-        viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
-            val totalChildren = foldersCount + itemsCount
-            if (totalChildren > 0) {
-                val childInfo = buildString {
-                    append("У предмета «${item.name}» есть вложенные:\n\n")
-                    if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
-                    if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
-                    append("\nНельзя удалить, пока есть вложенные.\n")
-                    append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
-                }
-                AlertDialog.Builder(this)
-                    .setTitle("⚠️ Нельзя удалить")
-                    .setMessage(childInfo)
-                    .setPositiveButton("Отвязать всех детей") { _, _ ->
-                        viewModel.detachAllChildren(item.id) { count ->
-                            Toast.makeText(
-                                this,
-                                "Отвязано: $count. Теперь можно удалить.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                    .setNegativeButton("Отмена", null)
-                    .show()
-            } else {
-                AlertDialog.Builder(this)
-                    .setTitle("Удалить предмет «${item.name}»?")
-                    .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
-                    .setPositiveButton("Удалить") { _, _ ->
-                        viewModel.deleteItem(item.id)
-                        Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
-                    .setNeutralButton("Отмена", null)
-                    .show()
-            }
-        }
-    }
-
-    private fun showItemHistory(item: ItemEntity) {
-        val intent = Intent(this, ItemDetailActivity::class.java)
-        intent.putExtra("item_id", item.id)
-        intent.putExtra("show_history", true)
-        itemDetailLauncher.launch(intent)
-    }
-
-    private fun updateSearchIcon(query: String?) {
-        if (query.isNullOrEmpty()) {
-            binding.btnSearch.setImageResource(R.drawable.ic_search)
-            binding.btnSearch.setOnClickListener { showSearchDialog() }
-        } else {
-            binding.btnSearch.setImageResource(R.drawable.ic_close)
-            binding.btnSearch.setOnClickListener { viewModel.clearSearch() }
-        }
-    }
-
-    private fun updateSyncStatusIcon(status: SyncStatus) {
-        when (status) {
-            SyncStatus.SYNCING -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_syncing)
-                startSyncAnimation()
-            }
-            SyncStatus.SYNCED -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
-                stopSyncAnimation()
-            }
-            SyncStatus.PENDING -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_pending)
-                stopSyncAnimation()
-            }
-            SyncStatus.OFFLINE -> {
-                binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_offline)
-                stopSyncAnimation()
-            }
-        }
-    }
-
-    private fun startSyncAnimation() {
-        if (syncRotationAnim == null) {
-            syncRotationAnim = RotateAnimation(
-                0f, 360f,
-                Animation.RELATIVE_TO_SELF, 0.5f,
-                Animation.RELATIVE_TO_SELF, 0.5f
-            ).apply {
-                duration = 1000
-                interpolator = LinearInterpolator()
-                repeatCount = Animation.INFINITE
-                repeatMode = Animation.RESTART
-            }
-        }
-        binding.ivSyncStatus.startAnimation(syncRotationAnim)
-    }
-
-    private fun stopSyncAnimation() {
-        binding.ivSyncStatus.clearAnimation()
-    }
-
-    companion object {
-        private const val KEY_POST_NOTIFICATIONS_ASKED = "post_notifications_asked"
-    }
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     if (result.resultCode == RESULT_OK) {
+         val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+         if (!folderId.isNullOrEmpty()) {
+             Logger.log(TAG, "Navigate to folder from ItemDetail: $folderId")
+             viewModel.navigateToFolder(folderId)
+         }
+     }
+ }
+ private val shoppingListLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     if (result.resultCode == RESULT_OK) {
+         val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+         if (!folderId.isNullOrEmpty()) {
+             Logger.log(TAG, "Navigate to folder from ShoppingList: $folderId")
+             viewModel.navigateToFolder(folderId)
+         } else {
+             loadSystemFolderCounters()
+         }
+     } else {
+         loadSystemFolderCounters()
+     }
+ }
+ private val recipeListLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     Logger.log(TAG, "RecipeListActivity result: ${result.resultCode}")
+     loadSystemFolderCounters()
+ }
+ private val receiptPreviewLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     if (result.resultCode == RESULT_OK) {
+         val folderId = result.data?.getStringExtra("navigate_to_folder_id")
+         if (!folderId.isNullOrEmpty()) {
+             Logger.log(TAG, "Navigate to purchase folder (receipt): $folderId")
+             Toast.makeText(this, "Открываю папку с покупкой…", Toast.LENGTH_SHORT).show()
+             viewModel.navigateToFolder(folderId)
+         } else {
+             viewModel.loadContents()
+             loadSystemFolderCounters()
+         }
+     } else {
+         Logger.log(TAG, "Receipt preview cancelled or failed")
+         loadSystemFolderCounters()
+     }
+ }
+ private val connectFamilyLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     if (result.resultCode == RESULT_OK) {
+         launchSelectUserIfNeeded()
+         viewModel.loadContents()
+     }
+ }
+ // 🆕 v23.4.3: launcher для открытия ZeroTier
+ private val zeroTierLauncher = registerForActivityResult(
+     ActivityResultContracts.StartActivityForResult()
+ ) { result ->
+     Logger.log(TAG, "ZeroTier launcher result: ${result.resultCode}")
+     // После возврата из ZeroTier — если был pending sync, запускаем его
+     if (pendingSyncAfterZeroTier) {
+         pendingSyncAfterZeroTier = false
+         Logger.log(TAG, "Returned from ZeroTier, starting sync...")
+         // Небольшая задержка, чтобы ZeroTier успел установить соединение
+         lifecycleScope.launch {
+             delay(2000)
+             if (isVpnConnected()) {
+                 Logger.log(TAG, "VPN connected after ZeroTier, starting sync")
+                 val started = viewModel.forceSync()
+                 val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
+                 Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+             } else {
+                 Logger.log(TAG, "VPN not connected after ZeroTier, showing message")
+                 Snackbar.make(
+                     binding.root,
+                     "⚠️ ZeroTier не подключён. Подключитесь вручную и нажмите синхронизацию ещё раз.",
+                     Snackbar.LENGTH_LONG
+                 ).show()
+             }
+         }
+     }
+ }
+ override fun onCreate(savedInstanceState: Bundle?) {
+     super.onCreate(savedInstanceState)
+     Logger.log(TAG, "=== MainActivity onCreate START ===")
+     try {
+         binding = ActivityMainBinding.inflate(layoutInflater)
+         setContentView(binding.root)
+     } catch (e: Exception) {
+         Logger.log(TAG, "CRITICAL: Failed to inflate layout", e)
+         return
+     }
+     Logger.init(applicationContext)
+     tokenStorage = TokenStorage(this)
+     viewModel = BaseApplication.mainViewModel
+     pendingRootFolderType = intent.getStringExtra("open_root_folder")
+     if (pendingRootFolderType != null) {
+         Logger.log(TAG, "onCreate: requested open_root_folder=$pendingRootFolderType")
+     }
+     try {
+         val appLifecycleObserver = AppLifecycleObserver(viewModel)
+         ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
+     } catch (e: Exception) {
+         Logger.log(TAG, "Error registering AppLifecycleObserver", e)
+     }
+     val publicKey = tokenStorage.getPublicKey()
+     if (publicKey == null) {
+         connectFamilyLauncher.launch(Intent(this, ConnectFamilyActivity::class.java))
+     }
+     setSupportActionBar(binding.toolbar)
+     supportActionBar?.setDisplayHomeAsUpEnabled(false)
+     pathTextView = TextView(this).apply {
+         text = "BAZA"
+         textSize = 18f
+         maxLines = 3
+         ellipsize = android.text.TextUtils.TruncateAt.END
+         setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+     }
+     supportActionBar?.setCustomView(pathTextView)
+     supportActionBar?.displayOptions = ActionBar.DISPLAY_SHOW_CUSTOM
+             adapter = CatalogAdapter(
+         onFolderClick = { folder ->
+             when (folder.systemKey) {
+                 FolderEntity.SYSTEM_KEY_HOME_TASKS -> {
+                     Logger.log(TAG, "onFolderClick: opening TaskListActivity for home_tasks")
+                     startActivity(Intent(this, TaskListActivity::class.java))
+                 }
+                 FolderEntity.SYSTEM_KEY_PURCHASES -> {
+                     Logger.log(TAG, "onFolderClick: navigating into purchases folder")
+                     navigateToFolder(folder)
+                 }
+                 FolderEntity.SYSTEM_KEY_SHOPPING_LIST -> {
+                     Logger.log(TAG, "onFolderClick: opening ShoppingListActivity")
+                     shoppingListLauncher.launch(
+                         Intent(this, ShoppingListActivity::class.java)
+                     )
+                 }
+                 FolderEntity.SYSTEM_KEY_GALLERY -> {
+                     Logger.log(TAG, "onFolderClick: opening GalleryActivity")
+                     startActivity(Intent(this, GalleryActivity::class.java))
+                 }
+                 FolderEntity.SYSTEM_KEY_RECIPES -> {
+                     Logger.log(TAG, "onFolderClick: navigating into recipes root folder")
+                     navigateToFolder(folder)
+                 }
+                 FolderEntity.SYSTEM_KEY_RECIPES_AI -> {
+                     Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=ai)")
+                     recipeListLauncher.launch(
+                         Intent(this, RecipeListActivity::class.java).apply {
+                             putExtra(
+                                 RecipeListActivity.EXTRA_SOURCE,
+                                 RecipeEntity.SOURCE_AI
+                             )
+                         }
+                     )
+                 }
+                 FolderEntity.SYSTEM_KEY_RECIPES_MY -> {
+                     Logger.log(TAG, "onFolderClick: opening RecipeListActivity (source=user)")
+                     recipeListLauncher.launch(
+                         Intent(this, RecipeListActivity::class.java).apply {
+                             putExtra(
+                                 RecipeListActivity.EXTRA_SOURCE,
+                                 RecipeEntity.SOURCE_USER
+                             )
+                         }
+                     )
+                 }
+                 else -> navigateToFolder(folder)
+             }
+         },
+         onItemClick = { item -> openItemDetail(item) },
+         onFolderLongClick = { folder ->
+             if (folder.isSystem) {
+                 if (folder.systemKey == FolderEntity.SYSTEM_KEY_HOME_TASKS) {
+                     Logger.log(TAG, "onFolderLongClick: home_tasks menu")
+                     showHomeTasksSystemMenu(folder)
+                 } else {
+                     Logger.log(TAG, "onFolderLongClick: BLOCKED for system folder")
+                     Toast.makeText(
+                         this,
+                         "Системная папка — действия недоступны",
+                         Toast.LENGTH_SHORT
+                     ).show()
+                 }
+             } else {
+                 showFolderContextMenu(folder)
+             }
+         },
+         onItemLongClick = { item -> showItemContextMenu(item) }
+     )
+     binding.rvCatalog.layoutManager = LinearLayoutManager(this)
+     binding.rvCatalog.adapter = adapter
+     viewModel.currentEntries.observe(this) { entries ->
+         adapter.submitList(entries)
+         updatePathTitle()
+         loadSystemFolderCounters()
+     }
+     viewModel.syncStatus.observe(this) { updateSyncStatusIcon(it) }
+     viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
+     viewModel.syncProgress.observe(this) { progress ->
+         if (progress != null) {
+             updateSyncProgressCard(progress)
+         } else {
+             hideSyncProgressCard()
+         }
+     }
+     // 🆕 v23.4.3: показ сообщения о результате синка (Snackbar)
+     viewModel.syncResultMessage.observe(this) { message ->
+         if (!message.isNullOrEmpty()) {
+             Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+         }
+     }
+     binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
+     binding.btnAddItem.setOnClickListener {
+         val intent = Intent(this, AddItemActivity::class.java)
+         intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+         startActivity(intent)
+     }
+     binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
+     binding.btnUp.setOnClickListener { viewModel.navigateUp() }
+     binding.btnSearch.setOnClickListener { showSearchDialog() }
+     // 🆕 v23.4.3: умная кнопка синка с проверкой ZeroTier
+     binding.btnForceSync.setOnClickListener {
+         handleSyncButtonClick()
+     }
+     binding.btnSettings.setOnClickListener {
+         startActivity(Intent(this, SettingsActivity::class.java))
+     }
+     binding.btnScanCheck.setOnClickListener {
+         Logger.log(TAG, "Scan receipt QR clicked")
+         receiptPreviewLauncher.launch(
+             Intent(this, BarcodeScannerActivity::class.java).apply {
+                 putExtra(
+                     BarcodeScannerActivity.EXTRA_SCAN_MODE,
+                     BarcodeScannerActivity.MODE_RECEIPT_QR
+                 )
+             }
+         )
+     }
+     viewModel.navigateToFolder(null)
+     updateSearchIcon(viewModel.searchQueryLiveData.value)
+     if (tokenStorage.getPublicKey() != null && tokenStorage.getCurrentUser() == null) {
+         launchSelectUserIfNeeded()
+     }
+     maybeRequestPostNotifications()
+     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+         override fun handleOnBackPressed() {
+             val searchActive = !viewModel.getSearchQuery().isNullOrEmpty()
+             val inSubfolder = viewModel.getCurrentFolderId() != null
+             when {
+                 searchActive -> {
+                     Logger.log(TAG, "onBack: clearing search")
+                     viewModel.clearSearch()
+                 }
+                 inSubfolder -> {
+                     Logger.log(TAG, "onBack: navigateUp from ${viewModel.getCurrentFolderId()}")
+                     viewModel.navigateUp()
+                 }
+                 else -> {
+                     Logger.log(TAG, "onBack: at root, showing exit dialog")
+                     AlertDialog.Builder(this@MainActivity)
+                         .setTitle("Выйти из приложения?")
+                         .setMessage("Вы уверены, что хотите закрыть БАЗУ?")
+                         .setPositiveButton("Выйти") { _, _ ->
+                             isEnabled = false
+                             onBackPressedDispatcher.onBackPressed()
+                         }
+                         .setNegativeButton("Отмена", null)
+                         .show()
+                 }
+             }
+         }
+     })
+ }
+ // ============================================================
+ // 🆕 v23.4.3: УМНАЯ КНОПКА СИНКА С ПРОВЕРКОЙ ZEROTIER
+ // ============================================================
+ /**
+  * Обработчик кнопки синка.
+  * Три сценария:
+  * 1. ZeroTier подключён (VPN активен) → сразу запускаем синк
+  * 2. ZeroTier установлен, но не подключён → открываем ZeroTier, после возврата автозапуск синка
+  * 3. ZeroTier не установлен → показываем диалог "Необходимо подключение к ПК"
+  */
+ private fun handleSyncButtonClick() {
+     Logger.log(TAG, "handleSyncButtonClick: checking ZeroTier status")
+     // Проверяем, установлен ли ZeroTier
+     val isZeroTierInstalled = isZeroTierInstalled()
+     if (!isZeroTierInstalled) {
+         // Сценарий 3: ZeroTier не установлен
+         Logger.log(TAG, "handleSyncButtonClick: ZeroTier not installed, showing dialog")
+         showZeroTierNotInstalledDialog()
+         return
+     }
+     // ZeroTier установлен, проверяем подключение
+     val isVpnConnected = isVpnConnected()
+     if (isVpnConnected) {
+         // Сценарий 1: VPN подключён, запускаем синк
+         Logger.log(TAG, "handleSyncButtonClick: VPN connected, starting sync")
+         val started = viewModel.forceSync()
+         val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
+         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+     } else {
+         // Сценарий 2: ZeroTier установлен, но не подключён
+         Logger.log(TAG, "handleSyncButtonClick: ZeroTier installed but not connected, opening ZeroTier")
+         pendingSyncAfterZeroTier = true
+         openZeroTier()
+     }
+ }
+ /**
+  * Проверяет, установлен ли ZeroTier One.
+  */
+ private fun isZeroTierInstalled(): Boolean {
+     return try {
+         packageManager.getPackageInfo(ZEROTIER_PACKAGE, 0)
+         true
+     } catch (e: PackageManager.NameNotFoundException) {
+         false
+     }
+ }
+ /**
+  * Проверяет, есть ли активное VPN-подключение.
+  * Возвращает true, если любая активная сеть имеет тип TRANSPORT_VPN.
+  */
+ private fun isVpnConnected(): Boolean {
+     return try {
+         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+             val network = connectivityManager.activeNetwork ?: return false
+             val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+         } else {
+             @Suppress("DEPRECATION")
+             val networkInfo = connectivityManager.activeNetworkInfo
+             networkInfo?.type == java.net.Proxy.Type.SOCKS.ordinal // грубая проверка для старых версий
+         }
+     } catch (e: Exception) {
+         Logger.log(TAG, "isVpnConnected error: ${e.message}")
+         false
+     }
+ }
+ /**
+  * Открывает ZeroTier One.
+  */
+ private fun openZeroTier() {
+     try {
+         val intent = packageManager.getLaunchIntentForPackage(ZEROTIER_PACKAGE)
+         if (intent != null) {
+             Logger.log(TAG, "openZeroTier: launching ZeroTier")
+             zeroTierLauncher.launch(intent)
+         } else {
+             Logger.log(TAG, "openZeroTier: failed to get launch intent")
+             Toast.makeText(this, "Не удалось открыть ZeroTier", Toast.LENGTH_SHORT).show()
+         }
+     } catch (e: Exception) {
+         Logger.log(TAG, "openZeroTier error: ${e.message}", e)
+         Toast.makeText(this, "Ошибка открытия ZeroTier: ${e.message}", Toast.LENGTH_SHORT).show()
+     }
+ }
+ /**
+  * Показывает диалог, если ZeroTier не установлен.
+  */
+ private fun showZeroTierNotInstalledDialog() {
+     AlertDialog.Builder(this)
+         .setTitle("⚠️ Необходимо подключение к ПК")
+         .setMessage(
+             "Для синхронизации данных необходимо установить ZeroTier One.\n\n" +
+             "ZeroTier создаёт защищённую виртуальную сеть между вашим телефоном и домашним ПК.\n\n" +
+             "Установите ZeroTier One из Google Play, подключитесь к сети Baza-sinc и нажмите синхронизацию ещё раз."
+         )
+         .setPositiveButton("Открыть Google Play") { _, _ ->
+             try {
+                 val intent = Intent(Intent.ACTION_VIEW)
+                 intent.data = android.net.Uri.parse("https://play.google.com/store/apps/details?id=$ZEROTIER_PACKAGE")
+                 startActivity(intent)
+             } catch (e: Exception) {
+                 Logger.log(TAG, "Failed to open Google Play: ${e.message}")
+                 Toast.makeText(this, "Не удалось открыть Google Play", Toast.LENGTH_SHORT).show()
+             }
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun maybeRequestPostNotifications() {
+     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+         Logger.log(TAG, "maybeRequestPostNotifications: Android < 13, no permission needed")
+         return
+     }
+     val granted = ContextCompat.checkSelfPermission(
+         this,
+         Manifest.permission.POST_NOTIFICATIONS
+     ) == PackageManager.PERMISSION_GRANTED
+     if (granted) {
+         Logger.log(TAG, "maybeRequestPostNotifications: already granted")
+         return
+     }
+     val prefs = getSharedPreferences(BaseApplication.PREFS_NAME, MODE_PRIVATE)
+     val alreadyAsked = prefs.getBoolean(KEY_POST_NOTIFICATIONS_ASKED, false)
+     if (alreadyAsked) {
+         Logger.log(TAG, "maybeRequestPostNotifications: already asked before, skip")
+         return
+     }
+     prefs.edit().putBoolean(KEY_POST_NOTIFICATIONS_ASKED, true).apply()
+     Logger.log(TAG, "maybeRequestPostNotifications: launching permission request")
+     try {
+         postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+     } catch (e: Exception) {
+         Logger.log(TAG, "maybeRequestPostNotifications: launch error: ${e.message}")
+     }
+ }
+private fun loadSystemFolderCounters() {
+lifecycleScope.launch {
+try {
+val counters = withContext(Dispatchers.IO) {
+val homeTasks = db.taskDao().getActiveCount()
+val purchasesStats = db.itemDao()
+.getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
+.firstOrNull()
+val purchasesItems = purchasesStats?.itemCount ?: 0
+val shoppingList = db.itemDao()
+.countItemsInFolderShallow(FolderEntity.SYSTEM_ID_SHOPPING_LIST)
+             val recipesAi = try {
+                  db.recipeDao().countBySource(RecipeEntity.SOURCE_AI)
+              } catch (e: Exception) {
+                  Logger.log(TAG, "countBySource(ai) error: ${e.message}")
+                  0
+              }
+              val recipesMy = try {
+                  db.recipeDao().countBySource(RecipeEntity.SOURCE_USER)
+              } catch (e: Exception) {
+                  Logger.log(TAG, "countBySource(user) error: ${e.message}")
+                  0
+              }
+              CatalogAdapter.SystemFolderCounters(
+                  homeTasksActive = homeTasks,
+                  purchasesItems = purchasesItems,
+                  shoppingListItems = shoppingList,
+                  recipesAiCount = recipesAi,
+                  recipesMyCount = recipesMy
+              )
+          }
+          adapter.setSystemFolderCounters(counters)
+          loadFolderStats()
+      } catch (e: Exception) {
+          Logger.log(TAG, "loadSystemFolderCounters error: ${e.message}")
+      }
+  }
+}
+private fun loadFolderStats() {
+lifecycleScope.launch {
+try {
+val entries = viewModel.currentEntries.value ?: return@launch
+         val ordinaryFolderIds = entries
+              .filterIsInstance<FolderEntity>()
+              .filter { !it.isSystem }
+              .map { it.id }
+          val (statsMap, purchasesStats) = withContext(Dispatchers.IO) {
+              val map: Map<String, FolderStatsRow> =
+                  if (ordinaryFolderIds.isEmpty()) {
+                      emptyMap()
+                  } else {
+                      db.itemDao()
+                          .getFolderStatsDeep(ordinaryFolderIds)
+                          .associateBy { it.folderId }
+                  }
+              val pStats = db.itemDao()
+                  .getFolderStatsDeep(listOf(FolderEntity.SYSTEM_ID_PURCHASES))
+                  .firstOrNull()
+              Pair(map, pStats)
+          }
+          adapter.setFolderStats(statsMap)
+          adapter.setPurchasesStats(purchasesStats)
+      } catch (e: Exception) {
+          Logger.log(TAG, "loadFolderStats error: ${e.message}")
+      }
+  }
+}
+override fun onNewIntent(intent: Intent) {
+super.onNewIntent(intent)
+Logger.log(TAG, "onNewIntent called")
+    setIntent(intent)
+     val type = intent.getStringExtra("open_root_folder")
+     if (type != null) {
+         Logger.log(TAG, "onNewIntent: open_root_folder=$type")
+         pendingRootFolderType = type
+     }
+ }
+ private fun handlePendingRootFolder() {
+     val type = pendingRootFolderType ?: return
+     pendingRootFolderType = null
+     val folderName = when (type) {
+         "food" -> "Продукты"
+         "medicine" -> "Лекарства"
+         "thing" -> "Вещи"
+         else -> {
+             Logger.log(TAG, "Unknown open_root_folder type: $type")
+             return
+         }
+     }
+     lifecycleScope.launch {
+         try {
+             delay(300)
+             val rootFolders = withContext(Dispatchers.IO) {
+                 db.folderDao().getRootFolders()
+             }
+             val target = rootFolders.firstOrNull {
+                 it.name.equals(folderName, ignoreCase = true)
+             }
+             if (target != null) {
+                 Logger.log(TAG, "Navigating to root folder '$folderName' (id=${target.id})")
+                 viewModel.navigateToFolder(target.id)
+             } else {
+                 Logger.log(TAG, "Root folder '$folderName' not found")
+                 Toast.makeText(this@MainActivity, "Папка «$folderName» не найдена", Toast.LENGTH_SHORT).show()
+             }
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error navigating to root folder", e)
+         }
+     }
+ }
+ override fun onResume() {
+     super.onResume()
+     viewModel.loadContents()
+     handlePendingRootFolder()
+     loadSystemFolderCounters()
+     lifecycleScope.launch {
+         delay(300)
+         maybeShowTodayDialog()
+     }
+ }
+ override fun onPause() {
+     super.onPause()
+     stopSyncAnimation()
+     todayDialogShownInThisResume = false
+ }
+ override fun onDestroy() {
+     super.onDestroy()
+     stopSyncAnimation()
+     hideProgressJob?.cancel()
+     stopRepeat()
+ }
+ private suspend fun maybeShowTodayDialog() {
+     try {
+         if (!TaskReminderPreferences.isTodayDialogEnabled(this)) {
+             Logger.log(TAG, "maybeShowTodayDialog: disabled by preference")
+             return
+         }
+         if (todayDialogShownInThisResume) {
+             Logger.log(TAG, "maybeShowTodayDialog: already shown in this onResume")
+             return
+         }
+         val now = System.currentTimeMillis()
+         val todayAt7 = Calendar.getInstance().apply {
+             set(Calendar.HOUR_OF_DAY, TaskReminderPreferences.TODAY_DIALOG_HOUR)
+             set(Calendar.MINUTE, TaskReminderPreferences.TODAY_DIALOG_MINUTE)
+             set(Calendar.SECOND, 0)
+             set(Calendar.MILLISECOND, 0)
+         }.timeInMillis
+         if (now < todayAt7) {
+             Logger.log(TAG, "maybeShowTodayDialog: too early (now=$now, todayAt7=$todayAt7)")
+             return
+         }
+         val lastShown = TaskReminderPreferences.getLastTodayDialogTimestamp(this)
+         if (lastShown >= todayAt7) {
+             Logger.log(TAG, "maybeShowTodayDialog: already shown after 07:00 today (lastShown=$lastShown)")
+             return
+         }
+         todayDialogShownInThisResume = true
+         val shown = showTodayTasksDialog(onOpenTasks = {
+             startActivity(Intent(this, TaskListActivity::class.java))
+         })
+         if (shown) {
+             TaskReminderPreferences.setLastTodayDialogTimestamp(this, now)
+             Logger.log(TAG, "maybeShowTodayDialog: shown and timestamp set ($now)")
+         } else {
+             Logger.log(TAG, "maybeShowTodayDialog: show() returned false, timestamp NOT set")
+         }
+     } catch (e: Exception) {
+         Logger.log(TAG, "maybeShowTodayDialog error: ${e.message}", e)
+     }
+ }
+ private suspend fun showTodayTasksDialog(onOpenTasks: (() -> Unit)? = null): Boolean {
+     return try {
+         val now = System.currentTimeMillis()
+         val cal = Calendar.getInstance().apply {
+             set(Calendar.HOUR_OF_DAY, 23)
+             set(Calendar.MINUTE, 59)
+             set(Calendar.SECOND, 59)
+             set(Calendar.MILLISECOND, 999)
+         }
+         val endOfDay = cal.timeInMillis
+         val tasks: List<TaskEntity> = viewModel.getTodayTasks(now, endOfDay)
+         Logger.log(TAG, "showTodayTasksDialog: ${tasks.size} tasks for today")
+         TodayTasksDialog.show(
+             activity = this@MainActivity,
+             tasks = tasks,
+             onOpenTasks = onOpenTasks
+         )
+     } catch (e: Exception) {
+         Logger.log(TAG, "showTodayTasksDialog error: ${e.message}", e)
+         false
+     }
+ }
+ private fun showHomeTasksSystemMenu(folder: FolderEntity) {
+     val items = arrayOf(
+         "📅 Показать сводку на сегодня",
+         "⚙️ Настройки напоминаний"
+     )
+     AlertDialog.Builder(this)
+         .setTitle("🏠 Домашние дела")
+         .setItems(items) { _, which ->
+             when (which) {
+                 0 -> {
+                     Logger.log(TAG, "HomeTasks menu: show today dialog (manual)")
+                     lifecycleScope.launch {
+                         showTodayTasksDialog(onOpenTasks = {
+                             startActivity(Intent(this@MainActivity, TaskListActivity::class.java))
+                         })
+                     }
+                 }
+                 1 -> {
+                     Logger.log(TAG, "HomeTasks menu: open AppSettingsActivity")
+                     startActivity(Intent(this, AppSettingsActivity::class.java))
+                 }
+             }
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun launchSelectUserIfNeeded() {
+     if (tokenStorage.getCurrentUser() == null) {
+         Logger.log(TAG, "No user selected, launching SelectUserActivity")
+         try {
+             selectUserLauncher.launch(Intent(this, SelectUserActivity::class.java))
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error launching SelectUserActivity: ${e.message}", e)
+         }
+     }
+ }
+ private fun updateSyncProgressCard(progress: SyncProgress) {
+     hideProgressJob?.cancel()
+     val icon = when (progress.phase) {
+         SyncPhase.SENDING -> "📤"
+         SyncPhase.DOWNLOADING -> "📥"
+         SyncPhase.UPLOADING_PHOTOS -> "📷"
+         SyncPhase.DOWNLOADING_PHOTOS -> "🖼️"
+         SyncPhase.DONE -> "✅"
+     }
+     binding.tvSyncPhaseIcon.text = icon
+     binding.tvSyncPhaseText.text = progress.message
+     if (progress.total > 0) {
+         binding.tvSyncCounter.text = "${progress.current} / ${progress.total}"
+         binding.tvSyncCounter.visibility = View.VISIBLE
+     } else {
+         binding.tvSyncCounter.visibility = View.GONE
+     }
+     if (progress.total > 0) {
+         binding.syncProgressBar.max = progress.total
+         binding.syncProgressBar.setProgressCompat(progress.current, true)
+     } else {
+         binding.syncProgressBar.max = 100
+         binding.syncProgressBar.setProgressCompat(0, false)
+     }
+     if (binding.syncProgressCard.visibility != View.VISIBLE) {
+         binding.syncProgressCard.alpha = 0f
+         binding.syncProgressCard.translationY = 80f
+         binding.syncProgressCard.visibility = View.VISIBLE
+         binding.syncProgressCard.animate()
+             .alpha(1f)
+             .translationY(0f)
+             .setDuration(250)
+             .start()
+     }
+     if (progress.phase == SyncPhase.DONE) {
+         hideProgressJob = lifecycleScope.launch {
+             delay(2000)
+             hideSyncProgressCard()
+         }
+     }
+ }
+ private fun hideSyncProgressCard() {
+     if (binding.syncProgressCard.visibility != View.VISIBLE) return
+     binding.syncProgressCard.animate()
+         .alpha(0f)
+         .translationY(80f)
+         .setDuration(250)
+         .withEndAction {
+             binding.syncProgressCard.visibility = View.GONE
+             binding.syncProgressCard.alpha = 1f
+             binding.syncProgressCard.translationY = 0f
+         }
+         .start()
+ }
+ private fun updatePathTitle() {
+     pathTextView?.text = viewModel.currentPath.value ?: "BAZA"
+ }
+ private fun navigateToFolder(folder: FolderEntity) {
+     viewModel.navigateToFolder(folder.id)
+ }
+ private fun openItemDetail(item: ItemEntity) {
+     val intent = Intent(this, ItemDetailActivity::class.java)
+     intent.putExtra("item_id", item.id)
+     itemDetailLauncher.launch(intent)
+ }
+ private fun showSearchDialog() {
+     val container = LinearLayout(this).apply {
+         orientation = LinearLayout.VERTICAL
+         setPadding(48, 16, 48, 8)
+     }
+     val editText = EditText(this).apply {
+         hint = "Поиск предметов (рецепты — в 📝 Мои рецепты)"
+         viewModel.searchQueryLiveData.value?.let { if (it.isNotEmpty()) setText(it) }
+         layoutParams = LinearLayout.LayoutParams(
+             LinearLayout.LayoutParams.MATCH_PARENT,
+             LinearLayout.LayoutParams.WRAP_CONTENT
+         )
+     }
+     container.addView(editText)
+     val scanButton = ImageButton(this).apply {
+         setImageResource(R.drawable.ic_scan)
+         background = ContextCompat.getDrawable(this@MainActivity, R.drawable.btn_dark_circle)
+         contentDescription = "Сканировать штрих-код"
+         setColorFilter(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+         layoutParams = LinearLayout.LayoutParams(
+             LinearLayout.LayoutParams.WRAP_CONTENT,
+             LinearLayout.LayoutParams.WRAP_CONTENT
+         ).apply {
+             topMargin = 24
+             gravity = android.view.Gravity.CENTER_HORIZONTAL
+         }
+     }
+     container.addView(scanButton)
+     val scanLabel = TextView(this).apply {
+         text = "Сканировать штрих-код"
+         textSize = 14f
+         gravity = android.view.Gravity.CENTER
+         setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.black))
+         layoutParams = LinearLayout.LayoutParams(
+             LinearLayout.LayoutParams.MATCH_PARENT,
+             LinearLayout.LayoutParams.WRAP_CONTENT
+         ).apply {
+             topMargin = 4
+         }
+     }
+     container.addView(scanLabel)
+     val dialog = AlertDialog.Builder(this)
+         .setTitle("Поиск")
+         .setView(container)
+         .setPositiveButton("Искать") { _, _ ->
+             val q = editText.text.toString().trim()
+             if (q.isNotEmpty()) viewModel.search(q) else viewModel.clearSearch()
+         }
+         .setNegativeButton("Сбросить") { _, _ -> viewModel.clearSearch() }
+         .setNeutralButton("Отмена", null)
+         .create()
+     scanButton.setOnClickListener {
+         dialog.dismiss()
+         barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+     }
+     scanLabel.setOnClickListener {
+         dialog.dismiss()
+         barcodeSearchLauncher.launch(Intent(this, BarcodeScannerActivity::class.java))
+     }
+     dialog.show()
+ }
+ private fun searchByBarcode(barcode: String) {
+     lifecycleScope.launch {
+         try {
+             val items = withContext(Dispatchers.IO) { db.itemDao().getItemsByBarcode(barcode) }
+             when {
+                 items.isEmpty() -> {
+                     AlertDialog.Builder(this@MainActivity)
+                         .setTitle("Ничего не найдено")
+                         .setMessage("Предмет с кодом «$barcode» не найден.\n\nСоздать новый?")
+                         .setPositiveButton("Создать") { _, _ ->
+                             val intent = Intent(this@MainActivity, AddItemActivity::class.java)
+                             intent.putExtra("parent_id", viewModel.getCurrentFolderId())
+                             intent.putExtra("barcode", barcode)
+                             startActivity(intent)
+                         }
+                         .setNegativeButton("Отмена", null)
+                         .show()
+                 }
+                 items.size == 1 -> openItemDetail(items.first())
+                 else -> {
+                     val names = items.map { "${it.name}  (×${it.quantity})" }.toTypedArray()
+                     AlertDialog.Builder(this@MainActivity)
+                         .setTitle("Найдено ${items.size} предметов")
+                         .setItems(names) { _, which -> openItemDetail(items[which]) }
+                         .setNegativeButton("Отмена", null)
+                         .show()
+                 }
+             }
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error searching by barcode", e)
+         }
+     }
+ }
+ private fun showCreateFolderDialog() {
+     val editText = EditText(this)
+     editText.hint = "Название папки"
+     AlertDialog.Builder(this)
+         .setTitle("Новая папка")
+         .setView(editText)
+         .setPositiveButton("Создать") { _, _ ->
+             val name = editText.text.toString().trim()
+             if (name.isNotEmpty()) createFolderWithImage(name) else Toast.makeText(this, "Введите название", Toast.LENGTH_SHORT).show()
+         }
+         .setNeutralButton("Выбрать иконку") { _, _ ->
+             val name = editText.text.toString().trim()
+             if (name.isNotEmpty()) {
+                 newFolderImageBytes = null
+                 pickFolderImageLauncher.launch("image/*")
+             } else Toast.makeText(this, "Сначала введите название", Toast.LENGTH_SHORT).show()
+         }
+         .setNegativeButton("Отмена") { _, _ -> newFolderImageBytes = null }
+         .show()
+ }
+ private fun createFolderWithImage(name: String) {
+     lifecycleScope.launch {
+         try {
+             viewModel.createFolder(name)
+             delay(100)
+             newFolderImageBytes?.let { bytes ->
+                 try {
+                     val folders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
+                     val lastFolder = folders.maxByOrNull { it.createdAt }
+                     if (lastFolder != null) {
+                         ImageUtils.saveImageLocally(applicationContext, "folder_${lastFolder.id}", bytes)
+                         val updated = lastFolder.copy(iconUrl = "folder_${lastFolder.id}.jpg")
+                         withContext(Dispatchers.IO) { db.folderDao().updateFolder(updated) }
+                         viewModel.uploadFolderImage(lastFolder.id, bytes)
+                     }
+                 } catch (e: Exception) {
+                     Logger.log(TAG, "Failed to upload folder image", e)
+                 }
+                 newFolderImageBytes = null
+             }
+             viewModel.loadContents()
+             Toast.makeText(this@MainActivity, "Папка создана", Toast.LENGTH_SHORT).show()
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error creating folder", e)
+         }
+     }
+ }
+ private fun showFolderContextMenu(folder: FolderEntity) {
+     if (folder.isSystem) {
+         Toast.makeText(this, "Системная папка — действия недоступны", Toast.LENGTH_SHORT).show()
+         return
+     }
+     val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
+     val items = if (canDelete) {
+         arrayOf("Переименовать", "Сменить иконку", "Удалить", "Статистика", "Переместить")
+     } else {
+         arrayOf("Переименовать", "Сменить иконку", "Статистика", "Переместить")
+     }
+     AlertDialog.Builder(this)
+         .setTitle("Действия с папкой")
+         .setItems(items) { _, which ->
+             if (canDelete) {
+                 when (which) {
+                     0 -> showRenameFolderDialog(folder)
+                     1 -> changeFolderImage(folder)
+                     2 -> confirmDeleteFolder(folder)
+                     3 -> showFolderStats(folder)
+                     4 -> showMoveFolderDialog(folder)
+                 }
+             } else {
+                 when (which) {
+                     0 -> showRenameFolderDialog(folder)
+                     1 -> changeFolderImage(folder)
+                     2 -> showFolderStats(folder)
+                     3 -> showMoveFolderDialog(folder)
+                 }
+             }
+         }
+         .show()
+ }
+ private fun showItemContextMenu(item: ItemEntity) {
+     val canDelete = AppUser.canDelete(tokenStorage.getCurrentUser())
+     val items = if (canDelete) {
+         arrayOf("Редактировать", "Списать / В архив", "Удалить", "История", "Переместить")
+     } else {
+         arrayOf("Редактировать", "Списать / В архив", "История", "Переместить")
+     }
+     AlertDialog.Builder(this)
+         .setTitle("Действия с предметом")
+         .setItems(items) { _, which ->
+             if (canDelete) {
+                 when (which) {
+                     0 -> editItem(item)
+                     1 -> showWriteOffOrArchiveDialog(item)
+                     2 -> confirmDeleteItem(item)
+                     3 -> showItemHistory(item)
+                     4 -> showMoveItemDialog(item)
+                 }
+             } else {
+                 when (which) {
+                     0 -> editItem(item)
+                     1 -> showWriteOffOrArchiveDialog(item)
+                     2 -> showItemHistory(item)
+                     3 -> showMoveItemDialog(item)
+                 }
+             }
+         }
+         .show()
+ }
+ private fun showArchiveBlockedDialog(item: ItemEntity, message: String) {
+     AlertDialog.Builder(this)
+         .setTitle("⚠️ Нельзя архивировать")
+         .setMessage(message)
+         .setPositiveButton("Отвязать всех детей") { _, _ ->
+             viewModel.detachAllChildren(item.id) { count ->
+                 Toast.makeText(
+                     this,
+                     "Отвязано: $count. Теперь можно архивировать.",
+                     Toast.LENGTH_LONG
+                 ).show()
+             }
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun showWriteOffOrArchiveDialog(item: ItemEntity) {
+     if (item.quantity <= 1) {
+         showWriteOffReasonDialog(item, item.quantity.coerceAtLeast(1))
+     } else {
+         showWriteOffCountDialog(item)
+     }
+ }
+ private fun getWriteOffNoun(item: ItemEntity): String {
+     return when (item.itemType) {
+         "food" -> "продукт"
+         "medicine" -> "лекарство"
+         "thing" -> "вещь"
+         else -> "предмет"
+     }
+ }
+ private fun getWriteOffTitle(item: ItemEntity): String {
+     val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+     val noun = getWriteOffNoun(item)
+     return "Списать $noun: $shortName"
+ }
+ private fun getMoveTitle(item: ItemEntity): String {
+     val shortName = if (item.name.length > 30) item.name.take(30) + "…" else item.name
+     val noun = getWriteOffNoun(item)
+     return "Переместить $noun: $shortName"
+ }
+ private fun showWriteOffCountDialog(item: ItemEntity) {
+     val stepper = buildStepperLayout(item.quantity, withCheckAll = false)
+     AlertDialog.Builder(this)
+         .setTitle(getWriteOffTitle(item))
+         .setView(stepper.container)
+         .setPositiveButton("Далее") { _, _ ->
+             val count = stepper.getValue()
+             if (count <= 0) {
+                 Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                 return@setPositiveButton
+             }
+             if (count > item.quantity) {
+                 Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                 return@setPositiveButton
+             }
+             showWriteOffReasonDialog(item, count)
+         }
+         .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+         .setOnDismissListener { stopRepeat() }
+         .show()
+ }
+ private fun showWriteOffReasonDialog(item: ItemEntity, count: Int) {
+     val noun = getWriteOffNoun(item)
+     val totalQty = item.quantity
+     val title = if (count == totalQty) {
+         "Списываешь последнюю $noun.\nПредмет уйдёт в архив."
+     } else {
+         "Списать $count шт. — в архив.\nВыберите причину:"
+     }
+     val reasons = arrayOf(
+         "🧴 Израсходовано",
+         "🍽 Съедено",
+         "🔧 Сломано",
+         "🗑 Выброшено",
+         "🎁 Подарено",
+         "💰 Продано",
+         "⏰ Истёк срок",
+         "📦 Другое"
+     )
+     val reasonKeys = arrayOf(
+         "used_up",
+         "eaten",
+         "broken",
+         "thrown",
+         "gifted",
+         "sold",
+         "expired",
+         "other"
+     )
+     AlertDialog.Builder(this)
+         .setTitle(title)
+         .setItems(reasons) { _, which ->
+             viewModel.writeOffItem(
+                 item.id,
+                 count,
+                 reasonKeys[which],
+                 null,
+                 onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+             )
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun showMoveItemDialog(item: ItemEntity) {
+     if (item.quantity <= 1) {
+         openMoveFolderPicker(item, 1)
+         return
+     }
+     val stepper = buildStepperLayout(item.quantity, withCheckAll = true)
+     AlertDialog.Builder(this)
+         .setTitle(getMoveTitle(item))
+         .setView(stepper.container)
+         .setPositiveButton("Далее") { _, _ ->
+             val count = stepper.getValue()
+             if (count <= 0) {
+                 Toast.makeText(this, "Введите число больше 0", Toast.LENGTH_SHORT).show()
+                 return@setPositiveButton
+             }
+             if (count > item.quantity) {
+                 Toast.makeText(this, "Недостаточно штук (всего ${item.quantity})", Toast.LENGTH_SHORT).show()
+                 return@setPositiveButton
+             }
+             openMoveFolderPicker(item, count)
+         }
+         .setNegativeButton("Отмена") { _, _ -> stopRepeat() }
+         .setOnDismissListener { stopRepeat() }
+         .show()
+ }
+ private fun openMoveFolderPicker(item: ItemEntity, count: Int) {
+     Logger.log(
+         TAG,
+         "Show move item dialog: ${item.name}, current parentId=${item.parentId}, " +
+             "current parentItemId=${item.parentItemId}, count=$count"
+     )
+     MoveDialogHelper.show(
+         context = this,
+         scope = lifecycleScope,
+         db = db,
+         title = "Переместить «${item.name}»",
+         startFromId = item.parentId,
+         startFromItemId = item.parentItemId,
+         excludedIds = emptySet(),
+         onConfirm = { newParentId, newParentItemId ->
+             if (newParentId == item.parentId && newParentItemId == item.parentItemId) {
+                 Toast.makeText(this, "Предмет уже здесь", Toast.LENGTH_SHORT).show()
+             } else {
+                 viewModel.splitAndMoveItem(item.id, count, newParentId, newParentItemId)
+                 Toast.makeText(this, "Перемещено $count шт.", Toast.LENGTH_SHORT).show()
+             }
+         }
+     )
+ }
+ private class StepperResult(
+     val container: LinearLayout,
+     val editText: EditText,
+     val checkAll: CheckBox,
+     val minusBtn: View,
+     val plusBtn: View,
+     val maxQty: Int
+ ) {
+     fun getValue(): Int = editText.text.toString().toIntOrNull() ?: 1
+ }
+ @SuppressLint("ClickableViewAccessibility")
+ private fun buildStepperLayout(maxQty: Int, withCheckAll: Boolean): StepperResult {
+     val container = LinearLayout(this).apply {
+         orientation = LinearLayout.VERTICAL
+         setPadding(48, 24, 48, 8)
+     }
+     val row = LinearLayout(this).apply {
+         orientation = LinearLayout.HORIZONTAL
+         gravity = android.view.Gravity.CENTER
+     }
+     val minusBtn = Button(this).apply {
+         text = "−"
+         textSize = 22f            
+         minWidth = 0
+         minimumWidth = 0
+         width = 120
+         height = 120
+         setPadding(0, 0, 0, 0)
+     }
+     val editText = EditText(this).apply {
+         inputType = android.text.InputType.TYPE_CLASS_NUMBER
+         setText("1")
+         gravity = android.view.Gravity.CENTER
+         textSize = 20f
+         setSelectAllOnFocus(true)
+         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+             marginStart = 16
+             marginEnd = 16
+         }
+     }
+     val plusBtn = Button(this).apply {
+         text = "+"
+         textSize = 22f
+         minWidth = 0
+         minimumWidth = 0
+         width = 120
+         height = 120
+         setPadding(0, 0, 0, 0)
+     }
+     row.addView(minusBtn)
+     row.addView(editText)
+     row.addView(plusBtn)
+     container.addView(row)
+     val checkAll = CheckBox(this).apply {
+         text = "Переместить всё ($maxQty шт.)"
+         textSize = 15f
+         visibility = if (withCheckAll) View.VISIBLE else View.GONE
+         setPadding(0, 16, 0, 0)
+     }
+     if (withCheckAll) container.addView(checkAll)
+     val result = StepperResult(container, editText, checkAll, minusBtn, plusBtn, maxQty)
+     val changeBy = { delta: Int ->
+         if (!(withCheckAll && checkAll.isChecked)) {
+             val cur = result.getValue()
+             val next = (cur + delta).coerceIn(1, maxQty)
+             if (next != cur) {
+                 editText.setText(next.toString())
+                 editText.setSelection(editText.text.length)
+             }
+         }
+     }
+     minusBtn.setOnClickListener { changeBy(-1) }
+     plusBtn.setOnClickListener { changeBy(+1) }
+     setupRepeatButton(minusBtn) { changeBy(-1) }
+     setupRepeatButton(plusBtn) { changeBy(+1) }
+     if (withCheckAll) {
+         checkAll.setOnCheckedChangeListener { _, checked ->
+             if (checked) {
+                 editText.setText(maxQty.toString())
+                 editText.isEnabled = false
+                 minusBtn.isEnabled = false
+                 plusBtn.isEnabled = false
+             } else {
+                 editText.setText("1")
+                 editText.isEnabled = true
+                 minusBtn.isEnabled = true
+                 plusBtn.isEnabled = true
+             }
+         }
+     }
+     return result
+ }
+ @SuppressLint("ClickableViewAccessibility")
+ private fun setupRepeatButton(view: View, action: () -> Unit) {
+     view.setOnTouchListener { v, event ->
+         when (event.action) {
+             MotionEvent.ACTION_DOWN -> {
+                 repeatRunnable = object : Runnable {
+                     override fun run() {
+                         action()
+                         repeatHandler.postDelayed(this, 100)
+                     }
+                 }
+                 repeatHandler.postDelayed(repeatRunnable!!, 400)
+                 v.isPressed = true
+                 true
+             }
+             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                 stopRepeat()
+                 v.isPressed = false
+                 v.performClick()
+                 true
+             }
+             else -> false
+         }
+     }
+ }
+ private fun stopRepeat() {
+     repeatRunnable?.let { repeatHandler.removeCallbacks(it) }
+     repeatRunnable = null
+ }
+ private fun showArchiveDialog(item: ItemEntity) {
+     val reasons = arrayOf(
+         "🧴 Израсходовано",
+         "🍽 Съедено",
+         "🔧 Сломано",
+         "🗑 Выброшено",
+         "🎁 Подарено",
+         "💰 Продано",
+         "⏰ Истёк срок",
+         "📦 Другое"
+     )
+     val reasonKeys = arrayOf(
+         "used_up",
+         "eaten",
+         "broken",
+         "thrown",
+         "gifted",
+         "sold",
+         "expired",
+         "other"
+     )
+     AlertDialog.Builder(this)
+         .setTitle("В архив: ${item.name}")
+         .setItems(reasons) { _, which -> showArchiveNoteDialog(item, reasonKeys[which]) }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun showArchiveNoteDialog(item: ItemEntity, reason: String) {
+     val editText = EditText(this)
+     editText.hint = "Комментарий (необязательно)"
+     AlertDialog.Builder(this)
+         .setTitle("Комментарий")
+         .setView(editText)
+         .setPositiveButton("В архив") { _, _ ->
+             val note = editText.text.toString().trim().ifEmpty { null }
+             viewModel.archiveItem(
+                 item.id,
+                 reason,
+                 note,
+                 onBlocked = { msg -> showArchiveBlockedDialog(item, msg) }
+             )
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun showRenameFolderDialog(folder: FolderEntity) {
+     if (folder.isSystem) {
+         Toast.makeText(this, "Системную папку нельзя переименовать", Toast.LENGTH_SHORT).show()
+         return
+     }
+     val editText = EditText(this).apply { setText(folder.name) }
+     AlertDialog.Builder(this)
+         .setTitle("Переименовать папку")
+         .setView(editText)
+         .setPositiveButton("OK") { _, _ ->
+             viewModel.renameFolder(folder.id, editText.text.toString().trim())
+         }
+         .setNegativeButton("Отмена", null)
+         .show()
+ }
+ private fun confirmDeleteFolder(folder: FolderEntity) {
+     if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
+         Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+         return
+     }
+     if (folder.isSystem) {
+         Toast.makeText(this, "Системную папку нельзя удалить", Toast.LENGTH_SHORT).show()
+         return
+     }
+     viewModel.getFolderChildrenCount(folder.id) { (folderCount, itemCount) ->
+         val total = folderCount + itemCount
+         if (total > 0) {
+             val message = buildString {
+                 append("Папка «${folder.name}» не пуста:\n\n")
+                 if (itemCount > 0) append("• Предметов: $itemCount\n")
+                 if (folderCount > 0) append("• Подпапок: $folderCount\n")
+                 append("\nНельзя удалить, пока есть вложенные.\n")
+                 append("Сначала отвяжите их — они поднимутся в корень.")
+             }
+             AlertDialog.Builder(this)
+                 .setTitle("⚠️ Нельзя удалить")
+                 .setMessage(message)
+                 .setPositiveButton("Отвязать всех детей") { _, _ ->
+                     viewModel.detachAllFolderChildren(folder.id) { count ->
+                         Toast.makeText(
+                             this,
+                             "Отвязано: $count. Теперь можно удалить.",
+                             Toast.LENGTH_LONG
+                         ).show()
+                     }
+                 }
+                 .setNegativeButton("Отмена", null)
+                 .show()
+         } else {
+             AlertDialog.Builder(this)
+                 .setTitle("Удалить папку «${folder.name}»?")
+                 .setPositiveButton("Да") { _, _ ->
+                     viewModel.deleteFolder(folder.id)
+                     Toast.makeText(this, "Папка удалена", Toast.LENGTH_SHORT).show()
+                 }
+                 .setNegativeButton("Нет", null)
+                 .show()
+         }
+     }
+ }
+ private fun changeFolderImage(folder: FolderEntity) {
+     if (folder.isSystem) {
+         Toast.makeText(this, "Системную папку нельзя менять", Toast.LENGTH_SHORT).show()
+         return
+     }
+     currentFolderForImage = folder
+     pickExistingFolderImageLauncher.launch("image/*")
+ }
+ private fun showFolderStats(folder: FolderEntity) {
+     if (folder.isSystem) {
+         lifecycleScope.launch {
+             try {
+                 val active = withContext(Dispatchers.IO) { db.taskDao().getActiveCount() }
+                 val all = withContext(Dispatchers.IO) { db.taskDao().getAllForSync().size }
+                 val done = all - active
+                 AlertDialog.Builder(this@MainActivity)
+                     .setTitle("Статистика «${folder.name}»")
+                     .setMessage(
+                         "📋 Активных: $active\n" +
+                             "✅ Выполненных: ${done.coerceAtLeast(0)}\n" +
+                             "📊 Всего: $all"
+                     )
+                     .setPositiveButton("OK", null)
+                     .show()
+             } catch (e: Exception) {
+                 Logger.log(TAG, "showFolderStats (system) error: ${e.message}")
+             }
+         }
+         return
+     }
+     lifecycleScope.launch {
+         viewModel.getFolderStats(folder.id) { stats ->
+             val (itemCount, folderCount) = stats
+             AlertDialog.Builder(this@MainActivity)
+                 .setTitle("Статистика «${folder.name}»")
+                 .setMessage("Предметов: $itemCount\nПодпапок: $folderCount")
+                 .setPositiveButton("OK", null)
+                 .show()
+         }
+     }
+ }
+ private fun showMoveFolderDialog(folder: FolderEntity) {
+     if (folder.isSystem) {
+         Toast.makeText(this, "Системную папку нельзя переместить", Toast.LENGTH_SHORT).show()
+         return
+     }
+     Logger.log(
+         TAG,
+         "Show move folder dialog: ${folder.name}, " +
+             "current parentId=${folder.parentId}, current parentItemId=${folder.parentItemId}"
+     )
+     lifecycleScope.launch {
+         try {
+             val excluded = withContext(Dispatchers.IO) {
+                 collectDescendantIds(folder.id) + folder.id
+             }
+             MoveDialogHelper.show(
+                 context = this@MainActivity,
+                 scope = lifecycleScope,
+                 db = db,
+                 title = "Переместить «${folder.name}»",
+                 startFromId = folder.parentId,
+                 startFromItemId = folder.parentItemId,
+                 excludedIds = excluded,
+                 onConfirm = { newParentId, newParentItemId ->
+                     if (newParentId == folder.parentId && newParentItemId == folder.parentItemId) {
+                         Toast.makeText(this@MainActivity, "Папка уже здесь", Toast.LENGTH_SHORT).show()
+                     } else {
+                         viewModel.moveFolder(folder.id, newParentId, newParentItemId)
+                         Toast.makeText(this@MainActivity, "Перемещено", Toast.LENGTH_SHORT).show()
+                     }
+                 }
+             )
+         } catch (e: Exception) {
+             Logger.log(TAG, "Error showing move folder dialog", e)
+             Toast.makeText(this@MainActivity, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
+         }
+     }
+ }
+ private suspend fun collectDescendantIds(folderId: String): Set<String> {
+     val result = mutableSetOf<String>()
+     val stack = ArrayDeque<String>()
+     stack.addLast(folderId)
+     while (stack.isNotEmpty()) {
+         val id = stack.removeLast()
+         val children = db.folderDao().getFoldersByParent(id)
+         for (child in children) {
+             if (result.add(child.id)) {
+                 stack.addLast(child.id)
+             }
+         }
+     }
+     return result
+ }
+ private fun editItem(item: ItemEntity) {
+     val intent = Intent(this, ItemDetailActivity::class.java)
+     intent.putExtra("item_id", item.id)
+     intent.putExtra("edit_mode", true)
+     itemDetailLauncher.launch(intent)
+ }
+ private fun confirmDeleteItem(item: ItemEntity) {
+     if (!AppUser.canDelete(tokenStorage.getCurrentUser())) {
+         Toast.makeText(this, "Удалять может только Алексей", Toast.LENGTH_SHORT).show()
+         return
+     }
+     viewModel.getChildrenCount(item.id) { (foldersCount, itemsCount) ->
+         val totalChildren = foldersCount + itemsCount
+         if (totalChildren > 0) {
+             val childInfo = buildString {
+                 append("У предмета «${item.name}» есть вложенные:\n\n")
+                 if (foldersCount > 0) append("📁 Папок: $foldersCount\n")
+                 if (itemsCount > 0) append("📦 Предметов: $itemsCount\n")
+                 append("\nНельзя удалить, пока есть вложенные.\n")
+                 append("Сначала отвяжите их — они поднимутся в ту же папку, где лежит этот предмет.")
+             }
+             AlertDialog.Builder(this)
+                 .setTitle("⚠️ Нельзя удалить")
+                 .setMessage(childInfo)
+                 .setPositiveButton("Отвязать всех детей") { _, _ ->
+                     viewModel.detachAllChildren(item.id) { count ->
+                         Toast.makeText(
+                             this,
+                             "Отвязано: $count. Теперь можно удалить.",
+                             Toast.LENGTH_LONG
+                         ).show()
+                     }
+                 }
+                 .setNegativeButton("Отмена", null)
+                 .show()
+         } else {
+             AlertDialog.Builder(this)
+                 .setTitle("Удалить предмет «${item.name}»?")
+                 .setMessage("Это действие нельзя отменить. Возможно, лучше в архив?")
+                 .setPositiveButton("Удалить") { _, _ ->
+                     viewModel.deleteItem(item.id)
+                     Toast.makeText(this, "Предмет удалён", Toast.LENGTH_SHORT).show()
+                 }
+                 .setNegativeButton("В архив") { _, _ -> showArchiveDialog(item) }
+                 .setNeutralButton("Отмена", null)
+                 .show()
+         }
+     }
+ }
+ private fun showItemHistory(item: ItemEntity) {
+     val intent = Intent(this, ItemDetailActivity::class.java)
+     intent.putExtra("item_id", item.id)
+     intent.putExtra("show_history", true)
+     itemDetailLauncher.launch(intent)
+ }
+ private fun updateSearchIcon(query: String?) {
+     if (query.isNullOrEmpty()) {
+         binding.btnSearch.setImageResource(R.drawable.ic_search)
+         binding.btnSearch.setOnClickListener { showSearchDialog() }
+     } else {
+         binding.btnSearch.setImageResource(R.drawable.ic_close)
+         binding.btnSearch.setOnClickListener { viewModel.clearSearch() }
+     }
+ }
+ private fun updateSyncStatusIcon(status: SyncStatus) {
+     when (status) {
+         SyncStatus.SYNCING -> {
+             binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_syncing)
+             startSyncAnimation()
+         }
+         SyncStatus.SYNCED -> {
+             binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_done)
+             stopSyncAnimation()
+         }
+         SyncStatus.PENDING -> {
+             binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_pending)
+             stopSyncAnimation()
+         }
+         SyncStatus.OFFLINE -> {
+             binding.ivSyncStatus.setImageResource(R.drawable.ic_sync_offline)
+             stopSyncAnimation()
+         }
+     }
+ }
+ private fun startSyncAnimation() {
+     if (syncRotationAnim == null) {
+         syncRotationAnim = RotateAnimation(
+             0f, 360f,
+             Animation.RELATIVE_TO_SELF, 0.5f,
+             Animation.RELATIVE_TO_SELF, 0.5f
+         ).apply {
+             duration = 1000
+             interpolator = LinearInterpolator()
+             repeatCount = Animation.INFINITE
+             repeatMode = Animation.RESTART
+         }
+     }
+     binding.ivSyncStatus.startAnimation(syncRotationAnim)
+ }
+ private fun stopSyncAnimation() {
+     binding.ivSyncStatus.clearAnimation()
+ }
+ companion object {
+     private const val KEY_POST_NOTIFICATIONS_ASKED = "post_notifications_asked"
+     // 🆕 v23.4.3: package name ZeroTier One (перенесено сюда из тела класса — const val требует companion object)
+     private const val ZEROTIER_PACKAGE = "com.zerotier.one"
+ }
 }
