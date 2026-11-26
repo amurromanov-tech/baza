@@ -50,6 +50,7 @@ import com.family.base.util.AppLifecycleObserver
 import com.family.base.util.ImageUtils
 import com.family.base.util.Logger
 import com.family.base.util.TaskReminderPreferences
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -356,14 +357,19 @@ class MainActivity : AppCompatActivity() {
         viewModel.searchQueryLiveData.observe(this) { updateSearchIcon(it) }
 
         viewModel.syncProgress.observe(this) { progress ->
-            if (progress != null) {
-                updateSyncProgressCard(progress)
-            } else {
-                hideSyncProgressCard()
-            }
+        if (progress != null) {
+            updateSyncProgressCard(progress)
+        } else {
+            hideSyncProgressCard()
         }
-
-        binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
+    }
+    // 🆕 v23.4.3: показ сообщения о результате синка (Snackbar)
+    viewModel.syncResultMessage.observe(this) { message ->
+        if (!message.isNullOrEmpty()) {
+            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+        }
+    }
+    binding.btnAddFolder.setOnClickListener { showCreateFolderDialog() }
         binding.btnAddItem.setOnClickListener {
             val intent = Intent(this, AddItemActivity::class.java)
             intent.putExtra("parent_id", viewModel.getCurrentFolderId())
