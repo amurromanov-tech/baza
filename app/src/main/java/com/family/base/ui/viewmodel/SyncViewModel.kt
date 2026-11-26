@@ -2,6 +2,7 @@ package com.family.base.ui.viewmodel
 
 import android.content.Context
 import com.family.base.AppUser
+import com.family.base.Config
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.entity.FolderEntity
@@ -25,7 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class SyncViewModel(
     private val db: AppDatabase,
@@ -45,7 +49,6 @@ class SyncViewModel(
     // ============================================================
     // CHANGELOG
     // ============================================================
-
     private val syncManagerApi = SyncManagerApi()
     private val changelogParser by lazy {
         ChangelogParser(db, com.family.base.data.local.DeviceIdProvider.get(appContext()))
@@ -57,17 +60,27 @@ class SyncViewModel(
     // ============================================================
     // СОСТОЯНИЕ
     // ============================================================
-
     private val syncMutex = Mutex()
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     private var forceSyncJob: Job? = null
     private var forceSyncRequested = false
 
     // ============================================================
+    // 🆕 v23.4.1: КЛИЕНТ ДЛЯ ДИАГНОСТИКИ WEBDAV
+    // Короткий таймаут (5 сек) — чтобы не вешать синк на недоступный ПК.
+    // ============================================================
+    private val diagnosticClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(5L, TimeUnit.SECONDS)
+            .readTimeout(5L, TimeUnit.SECONDS)
+            .callTimeout(5L, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
+    }
+
+    // ============================================================
     // FORCE SYNC
     // ============================================================
-
     fun forceSync(): Boolean {
         if (forceSyncJob?.isActive == true) {
             Logger.log(TAG, "forceSync: already running, skipping")
@@ -82,7 +95,6 @@ class SyncViewModel(
     // ============================================================
     // ОРКЕСТРАЦИЯ СИНКА
     // ============================================================
-
     fun syncWithDisk() {
         applicationScope.launch {
             if (!syncMutex.tryLock()) {
@@ -109,6 +121,26 @@ class SyncViewModel(
                     Logger.log(TAG, "syncWithDisk: no internet, skipping sync")
                     onSyncStatusChanged(SyncStatus.OFFLINE)
                     notifySyncResult("Нет сети. Изменения сохранены локально")
+                    onSyncProgressChanged(null)
+                    return@launch
+                }
+
+                // ============================================================
+                // 🆕 v23.4.1: ДИАГНОСТИКА ДОСТУПНОСТИ ПК (WebDAV)
+                // Если USE_LOCAL_WEBDAV_SYNC=true и ПК недоступен —
+                // прерываем синк с понятным сообщением (Snackbar).
+                // ============================================================
+                if (Config.USE_LOCAL_WEBDAV_SYNC && !checkWebDavAvailability()) {
+                    Logger.log(TAG, "syncWithDisk: WebDAV (ПК) unavailable, aborting sync")
+                    onSyncStatusChanged(SyncStatus.OFFLINE)
+                    notifySyncResult(
+                        "❌ ПК недоступен.\n\n" +
+                            "Проверьте:\n" +
+                            "1. ПК включён и подключён к интернету\n" +
+                            "2. Rclone запущен (start-baza-server.bat)\n" +
+                            "3. Телефон в сети ZeroTier (зелёный статус)\n" +
+                            "4. На мобильном интернете ZeroTier может блокироваться оператором — попробуйте Wi-Fi"
+                    )
                     onSyncProgressChanged(null)
                     return@launch
                 }
@@ -144,11 +176,9 @@ class SyncViewModel(
 
                 if (isFirstLaunch) {
                     Logger.log(TAG, "syncWithDisk: FIRST LAUNCH — download only (no upload)")
-
                     onSyncProgressChanged(
                         SyncProgress(SyncPhase.DOWNLOADING, 0, 1, "Первый запуск: загрузка данных с Диска…")
                     )
-
                     val downloadResult = repository.downloadDataFromDisk()
                     onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
                     mergeData(
@@ -199,7 +229,6 @@ class SyncViewModel(
 
                 if (outboxPendingCount > 0) {
                     Logger.log(TAG, "syncWithDisk: outboxPending=$outboxPendingCount → changelog push")
-
                     onSyncProgressChanged(
                         SyncProgress(
                             SyncPhase.SENDING,
@@ -223,7 +252,6 @@ class SyncViewModel(
                 val diskHasMoreItems = downloadResult.items.size > localItemsCount
                 val diskHasMoreFolders = downloadResult.folders.size > localFoldersCount
                 val forceMerge = diskHasMoreItems || diskHasMoreFolders
-
                 val isMasterNeedsUpload = isMaster && (diskHasLessItems || diskHasLessFolders) && outboxPendingCount == 0
 
                 Logger.log(
@@ -241,7 +269,6 @@ class SyncViewModel(
                             "(diskItems=${downloadResult.items.size} < localItems=$localItemsCount), " +
                             "заливаем локальную базу на Диск"
                     )
-
                     onSyncProgressChanged(
                         SyncProgress(
                             SyncPhase.UPLOADING_PHOTOS,
@@ -250,7 +277,6 @@ class SyncViewModel(
                             "Заливка эталонной базы на Диск…"
                         )
                     )
-
                     val uploadResult = withContext(Dispatchers.IO) {
                         val items = db.itemDao().getAllItemsRaw()
                         val folders = db.folderDao().getAllFolders()
@@ -258,9 +284,7 @@ class SyncViewModel(
                         val tasks = db.taskDao().getAllForSync()
                         repository.uploadDataToDisk(items, folders, history, tasks)
                     }
-
                     Logger.log(TAG, "syncWithDisk: uploadDataToDisk result=$uploadResult")
-
                     if (uploadResult) {
                         val newLastModified = repository.getDiskLastModified() ?: 0L
                         if (newLastModified > 0L) {
@@ -272,9 +296,7 @@ class SyncViewModel(
                     if (forceMerge && !shouldDownload) {
                         Logger.log(TAG, "syncWithDisk: FORCE merge — на Диске больше данных, чем локально")
                     }
-
                     onSyncProgressChanged(SyncProgress(SyncPhase.DOWNLOADING, 1, 1, "Слияние данных…"))
-
                     val tMerge = System.currentTimeMillis()
                     mergeData(
                         downloadResult.folders,
@@ -287,7 +309,6 @@ class SyncViewModel(
                         downloadResult.tasksError
                     )
                     Logger.log(TAG, "TIMING: mergeData took ${System.currentTimeMillis() - tMerge}ms")
-
                     downloadedCount = downloadResult.folders.size +
                         downloadResult.items.size +
                         downloadResult.history.size +
@@ -424,9 +445,37 @@ class SyncViewModel(
     }
 
     // ============================================================
+    // 🆕 v23.4.1: ДИАГНОСТИКА ДОСТУПНОСТИ ПК (WebDAV)
+    // ============================================================
+    /**
+     * Быстрая проверка доступности локального WebDAV-сервера (Rclone на ПК).
+     * Делает HEAD-запрос к корню /BAZA/ с таймаутом 5 секунд.
+     *
+     * @return true — ПК доступен и отвечает; false — недоступен (выключен,
+     *         Rclone не запущен, ZeroTier не работает, оператор блокирует).
+     */
+    private suspend fun checkWebDavAvailability(): Boolean = withContext(Dispatchers.IO) {
+        val url = "${Config.LOCAL_WEBDAV_URL}${Config.SHARED_FOLDER_NAME}/"
+        Logger.log(TAG, "checkWebDavAvailability: HEAD $url")
+        val request = Request.Builder().url(url).head().build()
+        try {
+            val response = diagnosticClient.newCall(request).execute()
+            val code = response.code
+            response.close()
+            // 200/207/401/403/405 = сервер работает (401 = неверный пароль,
+            // но это проблема не доступности, а конфигурации — тоже считаем доступным)
+            val available = code == 200 || code == 207 || code == 401 || code == 403 || code == 405
+            Logger.log(TAG, "checkWebDavAvailability: code=$code, available=$available")
+            available
+        } catch (e: Exception) {
+            Logger.log(TAG, "checkWebDavAvailability: FAILED ${e.message}")
+            false
+        }
+    }
+
+    // ============================================================
     // ФОТО ПРЕДМЕТОВ — UPLOAD
     // ============================================================
-
     private suspend fun uploadUnsyncedImages() {
         val t0 = System.currentTimeMillis()
 
@@ -437,7 +486,6 @@ class SyncViewModel(
 
         val appContext = appContext()
         val allItems = withContext(Dispatchers.IO) { db.itemDao().getAllItemsRaw() }
-
         val itemsWithLocalPhoto = allItems.filter { item ->
             if (item.imageSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, item.id)
@@ -515,7 +563,11 @@ class SyncViewModel(
                 failedCount++
                 Logger.log(TAG, "Failed to upload image ${item.id}: ${e.message}")
             }
+
+            // 🆕 v23.4.1: пауза между загрузками — защита от OOM при большом количестве файлов
+            delay(100)
         }
+
         val elapsed = System.currentTimeMillis() - t0
         Logger.log(
             TAG,
@@ -535,7 +587,6 @@ class SyncViewModel(
 
         val appContext = appContext()
         val allFolders = withContext(Dispatchers.IO) { db.folderDao().getAllFolders() }
-
         val foldersWithLocalIcon = allFolders.filter { folder ->
             if (folder.iconSynced) return@filter false
             val f = ImageUtils.getLocalImageFile(appContext, "folder_${folder.id}")
@@ -613,7 +664,11 @@ class SyncViewModel(
                 failedCount++
                 Logger.log(TAG, "Failed to upload folder image ${folder.id}: ${e.message}")
             }
+
+            // 🆕 v23.4.1: пауза между загрузками — защита от OOM
+            delay(100)
         }
+
         val elapsed = System.currentTimeMillis() - t0
         Logger.log(
             TAG,
@@ -626,7 +681,6 @@ class SyncViewModel(
     // ============================================================
     // МЕДИА РЕЦЕПТОВ — UPLOAD
     // ============================================================
-
     private suspend fun uploadUnsyncedRecipeMedia() {
         val t0 = System.currentTimeMillis()
 
@@ -637,7 +691,6 @@ class SyncViewModel(
 
         val appContext = appContext()
         val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
-
         val mediaWithLocalFile = allMedia.filter { media ->
             if (media.imageSynced) return@filter false
             if (media.isDeleted) return@filter false
@@ -686,6 +739,7 @@ class SyncViewModel(
                 skippedCount++
                 continue
             }
+
             val localFile = ImageUtils.getRecipeMediaFile(appContext, media.recipeId, fileName)
             if (!localFile.exists() || localFile.length() == 0L) {
                 skippedCount++
@@ -700,8 +754,10 @@ class SyncViewModel(
                     bytes = bytes,
                     mimeType = media.mimeType
                 )
+
                 if (success) {
                     uploadedCount++
+
                     val thumbName = media.thumbnailUrl
                     if (!thumbName.isNullOrBlank()) {
                         val thumbFile = ImageUtils.getRecipeThumbFile(appContext, media.recipeId, thumbName)
@@ -742,6 +798,11 @@ class SyncViewModel(
                 failedCount++
                 Logger.log(TAG, "Failed to upload recipe media ${media.id}: ${e.message}")
             }
+
+            // 🆕 v23.4.1: пауза между загрузками — защита от OOM при больших видео.
+            // OkHttp буферизует тело ответа в памяти; без паузы GC не успевает
+            // освободить память после предыдущего файла, и Android убивает процесс.
+            delay(100)
         }
 
         val elapsed = System.currentTimeMillis() - t0
@@ -756,7 +817,6 @@ class SyncViewModel(
     // ============================================================
     // ФОТО ПРЕДМЕТОВ — DOWNLOAD
     // ============================================================
-
     private suspend fun syncImages() {
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncImages: network blocked, skipping")
@@ -800,6 +860,7 @@ class SyncViewModel(
                 Logger.log(TAG, "Failed to download image ${item.id}: ${e.message}")
             }
         }
+
         Logger.log(TAG, "Images downloaded: $downloadedCount")
     }
 
@@ -857,13 +918,13 @@ class SyncViewModel(
                 Logger.log(TAG, "Failed to download folder image ${folder.id}: ${e.message}")
             }
         }
+
         Logger.log(TAG, "Folder images downloaded: $downloadedCount")
     }
 
     // ============================================================
     // МЕДИА РЕЦЕПТОВ — DOWNLOAD
     // ============================================================
-
     private suspend fun syncRecipeMedia() {
         if (!repository.isNetworkAvailable()) {
             Logger.log(TAG, "syncRecipeMedia: network blocked, skipping")
@@ -872,7 +933,6 @@ class SyncViewModel(
 
         val appContext = appContext()
         val allMedia = withContext(Dispatchers.IO) { db.recipeMediaDao().getAllRaw() }
-
         val toDownload = allMedia.filter { media ->
             if (media.isDeleted) return@filter false
             val name = media.imageUrl
@@ -923,6 +983,7 @@ class SyncViewModel(
                     }
                     return@forEachIndexed
                 }
+
                 val localFile = File(dir, fileName)
                 localFile.outputStream().use { it.write(bytes) }
                 downloadedCount++
@@ -960,13 +1021,13 @@ class SyncViewModel(
     // ============================================================
     // ТОКЕН / СЕТЬ
     // ============================================================
-
     private suspend fun ensureValidToken(): Boolean {
         val token = tokenStorage.getAccessToken() ?: return false
         val auth = "OAuth $token"
         val api = com.family.base.data.remote.YandexDiskApi.getInstance()
         val folderName = tokenStorage.getFolderName() ?: "BAZA"
         val rootPath = "/$folderName"
+
         return try {
             val response = api.getDiskResources(auth, rootPath)
             when (response.code()) {
@@ -983,6 +1044,7 @@ class SyncViewModel(
     private fun isInternetAvailable(): Boolean {
         val connectivityManager = appContext()
             .getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             val network = connectivityManager.activeNetwork ?: return false
             val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
@@ -997,7 +1059,6 @@ class SyncViewModel(
     // ============================================================
     // MERGE
     // ============================================================
-
     private companion object {
         const val FOLDERS_INCOMPLETE_RATIO = 0.7
         const val FOLDERS_INCOMPLETE_MIN_DIFF = 20
@@ -1018,13 +1079,14 @@ class SyncViewModel(
         withContext(Dispatchers.IO) {
             val localFoldersCount = db.folderDao().getAllFolders().size
             val localItemsCount = db.itemDao().getAllItemsRaw().size
-
             val diskLastModified = repository.getDiskLastModified() ?: 0L
             val localLastModified = syncInfoDao.getLastModified()
             val diskIsNewer = diskLastModified > localLastModified && diskLastModified > 0L
 
+            // ============================================================
+            // 🛡️ ЗАЩИТА ОТ НЕПОЛНЫХ ДАННЫХ (инцидент 16.10.2026)
+            // ============================================================
             val foldersAreMissing = diskFolders.isEmpty() && localFoldersCount > 0
-
             if (foldersAreMissing) {
                 Logger.log(
                     TAG,
@@ -1090,6 +1152,9 @@ class SyncViewModel(
                 return@withContext
             }
 
+            // ============================================================
+            // FOLDERS MERGE
+            // ============================================================
             if (foldersError && localFoldersCount > 0) {
                 Logger.log(TAG, "mergeData: folders download error (local=$localFoldersCount) — SKIP folders merge")
             } else {
@@ -1140,6 +1205,7 @@ class SyncViewModel(
                     val diskFolderIds = diskFolders.map { it.id }.toSet()
                     val localOnlyFolders = db.folderDao().getAllFolders()
                         .filter { it.id !in diskFolderIds }
+
                     for (folder in localOnlyFolders) {
                         if (folder.isSystem) {
                             Logger.log(TAG, "mergeData: KEEPING system folder ${folder.id} '${folder.name}' (never delete)")
@@ -1163,6 +1229,9 @@ class SyncViewModel(
                 }
             }
 
+            // ============================================================
+            // ITEMS MERGE
+            // ============================================================
             if (itemsError && localItemsCount > 0) {
                 Logger.log(TAG, "mergeData: items download error (local=$localItemsCount) — SKIP items merge")
             } else {
@@ -1208,6 +1277,7 @@ class SyncViewModel(
                     val diskItemIds = diskItems.map { it.id }.toSet()
                     val localOnlyItems = db.itemDao().getAllItemsRaw()
                         .filter { it.id !in diskItemIds }
+
                     for (item in localOnlyItems) {
                         if (item.isDeleted) {
                             continue
@@ -1226,6 +1296,9 @@ class SyncViewModel(
                 }
             }
 
+            // ============================================================
+            // HISTORY MERGE
+            // ============================================================
             if (historyError && diskHistory.isEmpty()) {
                 Logger.log(TAG, "mergeData: history download error — SKIP history merge")
             } else if (diskHistory.isEmpty()) {
@@ -1241,6 +1314,9 @@ class SyncViewModel(
                 }
             }
 
+            // ============================================================
+            // TASKS MERGE
+            // ============================================================
             if (tasksError && diskTasks.isEmpty()) {
                 Logger.log(TAG, "mergeData: tasks download error — SKIP tasks merge")
             } else if (diskTasks.isEmpty()) {
@@ -1248,6 +1324,7 @@ class SyncViewModel(
             } else {
                 val localTasks = db.taskDao().getAllForSync()
                 val localMap = localTasks.associateBy { it.id }
+
                 var insertedCount = 0
                 var updatedCount = 0
                 var tombstonedCount = 0
@@ -1298,6 +1375,7 @@ class SyncViewModel(
                         updatedCount++
                     }
                 }
+
                 Logger.log(
                     TAG,
                     "mergeData: tasks merged (inserted=$insertedCount, updated=$updatedCount, " +
@@ -1315,7 +1393,6 @@ class SyncViewModel(
     // ============================================================
     // cleanup рецептов и медиа
     // ============================================================
-
     suspend fun cleanupRecipeTombstonesLocal(cutoff: Long) {
         val appContext = appContext()
 
