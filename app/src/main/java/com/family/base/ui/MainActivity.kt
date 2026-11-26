@@ -6,13 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
-import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.Animation
@@ -78,23 +76,16 @@ class MainActivity : AppCompatActivity() {
     private var todayDialogShownInThisResume = false
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var repeatRunnable: Runnable? = null
-    
+
     // 🆕 v23.4.3: флаг — нужно ли запустить синк после возврата из ZeroTier
     private var pendingSyncAfterZeroTier = false
-    
-    // 🆕 v23.4.3: package name ZeroTier One
-    private const val ZEROTIER_PACKAGE = "com.zerotier.one"
 
     private val postNotificationsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         Logger.log(TAG, "POST_NOTIFICATIONS result: granted=$granted")
         if (granted) {
-            Toast.makeText(
-                this,
-                "Напоминания включены",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, "Напоминания включены", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(
                 this,
@@ -237,11 +228,9 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Logger.log(TAG, "ZeroTier launcher result: ${result.resultCode}")
-        // После возврата из ZeroTier — если был pending sync, запускаем его
         if (pendingSyncAfterZeroTier) {
             pendingSyncAfterZeroTier = false
             Logger.log(TAG, "Returned from ZeroTier, starting sync...")
-            // Небольшая задержка, чтобы ZeroTier успел установить соединение
             lifecycleScope.launch {
                 delay(2000)
                 if (isVpnConnected()) {
@@ -400,12 +389,12 @@ class MainActivity : AppCompatActivity() {
         binding.btnHome.setOnClickListener { viewModel.navigateToRoot() }
         binding.btnUp.setOnClickListener { viewModel.navigateUp() }
         binding.btnSearch.setOnClickListener { showSearchDialog() }
-        
+
         // 🆕 v23.4.3: умная кнопка синка с проверкой ZeroTier
         binding.btnForceSync.setOnClickListener {
             handleSyncButtonClick()
         }
-        
+
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -459,7 +448,7 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
     // 🆕 v23.4.3: УМНАЯ КНОПКА СИНКА С ПРОВЕРКОЙ ZEROTIER
     // ============================================================
-    
+
     /**
      * Обработчик кнопки синка.
      * Три сценария:
@@ -469,34 +458,29 @@ class MainActivity : AppCompatActivity() {
      */
     private fun handleSyncButtonClick() {
         Logger.log(TAG, "handleSyncButtonClick: checking ZeroTier status")
-        
-        // Проверяем, установлен ли ZeroTier
+
         val isZeroTierInstalled = isZeroTierInstalled()
-        
+
         if (!isZeroTierInstalled) {
-            // Сценарий 3: ZeroTier не установлен
             Logger.log(TAG, "handleSyncButtonClick: ZeroTier not installed, showing dialog")
             showZeroTierNotInstalledDialog()
             return
         }
-        
-        // ZeroTier установлен, проверяем подключение
+
         val isVpnConnected = isVpnConnected()
-        
+
         if (isVpnConnected) {
-            // Сценарий 1: VPN подключён, запускаем синк
             Logger.log(TAG, "handleSyncButtonClick: VPN connected, starting sync")
             val started = viewModel.forceSync()
             val msg = if (started) "Синхронизация запущена" else "Синхронизация уже идёт"
             Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         } else {
-            // Сценарий 2: ZeroTier установлен, но не подключён
             Logger.log(TAG, "handleSyncButtonClick: ZeroTier installed but not connected, opening ZeroTier")
             pendingSyncAfterZeroTier = true
             openZeroTier()
         }
     }
-    
+
     /**
      * Проверяет, установлен ли ZeroTier One.
      */
@@ -508,10 +492,9 @@ class MainActivity : AppCompatActivity() {
             false
         }
     }
-    
+
     /**
      * Проверяет, есть ли активное VPN-подключение.
-     * Возвращает true, если любая активная сеть имеет тип TRANSPORT_VPN.
      */
     private fun isVpnConnected(): Boolean {
         return try {
@@ -523,14 +506,14 @@ class MainActivity : AppCompatActivity() {
             } else {
                 @Suppress("DEPRECATION")
                 val networkInfo = connectivityManager.activeNetworkInfo
-                networkInfo?.type == java.net.Proxy.Type.SOCKS.ordinal // грубая проверка для старых версий
+                networkInfo?.type == java.net.Proxy.Type.SOCKS.ordinal
             }
         } catch (e: Exception) {
             Logger.log(TAG, "isVpnConnected error: ${e.message}")
             false
         }
     }
-    
+
     /**
      * Открывает ZeroTier One.
      */
@@ -549,7 +532,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Ошибка открытия ZeroTier: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
     /**
      * Показывает диалог, если ZeroTier не установлен.
      */
@@ -558,8 +541,8 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚠️ Необходимо подключение к ПК")
             .setMessage(
                 "Для синхронизации данных необходимо установить ZeroTier One.\n\n" +
-                "ZeroTier создаёт защищённую виртуальную сеть между вашим телефоном и домашним ПК.\n\n" +
-                "Установите ZeroTier One из Google Play, подключитесь к сети Baza-sinc и нажмите синхронизацию ещё раз."
+                    "ZeroTier создаёт защищённую виртуальную сеть между вашим телефоном и домашним ПК.\n\n" +
+                    "Установите ZeroTier One из Google Play, подключитесь к сети Baza-sinc и нажмите синхронизацию ещё раз."
             )
             .setPositiveButton("Открыть Google Play") { _, _ ->
                 try {
@@ -1307,7 +1290,7 @@ class MainActivity : AppCompatActivity() {
         }
         val minusBtn = Button(this).apply {
             text = "−"
-            textSize = 22f            
+            textSize = 22f
             minWidth = 0
             minimumWidth = 0
             width = 120
@@ -1727,5 +1710,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val KEY_POST_NOTIFICATIONS_ASKED = "post_notifications_asked"
+        // 🆕 v23.4.3: package name ZeroTier One (в companion object — const val разрешён только здесь)
+        private const val ZEROTIER_PACKAGE = "com.zerotier.one"
     }
 }
