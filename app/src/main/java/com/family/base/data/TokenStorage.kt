@@ -4,11 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
-import com.family.base.AppUser
 import com.family.base.Config
 
 class TokenStorage(context: Context) {
-
     private val prefs: SharedPreferences
 
     init {
@@ -32,7 +30,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ТОКЕНЫ ==========
-
     fun saveAccessToken(token: String) {
         prefs.edit().putString("access_token", token).apply()
     }
@@ -66,7 +63,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ПУБЛИЧНЫЙ КЛЮЧ ==========
-
     fun savePublicKey(key: String) {
         prefs.edit().putString(Config.PREF_PUBLIC_KEY, key).apply()
     }
@@ -76,7 +72,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ИМЯ ПАПКИ ==========
-
     fun saveFolderName(name: String) {
         prefs.edit().putString("folder_name", name).apply()
     }
@@ -86,7 +81,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ОБЩАЯ ПАПКА ==========
-
     fun saveSharedFolderLink(link: String) {
         prefs.edit().putString("shared_folder_link", link).apply()
     }
@@ -104,7 +98,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ (OAuth) ==========
-
     fun saveUserInfo(email: String, displayName: String) {
         prefs.edit().apply {
             putString("user_email", email)
@@ -122,8 +115,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ПРИЛОЖЕНИЯ ==========
-    // Алексей / Рима / Дима
-
     /**
      * Установить текущего пользователя.
      */
@@ -136,10 +127,7 @@ class TokenStorage(context: Context) {
 
     /**
      * Получить текущего пользователя.
-     *
-     * 🆕 v17.3.1: если в prefs осталось старое значение "Гость"
-     * (после удаления гостя из приложения), оно очищается
-     * и возвращается null — при старте покажется экран выбора.
+     * 🆕 v17.3.1: если в prefs осталось старое значение "Гость", оно очищается.
      */
     fun getCurrentUser(): String? {
         val stored = prefs.getString(KEY_CURRENT_USER, null)
@@ -158,15 +146,45 @@ class TokenStorage(context: Context) {
         android.util.Log.d(TAG, "Current user cleared")
     }
 
-    // ========== ОБНОВЛЕНИЕ ТОКЕНА ==========
+    // ========== 🆕 v23.4.2: СЕКРЕТЫ (EncryptedSharedPreferences) ==========
+    
+    /**
+     * Сохранить токен proverkacheka.com.
+     */
+    fun saveProverkachekaToken(token: String) {
+        prefs.edit().putString("proverkacheka_token", token).apply()
+    }
 
+    /**
+     * Получить токен proverkacheka.com.
+     * Если не задан, возвращает fallback (старое значение из кода), чтобы не сломать работу.
+     */
+    fun getProverkachekaToken(): String? {
+        return prefs.getString("proverkacheka_token", "56268.93FfZlggf9GV59mdT")
+    }
+
+    /**
+     * Сохранить пароль для WebDAV (Rclone).
+     */
+    fun saveWebDavPassword(password: String) {
+        prefs.edit().putString("webdav_password", password).apply()
+    }
+
+    /**
+     * Получить пароль для WebDAV.
+     * Возвращает null, если не задан (тогда вызывающий код должен использовать fallback из Config).
+     */
+    fun getWebDavPassword(): String? {
+        return prefs.getString("webdav_password", null)
+    }
+
+    // ========== ОБНОВЛЕНИЕ ТОКЕНА ==========
     fun refreshAccessToken(): String? {
         val refreshToken = getRefreshToken()
         if (refreshToken == null) {
             android.util.Log.e("TokenStorage", "No refresh token available")
             return null
         }
-
         return try {
             val client = okhttp3.OkHttpClient()
             val formBody = okhttp3.FormBody.Builder()
@@ -174,20 +192,16 @@ class TokenStorage(context: Context) {
                 .add("refresh_token", refreshToken)
                 .add("client_id", Config.CLIENT_ID)
                 .build()
-
             val request = okhttp3.Request.Builder()
                 .url("https://oauth.yandex.ru/token")
                 .post(formBody)
                 .build()
-
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
-
             if (response.isSuccessful && responseBody != null) {
                 val json = org.json.JSONObject(responseBody)
                 val newAccessToken = json.optString("access_token", null)
                 val newRefreshToken = json.optString("refresh_token", null)
-
                 if (newAccessToken != null) {
                     saveAccessToken(newAccessToken)
                     if (newRefreshToken != null) {
@@ -197,7 +211,6 @@ class TokenStorage(context: Context) {
                     return newAccessToken
                 }
             }
-
             android.util.Log.e("TokenStorage", "Failed to refresh token: ${response.code}")
             null
         } catch (e: Exception) {
@@ -207,7 +220,6 @@ class TokenStorage(context: Context) {
     }
 
     // ========== ОЧИСТКА ==========
-
     fun clear() {
         prefs.edit().clear().apply()
     }
