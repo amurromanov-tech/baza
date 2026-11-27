@@ -35,6 +35,7 @@ import javax.net.ssl.SSLHandshakeException
  * 🆕 v23.4.9 (миграция 23→24): КУХНЯ МИРА + РЕЙТИНГ.
  * Добавлены методы:
  *   - incrementLikes / incrementDislikes / incrementCookedCount
+ *   - decrementLikes / decrementDislikes / decrementCookedCount (отмена долгого нажатия)
  *   - updateCuisineCountry
  *   - getRecipesBySource* (новые сортировки: по лайкам/дизлайкам/популярности)
  *   - getRecipesByCountry* (фильтр по стране + все сортировки)
@@ -150,7 +151,6 @@ class RecipesRepository(
     /**
      * 🆕 v23.4.9: добавлен параметр cuisineCountry (обязательное поле).
      * Дефолт "" — для обратной совместимости со старыми вызовами.
-     * В UI при создании рецепта поле «Страна кухни» обязательно к заполнению.
      */
     suspend fun createRecipe(
         title: String,
@@ -428,13 +428,6 @@ class RecipesRepository(
 
     // ============================================================
     // 🆕 4.1. v23.4.9: НОВЫЕ СОРТИРОВКИ (source)
-    //
-    // sortType:
-    //   "newest"      — по новизне (createdAt DESC)
-    //   "alphabetical"— по алфавиту (title ASC)
-    //   "likes"       — по лайкам (likes DESC)
-    //   "dislikes"    — по дизлайкам (dislikes DESC)
-    //   "popularity"  — по популярности (cookedCount DESC)
     // ============================================================
     suspend fun getRecipesBySourceSorted(
         source: String,
@@ -492,11 +485,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * 🆕 v23.4.9: список стран с количеством рецептов (для BottomSheet).
-     * Возвращает только те страны, где есть хотя бы 1 рецепт.
-     * Сортировка — по убыванию количества, затем по алфавиту.
-     */
     suspend fun getDistinctCountriesWithCount(source: String): List<CountryCountRow> =
         withContext(Dispatchers.IO) {
             try {
@@ -706,9 +694,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 v23.4.9: рецепты в папке с новой сортировкой.
-     */
     suspend fun getRecipesInFolderSorted(
         folderId: String,
         sortType: String
@@ -728,9 +713,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * 🆕 v23.4.9: фильтр по стране внутри папки.
-     */
     suspend fun getRecipesInFolderByCountry(
         folderId: String,
         country: String,
@@ -762,9 +744,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 v23.4.9: поиск внутри папки с фильтром по стране.
-     */
     suspend fun searchInFolderByCountry(
         folderId: String,
         country: String,
@@ -779,9 +758,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * 🆕 v23.4.9: список стран с количеством рецептов внутри папки.
-     */
     suspend fun getDistinctCountriesWithCountInFolder(folderId: String): List<CountryCountRow> =
         withContext(Dispatchers.IO) {
             try {
@@ -803,9 +779,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 v23.4.9: корневые рецепты с новой сортировкой.
-     */
     suspend fun getRootRecipesSorted(
         source: String,
         sortType: String
@@ -825,9 +798,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * 🆕 v23.4.9: фильтр по стране в корне.
-     */
     suspend fun getRootRecipesByCountry(
         source: String,
         country: String,
@@ -859,9 +829,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 v23.4.9: поиск в корне с фильтром по стране.
-     */
     suspend fun searchRootRecipesByCountry(
         source: String,
         country: String,
@@ -876,9 +843,6 @@ class RecipesRepository(
         }
     }
 
-    /**
-     * 🆕 v23.4.9: список стран с количеством рецептов в корне.
-     */
     suspend fun getDistinctCountriesWithCountInRoot(source: String): List<CountryCountRow> =
         withContext(Dispatchers.IO) {
             try {
@@ -891,15 +855,10 @@ class RecipesRepository(
 
     // ============================================================
     // 🆕 6. v23.4.9: СЧЁТЧИКИ РЕЙТИНГА И СТРАНА КУХНИ
-    //
-    // Лайк, дизлайк, «Приготовлено» — каждый клик = +1.
-    // После изменения — syncStatus = 'pending' + запись в outbox
-    // (чтобы изменения ушли в changelog и разошлись по устройствам).
     // ============================================================
 
     /**
      * 🆕 +1 к лайкам рецепта.
-     * @return обновлённый RecipeEntity или null при ошибке.
      */
     suspend fun incrementLikes(recipeId: String, currentUser: String): RecipeEntity? =
         withContext(Dispatchers.IO) {
@@ -925,9 +884,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 +1 к дизлайкам рецепта.
-     */
     suspend fun incrementDislikes(recipeId: String, currentUser: String): RecipeEntity? =
         withContext(Dispatchers.IO) {
             try {
@@ -952,10 +908,6 @@ class RecipesRepository(
             }
         }
 
-    /**
-     * 🆕 +1 к счётчику приготовлений.
-     * Используется для сортировки «По популярности».
-     */
     suspend fun incrementCookedCount(recipeId: String, currentUser: String): RecipeEntity? =
         withContext(Dispatchers.IO) {
             try {
@@ -980,10 +932,95 @@ class RecipesRepository(
             }
         }
 
+    // ============================================================
+    // 🆕 v23.4.9 (27.11.2026): ДЕКРЕМЕНТ СЧЁТЧИКОВ (отмена долгого нажатия)
+    //
+    // Защита от ухода в минус реализована в SQL (MAX(0, value - 1)).
+    // Даже если счётчик уже 0, он останется 0.
+    // ============================================================
+
     /**
-     * 🆕 Обновить страну кухни рецепта.
-     * Используется при редактировании рецепта.
+     * 🆕 -1 к лайкам (отмена долгого нажатия).
+     * Защита от ухода в минус: MAX(0, likes - 1) в SQL.
      */
+    suspend fun decrementLikes(recipeId: String, currentUser: String): RecipeEntity? =
+        withContext(Dispatchers.IO) {
+            try {
+                val existing = db.recipeDao().getRecipeById(recipeId)
+                if (existing == null || existing.isDeleted) {
+                    Logger.log(TAG, "decrementLikes: recipe not found or deleted $recipeId")
+                    return@withContext null
+                }
+                val now = System.currentTimeMillis()
+                db.recipeDao().decrementLikes(recipeId, now, currentUser)
+                val updated = db.recipeDao().getRecipeById(recipeId) ?: return@withContext null
+                try {
+                    OutboxHelper.logRecipe(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "decrementLikes: outbox log error: ${e.message}", e)
+                }
+                Logger.log(TAG, "decrementLikes: OK id=$recipeId, likes=${updated.likes}")
+                updated
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementLikes ERROR: ${e.message}", e)
+                null
+            }
+        }
+
+    /**
+     * 🆕 -1 к дизлайкам (отмена долгого нажатия).
+     */
+    suspend fun decrementDislikes(recipeId: String, currentUser: String): RecipeEntity? =
+        withContext(Dispatchers.IO) {
+            try {
+                val existing = db.recipeDao().getRecipeById(recipeId)
+                if (existing == null || existing.isDeleted) {
+                    Logger.log(TAG, "decrementDislikes: recipe not found or deleted $recipeId")
+                    return@withContext null
+                }
+                val now = System.currentTimeMillis()
+                db.recipeDao().decrementDislikes(recipeId, now, currentUser)
+                val updated = db.recipeDao().getRecipeById(recipeId) ?: return@withContext null
+                try {
+                    OutboxHelper.logRecipe(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "decrementDislikes: outbox log error: ${e.message}", e)
+                }
+                Logger.log(TAG, "decrementDislikes: OK id=$recipeId, dislikes=${updated.dislikes}")
+                updated
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementDislikes ERROR: ${e.message}", e)
+                null
+            }
+        }
+
+    /**
+     * 🆕 -1 к счётчику приготовлений (отмена долгого нажатия).
+     */
+    suspend fun decrementCookedCount(recipeId: String, currentUser: String): RecipeEntity? =
+        withContext(Dispatchers.IO) {
+            try {
+                val existing = db.recipeDao().getRecipeById(recipeId)
+                if (existing == null || existing.isDeleted) {
+                    Logger.log(TAG, "decrementCookedCount: recipe not found or deleted $recipeId")
+                    return@withContext null
+                }
+                val now = System.currentTimeMillis()
+                db.recipeDao().decrementCookedCount(recipeId, now, currentUser)
+                val updated = db.recipeDao().getRecipeById(recipeId) ?: return@withContext null
+                try {
+                    OutboxHelper.logRecipe(db, updated, OutboxEntity.ACTION_UPDATE, currentUser)
+                } catch (e: Exception) {
+                    Logger.log(TAG, "decrementCookedCount: outbox log error: ${e.message}", e)
+                }
+                Logger.log(TAG, "decrementCookedCount: OK id=$recipeId, cookedCount=${updated.cookedCount}")
+                updated
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementCookedCount ERROR: ${e.message}", e)
+                null
+            }
+        }
+
     suspend fun updateCuisineCountry(
         recipeId: String,
         country: String,
@@ -1023,11 +1060,6 @@ class RecipesRepository(
     // ============================================================
     // 🆕 7. AI ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
     // ============================================================
-    /**
-     * Генерация рецепта через AI-прокси Cloudflare Worker.
-     * 🆕 v23.2.2: явный ConnectionSpec с TLS 1.2 + TLS 1.3 и повторная попытка
-     * при SSLHandshakeException (решает проблему "connection closed" на Android).
-     */
     private fun buildAiClient(): OkHttpClient {
         val connectionSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
             .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
@@ -1074,7 +1106,7 @@ class RecipesRepository(
                 lastException = e
                 Logger.log(TAG, "generateAiRecipe: SSLHandshakeException on attempt $attempt: ${e.message}")
                 if (attempt == 1) {
-                    delay(500) // Небольшая пауза перед повторной попыткой
+                    delay(500)
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "generateAiRecipe ERROR: ${e.message}", e)
@@ -1087,17 +1119,14 @@ class RecipesRepository(
 }
 
 // ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-// Добавлены методы:
-//   - createRecipe: параметр cuisineCountry (дефолт "" для совместимости)
-//   - incrementLikes / incrementDislikes / incrementCookedCount
-//   - updateCuisineCountry
-//   - getRecipesBySourceSorted (5 типов сортировки)
-//   - getRecipesByCountry / searchRecipesByCountry (фильтр + сортировка)
-//   - getDistinctCountriesWithCount (для BottomSheet)
-//   - getRecipesInFolderSorted / getRecipesInFolderByCountry / searchInFolderByCountry
-//   - getDistinctCountriesWithCountInFolder
-//   - getRootRecipesSorted / getRootRecipesByCountry / searchRootRecipesByCountry
-//   - getDistinctCountriesWithCountInRoot
-// Все методы инкремента/обновления логируют изменения в outbox для синка.
+// 🆕 v23.4.9 (27.11.2026) — отмена долгим нажатием
+// Добавлены методы декремента счётчиков:
+//   - decrementLikes
+//   - decrementDislikes
+//   - decrementCookedCount
+// Все методы:
+//   - Проверяют существование рецепта и что он не удалён
+//   - Вызывают DAO-методы с SQL-защитой MAX(0, value - 1)
+//   - Логируют изменения в outbox для синка
+//   - Возвращают обновлённый RecipeEntity или null при ошибке
 // ============================================================
