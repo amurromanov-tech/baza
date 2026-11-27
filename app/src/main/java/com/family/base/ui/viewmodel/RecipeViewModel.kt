@@ -50,7 +50,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // 🆕 v23.4.9 (27.11.2026): флаг — пользователь уже явно выбрал сортировку.
     // Пока false, кнопка btnSort показывает "🔽 Сортировка",
     // после явного выбора в PopupMenu — displayName выбранного типа.
-    private var userSelectedSort: Boolean = false
+    // (имя isSortExplicitlySelected — чтобы не конфликтовать с публичным LiveData userSelectedSort)
+    private var isSortExplicitlySelected: Boolean = false
 
     // 🆕 v23.4.9: фильтр по стране кухни (null = не выбран, показываем все)
     private var currentCountryFilter: String? = null
@@ -120,7 +121,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         this.currentFolderId = null
         this.searchQuery = ""
         this.sortType = RecipeSortType.NEWEST
-        this.userSelectedSort = false
+        this.isSortExplicitlySelected = false
         this._userSelectedSort.value = false
         this.currentCountryFilter = null
         this.folderStack.clear()
@@ -347,7 +348,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     fun setSortType(type: RecipeSortType) {
         if (sortType == type) return
         sortType = type
-        userSelectedSort = true
+        isSortExplicitlySelected = true
         _userSelectedSort.value = true
         _currentSortType.value = type
         Logger.log(TAG, "setSortType: ${type.key} (${type.displayName})")
@@ -357,7 +358,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     fun getSortType(): RecipeSortType = sortType
 
     // 🆕 v23.4.9 (27.11.2026): геттер флага явного выбора сортировки
-    fun isUserSelectedSort(): Boolean = userSelectedSort
+    fun isUserSelectedSort(): Boolean = isSortExplicitlySelected
 
     @Deprecated(
         "Use setSortType(RecipeSortType) instead",
@@ -708,21 +709,3 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         _aiError.value = null
     }
 }
-
-// ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг + отмена долгим нажатием
-// Исправления и добавления:
-//   1. Убраны пробелы в enum RecipeSortType (было "newest ", стало "newest")
-//   2. В loadContent() папки ВСЕГДА запрашиваются с параметром false
-//      (по алфавиту), чтобы порядок "01, 02, 03" не скакал при
-//      переключении сортировки рецептов.
-//   3. Добавлены методы декремента счётчиков:
-//      - decrementLikes(recipeId)
-//      - decrementDislikes(recipeId)
-//      - decrementCookedCount(recipeId)
-//      Все вызывают соответствующие методы RecipesRepository,
-//      которые используют SQL MAX(0, value - 1) для защиты от минуса.
-//   4. v23.4.9 (27.11.2026): добавлен флаг userSelectedSort + LiveData
-//      для UI, чтобы кнопка btnSort показывала "🔽 Сортировка" до
-//      явного выбора пользователя. Сбрасывается в init().
-// ============================================================
