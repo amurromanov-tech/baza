@@ -5,11 +5,9 @@ import com.family.base.data.local.entity.ItemEntity
 
 @Dao
 interface ItemDao {
-
     // ============================================================
     // ОСНОВНЫЕ ОПЕРАЦИИ
     // ============================================================
-
     @Insert
     suspend fun insertItem(item: ItemEntity)
 
@@ -45,7 +43,6 @@ interface ItemDao {
     // ЗАПРОСЫ БЕЗ АРХИВА (ДЛЯ ОСНОВНОГО СПИСКА)
     // Фильтр isDeleted = 0 обязателен — tombstones не показываем.
     // ============================================================
-
     @Query("SELECT * FROM items WHERE isArchived = 0 AND isDeleted = 0")
     suspend fun getAllItems(): List<ItemEntity>
 
@@ -59,7 +56,6 @@ interface ItemDao {
     // ЗАПРОСЫ БЕЗ ФИЛЬТРОВ (ДЛЯ СИНХРОНИЗАЦИИ)
     // Видят ВСЁ, включая tombstones и архив — нужны для changelog.
     // ============================================================
-
     @Query("SELECT * FROM items")
     suspend fun getAllItemsRaw(): List<ItemEntity>
 
@@ -69,7 +65,6 @@ interface ItemDao {
     // ============================================================
     // 🆕 v15: СИНХРОНИЗАЦИЯ
     // ============================================================
-
     @Query("SELECT * FROM items WHERE syncStatus = 'pending'")
     suspend fun getItemsBySyncStatusPending(): List<ItemEntity>
 
@@ -88,7 +83,6 @@ interface ItemDao {
     // ============================================================
     // ВЛОЖЕННОСТЬ (parentItemId) — предмет внутри предмета
     // ============================================================
-
     @Query("""
         SELECT * FROM items 
         WHERE parentItemId = :parentItemId 
@@ -144,14 +138,12 @@ interface ItemDao {
     // ============================================================
     // ОБНОВЛЕНИЕ КОЛИЧЕСТВА
     // ============================================================
-
     @Query("UPDATE items SET quantity = :qty WHERE id = :itemId")
     suspend fun updateQuantity(itemId: String, qty: Int)
 
     // ============================================================
     // АРХИВАЦИЯ
     // ============================================================
-
     @Query("""
         UPDATE items SET 
             isArchived = 1, 
@@ -190,7 +182,6 @@ interface ItemDao {
     // ============================================================
     // ЧАСТИЧНОЕ СПИСАНИЕ (originalId)
     // ============================================================
-
     @Query("SELECT * FROM items WHERE originalId = :originalId AND isArchived = 1 AND isDeleted = 0")
     suspend fun getItemsByOriginalId(originalId: String): List<ItemEntity>
 
@@ -200,7 +191,6 @@ interface ItemDao {
     // ============================================================
     // ЗАЙМ (ВЫДАЧА)
     // ============================================================
-
     @Query("SELECT * FROM items WHERE isLent = 1 AND isArchived = 0 AND isDeleted = 0 ORDER BY lentDate DESC")
     suspend fun getLentItems(): List<ItemEntity>
 
@@ -213,7 +203,6 @@ interface ItemDao {
     // ============================================================
     // СТАТИСТИКА АРХИВА
     // ============================================================
-
     @Query("SELECT SUM(price * quantity) FROM items WHERE isArchived = 1 AND price IS NOT NULL AND isDeleted = 0")
     suspend fun getTotalArchivedSum(): Double?
 
@@ -237,7 +226,6 @@ interface ItemDao {
     // ============================================================
     // СТАТИСТИКА ЗАЙМА
     // ============================================================
-
     @Query("SELECT SUM(price * quantity) FROM items WHERE isLent = 1 AND isArchived = 0 AND price IS NOT NULL AND isDeleted = 0")
     suspend fun getTotalLentSum(): Double?
 
@@ -247,7 +235,6 @@ interface ItemDao {
     // ============================================================
     // ПОИСК ПО ШТРИХ-КОДУ / QR-КОДУ
     // ============================================================
-
     @Query("SELECT * FROM items WHERE barcode = :barcode AND isArchived = 0 AND isDeleted = 0")
     suspend fun getItemsByBarcode(barcode: String): List<ItemEntity>
 
@@ -257,7 +244,6 @@ interface ItemDao {
     // ============================================================
     // 🆕 ЧЕКИ: ПОИСК ПО НАЗВАНИЮ (для автоподстановки из истории)
     // ============================================================
-
     /**
      * Точное совпадение по названию (case-insensitive).
      * Для автоподстановки в ReceiptPreviewActivity:
@@ -297,7 +283,6 @@ interface ItemDao {
     // ============================================================
     // АУДИТ БАЗЫ
     // ============================================================
-
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 AND isDeleted = 0
@@ -359,7 +344,6 @@ interface ItemDao {
     suspend fun getExpiredItems(now: Long): List<ItemEntity>
 
     // -------- РЕВИЗИЯ --------
-
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 AND isDeleted = 0
@@ -378,7 +362,6 @@ interface ItemDao {
     suspend fun getItemsWithOldRevision(thresholdDate: Long): List<ItemEntity>
 
     // -------- ДУБЛИКАТЫ --------
-
     @Query("""
         SELECT barcode FROM items
         WHERE isArchived = 0 AND isDeleted = 0
@@ -398,7 +381,6 @@ interface ItemDao {
     suspend fun getItemsBySameBarcode(barcode: String): List<ItemEntity>
 
     // -------- СЧЁТЧИКИ --------
-
     @Query("""
         SELECT COUNT(*) FROM items 
         WHERE isArchived = 0 AND isDeleted = 0
@@ -486,7 +468,6 @@ interface ItemDao {
     // ============================================================
     // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ПРЕДМЕТЫ
     // ============================================================
-
     @Query("UPDATE items SET parentId = NULL WHERE parentId = :folderId AND isDeleted = 0")
     suspend fun moveItemsToRoot(folderId: String)
 
@@ -510,7 +491,6 @@ interface ItemDao {
     // ============================================================
     // РЕМОНТ БАЗЫ: ОСИРОТЕВШИЕ ВЛОЖЕННЫЕ
     // ============================================================
-
     @Query("""
         SELECT * FROM items 
         WHERE isArchived = 0 AND isDeleted = 0
@@ -531,7 +511,6 @@ interface ItemDao {
     // ============================================================
     // РЕМОНТ БАЗЫ: НЕПРАВИЛЬНЫЕ imageUrl
     // ============================================================
-
     @Query("SELECT * FROM items WHERE imageUrl IS NOT NULL AND imageUrl != '' AND isDeleted = 0")
     suspend fun getAllItemsWithImageUrl(): List<ItemEntity>
 
@@ -541,7 +520,6 @@ interface ItemDao {
     // ============================================================
     // СЧЁТЧИКИ ДЛЯ СИСТЕМНЫХ ПАПОК
     // ============================================================
-
     @Query("""
         SELECT COUNT(*) FROM items
         WHERE parentId = :folderId
@@ -589,7 +567,6 @@ interface ItemDao {
     // ============================================================
     // 🆕 v20.1.1: СТАТИСТИКА ПАПОК (количество + сумма)
     // ============================================================
-
     @Query("""
         SELECT parentId AS folderId,
                COUNT(*) AS itemCount,
@@ -720,7 +697,6 @@ interface ItemDao {
     // ============================================================
     // ПРОВЕРКА ПАПКИ НА ПУСТОТУ + ОТВЯЗКА АРХИВНЫХ
     // ============================================================
-
     @Query("""
         SELECT COUNT(*) FROM items
         WHERE parentId = :folderId
@@ -748,7 +724,6 @@ interface ItemDao {
     // ============================================================
     // ПЕРЕНОС ВСЕХ ПРЕДМЕТОВ ИЗ ПАПКИ
     // ============================================================
-
     @Query("""
         UPDATE items
         SET parentId = :newParentId,
@@ -767,14 +742,12 @@ interface ItemDao {
     // ============================================================
     // ПРОВЕРКА СУЩЕСТВОВАНИЯ ПАПКИ
     // ============================================================
-
     @Query("SELECT EXISTS(SELECT 1 FROM folders WHERE id = :folderId AND isDeleted = 0)")
     suspend fun folderExists(folderId: String): Boolean
 
     // ============================================================
     // 🆕 v19 (№10): TOMBSTONES
     // ============================================================
-
     @Query("""
         UPDATE items SET
             isDeleted = 1,
@@ -808,7 +781,6 @@ interface ItemDao {
     // ============================================================
     // 🆕 v20.4.8: ПРЕДМЕТЫ С ВЛОЖЕНИЯМИ (для сортировки верхнего блока)
     // ============================================================
-
     /**
      * Возвращает id всех «живых» предметов, у которых есть хотя бы
      * один прямой ребёнок (папка или предмет с parentItemId = items.id).
@@ -851,3 +823,18 @@ data class FolderStatsRow(
     val itemCount: Int,
     val totalPrice: Double
 )
+
+// ============================================================
+// 🆕 v23.4.9: МОДЕЛЬ ДЛЯ СПИСКА СТРАН С КОЛИЧЕСТВОМ РЕЦЕПТОВ
+// Используется в BottomSheet «По странам» для отображения:
+// 🇮🇹 Итальянская (12)
+// ============================================================
+data class CountryCountRow(
+    val country: String,
+    val count: Int
+)
+
+// ============================================================
+// 🆕 v23.4.9 (27.11.2026)
+// Добавлен data class CountryCountRow для запросов стран кухни
+// ============================================================
