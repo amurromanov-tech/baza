@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,14 +24,17 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.data.local.dao.CountryCountRow
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.databinding.ActivityRecipeListBinding
 import com.family.base.ui.adapter.RecipeCatalogAdapter
+import com.family.base.ui.viewmodel.RecipeSortType
 import com.family.base.ui.viewmodel.RecipeViewModel
 import com.family.base.util.Logger
 import com.family.base.util.VoiceInputHelper
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,7 +57,6 @@ class RecipeListActivity : AppCompatActivity() {
     private var searchRunnable: Runnable? = null
     private var folderRecipeCounts: Map<String, Int> = emptyMap()
     private var aiProgressDialog: ProgressDialog? = null
-
     private var pendingVoiceField: EditText? = null
 
     private val editLauncher = registerForActivityResult(
@@ -103,18 +106,17 @@ class RecipeListActivity : AppCompatActivity() {
 
         source = intent.getStringExtra(EXTRA_SOURCE) ?: EXTRA_SOURCE_ALL
         Logger.log(TAG, "onCreate: source=$source")
-
         viewModel.init(source)
 
         setupToolbar()
         setupRecycler()
         setupSearch()
-        setupSortChips()
+        setupSortButton()
+        setupCountryFilterChip()
         setupEmptyState()
         setupFabs()
         setupBackHandler()
         observeViewModel()
-
         viewModel.loadContent()
     }
 
@@ -242,21 +244,151 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupSortChips() {
-        binding.chipSortNewest.isChecked = viewModel.isSortNewest()
-        binding.chipSortAlphabetical.isChecked = !viewModel.isSortNewest()
-        binding.chipSortNewest.setOnClickListener {
-            if (viewModel.isSortNewest()) return@setOnClickListener
-            viewModel.setSort(true)
-            binding.chipSortNewest.isChecked = true
-            binding.chipSortAlphabetical.isChecked = false
+    // ============================================================
+    // 🆕 v23.4.9: КНОПКА СОРТИРОВКИ (PopupMenu с 6 пунктами)
+    // ============================================================
+    private fun setupSortButton() {
+        updateSortButtonText(viewModel.getSortType())
+        binding.btnSort.setOnClickListener {
+            showSortPopupMenu()
         }
-        binding.chipSortAlphabetical.setOnClickListener {
-            if (!viewModel.isSortNewest()) return@setOnClickListener
-            viewModel.setSort(false)
-            binding.chipSortNewest.isChecked = false
-            binding.chipSortAlphabetical.isChecked = true
+    }
+
+    private fun updateSortButtonText(sortType: RecipeSortType) {
+        val icon = when (sortType) {
+            RecipeSortType.NEWEST -> "🕐"
+            RecipeSortType.ALPHABETICAL -> "🔤"
+            RecipeSortType.POPULARITY -> "🔥"
+            RecipeSortType.LIKES -> "👍"
+            RecipeSortType.DISLIKES -> "👎"
         }
+        binding.btnSort.text = "$icon ${sortType.displayName}"
+    }
+
+    private fun showSortPopupMenu() {
+        val popup = PopupMenu(this, binding.btnSort)
+        val currentSort = viewModel.getSortType()
+        
+        popup.menu.add(0, 1, 1, "🕐 По новизне").apply {
+            isChecked = currentSort == RecipeSortType.NEWEST
+        }
+        popup.menu.add(0, 2, 2, "🔤 По алфавиту").apply {
+            isChecked = currentSort == RecipeSortType.ALPHABETICAL
+        }
+        popup.menu.add(0, 3, 3, "🔥 По популярности").apply {
+            isChecked = currentSort == RecipeSortType.POPULARITY
+        }
+        popup.menu.add(0, 4, 4, "👍 По лайкам").apply {
+            isChecked = currentSort == RecipeSortType.LIKES
+        }
+        popup.menu.add(0, 5, 5, "👎 По дизлайкам").apply {
+            isChecked = currentSort == RecipeSortType.DISLIKES
+        }
+        popup.menu.setGroupCheckable(0, true, true)
+        
+        popup.menu.add(0, 6, 6, "🌍 По странам...")
+        
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> {
+                    viewModel.setSortType(RecipeSortType.NEWEST)
+                    true
+                }
+                2 -> {
+                    viewModel.setSortType(RecipeSortType.ALPHABETICAL)
+                    true
+                }
+                3 -> {
+                    viewModel.setSortType(RecipeSortType.POPULARITY)
+                    true
+                }
+                4 -> {
+                    viewModel.setSortType(RecipeSortType.LIKES)
+                    true
+                }
+                5 -> {
+                    viewModel.setSortType(RecipeSortType.DISLIKES)
+                    true
+                }
+                6 -> {
+                    showCountryBottomSheet()
+                    true
+                }
+                else -> false
+            }
+        }
+        
+        popup.show()
+    }
+
+    // ============================================================
+    // 🆕 v23.4.9: ПЛАШКА ФИЛЬТРА ПО СТРАНЕ
+    // ============================================================
+    private fun setupCountryFilterChip() {
+        binding.chipCountryFilter.setCloseIconOnClickListener {
+            viewModel.clearCountryFilter()
+        }
+        binding.chipCountryFilter.setOnClickListener {
+            showCountryBottomSheet()
+        }
+    }
+
+    private fun updateCountryFilterChip(country: String?) {
+        if (country.isNullOrBlank()) {
+            binding.chipCountryFilter.visibility = View.GONE
+        } else {
+            binding.chipCountryFilter.visibility = View.VISIBLE
+            binding.chipCountryFilter.text = "🌍 $country ✕"
+        }
+    }
+
+    // ============================================================
+    // 🆕 v23.4.9: BOTTOMSHEET «ПО СТРАНАМ»
+    // ============================================================
+    private fun showCountryBottomSheet() {
+        viewModel.loadCountries()
+        
+        val dialog = BottomSheetDialog(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        
+        val titleView = android.widget.TextView(this).apply {
+            text = "🌍 Выбрать страну кухни"
+            textSize = 18f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, (16 * resources.displayMetrics.density).toInt())
+        }
+        layout.addView(titleView)
+        
+        val listView = android.widget.ListView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        layout.addView(listView)
+        
+        viewModel.countries.observe(this) { countries ->
+            val items = countries.map { "${it.country} (${it.count})" }
+            val adapter = android.widget.ArrayAdapter(
+                this,
+                android.R.layout.simple_list_item_1,
+                items
+            )
+            listView.adapter = adapter
+            
+            listView.setOnItemClickListener { _, _, position, _ ->
+                val selectedCountry = countries[position].country
+                viewModel.selectCountry(selectedCountry)
+                dialog.dismiss()
+            }
+        }
+        
+        dialog.setContentView(layout)
+        dialog.show()
     }
 
     private fun setupEmptyState() {
@@ -313,7 +445,6 @@ class RecipeListActivity : AppCompatActivity() {
             binding.fabAddRecipe.visibility = View.GONE
             binding.fabAddRecipe.setOnClickListener(null)
         }
-
         if (viewModel.isFolderModeAvailable()) {
             binding.btnAddFolder.visibility = View.VISIBLE
             binding.btnAddFolder.setOnClickListener {
@@ -342,7 +473,6 @@ class RecipeListActivity : AppCompatActivity() {
             val pad = (16 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad / 2, pad, 0)
         }
-
         val editText = EditText(this).apply {
             hint = "Например: блины на молоке, паста карбонара..."
             setSingleLine(false)
@@ -352,7 +482,6 @@ class RecipeListActivity : AppCompatActivity() {
                 marginEnd = (8 * resources.displayMetrics.density).toInt()
             }
         }
-
         val btnMic = Button(this).apply {
             text = "🎤"
             textSize = 20f
@@ -364,7 +493,6 @@ class RecipeListActivity : AppCompatActivity() {
                 startVoiceFor(editText)
             }
         }
-
         layout.addView(editText)
         layout.addView(btnMic)
 
@@ -698,7 +826,6 @@ class RecipeListActivity : AppCompatActivity() {
             Logger.log(TAG, "isLoading: $loading")
             updateUiState(isEmpty = viewModel.isEmpty.value ?: true)
         }
-
         viewModel.generatedAiRecipe.observe(this) { recipeText ->
             if (!recipeText.isNullOrBlank()) {
                 Logger.log(TAG, "generatedAiRecipe observer: got text, length=${recipeText.length}")
@@ -706,11 +833,22 @@ class RecipeListActivity : AppCompatActivity() {
                 openCreateRecipeWithAiText(recipeText)
             }
         }
-
         viewModel.aiError.observe(this) { error ->
             if (!error.isNullOrBlank()) {
                 Logger.log(TAG, "aiError observer: $error")
             }
+        }
+        
+        // 🆕 v23.4.9: наблюдение за типом сортировки
+        viewModel.currentSortType.observe(this) { sortType ->
+            Logger.log(TAG, "currentSortType observer: ${sortType.key}")
+            updateSortButtonText(sortType)
+        }
+        
+        // 🆕 v23.4.9: наблюдение за фильтром по стране
+        viewModel.selectedCountry.observe(this) { country ->
+            Logger.log(TAG, "selectedCountry observer: '$country'")
+            updateCountryFilterChip(country)
         }
     }
 
@@ -745,7 +883,8 @@ class RecipeListActivity : AppCompatActivity() {
         binding.rvRecipes.visibility = if (hasItems) View.VISIBLE else View.GONE
         binding.emptyState.visibility =
             if (isEmpty && !loading) View.VISIBLE else View.GONE
-        binding.sortChipsScroll.visibility =
+        // 🆕 v23.4.9: показываем кнопку сортировки, если есть элементы
+        binding.btnSort.visibility =
             if (hasItems) View.VISIBLE else View.GONE
     }
 
@@ -754,3 +893,16 @@ class RecipeListActivity : AppCompatActivity() {
         dismissAiProgressDialog()
     }
 }
+
+// ============================================================
+// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+// Изменения:
+//   - Удалён setupSortChips() с chipSortNewest/chipSortAlphabetical
+//   - Добавлен setupSortButton() — кнопка с PopupMenu (6 пунктов)
+//   - Добавлен setupCountryFilterChip() — плашка фильтра по стране
+//   - Добавлен showSortPopupMenu() — PopupMenu с 5 сортировками + "По странам"
+//   - Добавлен showCountryBottomSheet() — BottomSheet со списком стран
+//   - Добавлены observers: currentSortType, selectedCountry
+//   - Обновлён updateUiState(): sortChipsScroll → btnSort
+//   - Добавлены импорты: PopupMenu, BottomSheetDialog, CountryCountRow, RecipeSortType
+// ============================================================
