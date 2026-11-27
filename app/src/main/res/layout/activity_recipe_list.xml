@@ -50,11 +50,16 @@
             android:paddingBottom="8dp"
             android:visibility="gone">
 
+            <!-- 🆕 v23.4.9 (27.11.2026): микрофон (голосовой ввод) в поле поиска -->
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSearch"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense">
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_mic"
+                app:endIconContentDescription="Голосовой ввод">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSearch"
