@@ -1,11 +1,13 @@
 package com.family.base.ui
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.MenuItem
 import android.view.View
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -25,6 +27,7 @@ import com.family.base.databinding.ActivityRecipeEditBinding
 import com.family.base.ui.adapter.RecipeMediaEditAdapter
 import com.family.base.util.Logger
 import com.family.base.util.RecipeMediaController
+import com.family.base.util.VoiceInputHelper
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,6 +54,12 @@ import kotlinx.coroutines.withContext
  * открывается BottomSheet со списком популярных кухонь мира.
  * Пользователь может выбрать предопределённую страну или ввести свою.
  * При сохранении проверяется, что страна не пустая.
+ *
+ * 🆕 v23.4.9 (27.11.2026): ГОЛОСОВОЙ ВВОД.
+ * В поля «Название» и «Описание» добавлена иконка 🎤 (endIcon у TextInputLayout).
+ * Используется тот же механизм, что и в «Домашних делах»:
+ * VoiceInputHelper + ActivityResultContracts.StartActivityForResult.
+ * Текст вставляется в позицию курсора, не заменяя существующий.
  *
  * Режимы:
  * - Создание: extra EXTRA_RECIPE_ID НЕ передан.
@@ -171,6 +180,26 @@ class RecipeEditActivity : AppCompatActivity() {
     private var saving = false
 
     // ============================================================
+    // 🆕 v23.4.9 (27.11.2026): ГОЛОСОВОЙ ВВОД
+    // ============================================================
+
+    /** Поле, в которое нужно вставить распознанный текст. */
+    private var pendingVoiceField: EditText? = null
+
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val text = VoiceInputHelper.extractRecognizedText(result.data)
+            val field = pendingVoiceField
+            if (!text.isNullOrEmpty() && field != null) {
+                VoiceInputHelper.insertRecognizedText(field, text)
+            }
+        }
+        pendingVoiceField = null
+    }
+
+    // ============================================================
     // LAUNCHERS
     // ============================================================
     private val pickPhotoLauncher = registerForActivityResult(
@@ -242,6 +271,7 @@ class RecipeEditActivity : AppCompatActivity() {
         setupToolbar()
         setupSaveButton()
         setupCountryPicker() // 🆕 v23.4.9
+        setupVoiceInput()    // 🆕 v23.4.9 (27.11.2026)
         setupMediaBlock()
 
         if (editingRecipeId != null) {
@@ -289,6 +319,46 @@ class RecipeEditActivity : AppCompatActivity() {
     private fun setupSaveButton() {
         binding.btnSave.setOnClickListener {
             onSaveClicked()
+        }
+    }
+
+    // ============================================================
+    // 🆕 v23.4.9 (27.11.2026): ГОЛОСОВОЙ ВВОД В НАЗВАНИЕ И ОПИСАНИЕ
+    // ============================================================
+    private fun setupVoiceInput() {
+        binding.tilTitle.setEndIconOnClickListener {
+            startVoiceFor(binding.etTitle)
+        }
+        binding.tilDescription.setEndIconOnClickListener {
+            startVoiceFor(binding.etDescription)
+        }
+    }
+
+    private fun startVoiceFor(field: EditText) {
+        pendingVoiceField = field
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == VoiceInputHelper.REQUEST_CODE_MIC) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                val field = pendingVoiceField
+                if (field != null) {
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
+                }
+            } else {
+                pendingVoiceField = null
+                Toast.makeText(
+                    this,
+                    "Без разрешения на микрофон голосовой ввод недоступен",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -834,17 +904,3 @@ class RecipeEditActivity : AppCompatActivity() {
             .show()
     }
 }
-
-// ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-// Изменения:
-//   - Добавлен список POPULAR_COUNTRIES (29 популярных кухонь)
-//   - Добавлена переменная selectedCountry
-//   - Добавлен setupCountryPicker() — обработка клика на поле страны
-//   - Добавлен showCountryPickerDialog() — BottomSheet со списком стран
-//   - Добавлен showCustomCountryDialog() — ввод своей страны (пункт "Другая")
-//   - В loadRecipeForEdit() загружаем cuisineCountry из рецепта
-//   - В onSaveClicked() валидация страны + передача в createRecipe()
-//   - В onSaveClicked() для редактирования — вызов updateCuisineCountry()
-//   - В confirmDiscardIfChanged() учитываем countryNow
-// ============================================================
