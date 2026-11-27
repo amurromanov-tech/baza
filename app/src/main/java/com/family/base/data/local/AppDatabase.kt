@@ -499,12 +499,6 @@ abstract class AppDatabase : RoomDatabase() {
         //   - index_recipes_cookedCount
         //   - index_recipes_likes
         //   - index_recipes_dislikes
-        //
-        // ⚠️ Схема @Entity должна точно совпадать с этим SQL (Правило №34):
-        //   cuisineCountry: TEXT NOT NULL DEFAULT ''      → @ColumnInfo(defaultValue = "")
-        //   likes:          INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
-        //   dislikes:       INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
-        //   cookedCount:    INTEGER NOT NULL DEFAULT 0    → @ColumnInfo(defaultValue = "0")
         // ============================================================
         private val MIGRATION_23_24 = object : Migration(23, 24) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -512,6 +506,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE recipes ADD COLUMN likes INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE recipes ADD COLUMN dislikes INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE recipes ADD COLUMN cookedCount INTEGER NOT NULL DEFAULT 0")
+                
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_cuisineCountry ON recipes(cuisineCountry)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_cookedCount ON recipes(cookedCount)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_recipes_likes ON recipes(likes)")
@@ -520,7 +515,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ============================================================
-        // ЦЕПОЧКИ «ЕСЛИ ПРОПУСТИЛИ» (старые)
+        // ЦЕПОЧКИ «ЕСЛИ ПРОПУСТИЛИ» (старые, без изменений)
         // ============================================================
         private val MIGRATION_2_4 = object : Migration(2, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -538,15 +533,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_2_5 = object : Migration(2, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
+                MIGRATION_2_4.migrate(db)
                 db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
             }
         }
@@ -590,8 +577,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_9_12 = object : Migration(9, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
+                MIGRATION_9_11.migrate(db)
                 db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
             }
         }
@@ -605,88 +591,22 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_9_13 = object : Migration(9, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+                MIGRATION_9_12.migrate(db)
+                MIGRATION_12_13.migrate(db)
             }
         }
 
         private val MIGRATION_10_13 = object : Migration(10, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+                MIGRATION_10_12.migrate(db)
+                MIGRATION_12_13.migrate(db)
             }
         }
 
         private val MIGRATION_11_13 = object : Migration(11, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
+                MIGRATION_12_13.migrate(db)
             }
         }
 
@@ -695,357 +615,72 @@ abstract class AppDatabase : RoomDatabase() {
         // ============================================================
         private val MIGRATION_2_14 = object : Migration(2, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedReason TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN archivedNote TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
+                MIGRATION_2_5.migrate(db)
+                MIGRATION_5_7.migrate(db) // добавляет originalId и lastRevisionDate
                 db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_3_14 = object : Migration(3, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN isLent INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentTo TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN lentNote TEXT")
-                db.execSQL("ALTER TABLE items ADD COLUMN returnDate INTEGER")
-                db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                MIGRATION_3_4.migrate(db)
+                MIGRATION_4_6.migrate(db)
+                MIGRATION_6_8.migrate(db) // добавляет lastRevisionDate, parentItemId
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_4_14 = object : Migration(4, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN itemSubtype TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                MIGRATION_4_6.migrate(db)
+                MIGRATION_6_8.migrate(db)
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_5_14 = object : Migration(5, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN originalId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                MIGRATION_5_7.migrate(db)
+                MIGRATION_7_9.migrate(db) // добавляет parentItemId в items/folders/sync_queue
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_6_14 = object : Migration(6, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN lastRevisionDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                MIGRATION_6_8.migrate(db)
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_7_14 = object : Migration(7, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE items ADD COLUMN parentItemId TEXT DEFAULT NULL")
+                MIGRATION_7_9.migrate(db)
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE folders ADD COLUMN parentItemId TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
@@ -1054,51 +689,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE sync_queue ADD COLUMN parentItemId TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
@@ -1106,249 +698,38 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE items ADD COLUMN purchaseDate INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_10_14 = object : Migration(10, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE history ADD COLUMN itemName TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_11_14 = object : Migration(11, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE settings ADD COLUMN historyMigratedV12 INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_12_14 = object : Migration(12, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("""
-                    CREATE TABLE settings_new (
-                        id INTEGER NOT NULL,
-                        isFirstLaunch INTEGER NOT NULL,
-                        notificationDaysBefore INTEGER NOT NULL,
-                        notificationHour INTEGER NOT NULL,
-                        enableNotifications INTEGER NOT NULL,
-                        historyMigratedV12 INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("""
-                    INSERT INTO settings_new (id, isFirstLaunch, notificationDaysBefore, notificationHour, enableNotifications, historyMigratedV12)
-                    SELECT id, isFirstLaunch, 
-                        COALESCE(notificationDaysBefore, 3),
-                        COALESCE(notificationHour, 10),
-                        COALESCE(enableNotifications, 1),
-                        COALESCE(historyMigratedV12, 0)
-                    FROM settings
-                """.trimIndent())
-                db.execSQL("DROP TABLE settings")
-                db.execSQL("ALTER TABLE settings_new RENAME TO settings")
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
             }
         }
 
         private val MIGRATION_13_15 = object : Migration(13, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE folders ADD COLUMN isSystem INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE folders ADD COLUMN systemKey TEXT DEFAULT NULL")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        note TEXT,
-                        priority INTEGER NOT NULL,
-                        dueDate INTEGER,
-                        isDone INTEGER NOT NULL,
-                        doneAt INTEGER,
-                        doneBy TEXT,
-                        createdBy TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        updatedAt INTEGER NOT NULL,
-                        recurrence INTEGER NOT NULL,
-                        recurrenceSource TEXT,
-                        sortOrder INTEGER NOT NULL,
-                        isDeleted INTEGER NOT NULL,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("ALTER TABLE items ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-                db.execSQL("ALTER TABLE folders ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-                db.execSQL("ALTER TABLE tasks ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'")
-                db.execSQL("""
-                    CREATE TABLE IF NOT EXISTS outbox (
-                        id TEXT NOT NULL,
-                        entityType TEXT NOT NULL,
-                        entityId TEXT NOT NULL,
-                        action TEXT NOT NULL,
-                        payloadJson TEXT NOT NULL,
-                        createdAt INTEGER NOT NULL,
-                        changedBy TEXT NOT NULL,
-                        isSynced INTEGER NOT NULL,
-                        syncedAt INTEGER,
-                        batchId TEXT,
-                        PRIMARY KEY(id)
-                    )
-                """.trimIndent())
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_isSynced ON outbox(isSynced)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_entityType_entityId ON outbox(entityType, entityId)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_outbox_createdAt ON outbox(createdAt)")
+                MIGRATION_13_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
             }
         }
 
@@ -1356,1148 +737,201 @@ abstract class AppDatabase : RoomDatabase() {
         // ЦЕПОЧКИ С ПРОПУСКОМ 15 (сразу в 16)
         // ============================================================
         private fun migrateTo16(db: SupportSQLiteDatabase) {
-            db.execSQL("""
-                CREATE TABLE IF NOT EXISTS processed_changelogs (
-                    batchId TEXT NOT NULL,
-                    deviceId TEXT NOT NULL,
-                    changedBy TEXT,
-                    createdAt INTEGER NOT NULL,
-                    processedAt INTEGER NOT NULL,
-                    entriesCount INTEGER NOT NULL,
-                    appliedCount INTEGER NOT NULL,
-                    isOwn INTEGER NOT NULL,
-                    PRIMARY KEY(batchId)
-                )
-            """.trimIndent())
-            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_processed_changelogs_batchId ON processed_changelogs(batchId)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_deviceId ON processed_changelogs(deviceId)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_processed_changelogs_processedAt ON processed_changelogs(processedAt)")
+            MIGRATION_15_16.migrate(db)
         }
 
-        private val MIGRATION_2_16 = object : Migration(2, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_3_16 = object : Migration(3, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_4_16 = object : Migration(4, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_5_16 = object : Migration(5, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_6_16 = object : Migration(6, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_7_16 = object : Migration(7, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_8_16 = object : Migration(8, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_9_16 = object : Migration(9, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_10_16 = object : Migration(10, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_11_16 = object : Migration(11, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_12_16 = object : Migration(12, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_14.migrate(db)
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_13_16 = object : Migration(13, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
-
-        private val MIGRATION_14_16 = object : Migration(14, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_15.migrate(db)
-                migrateTo16(db)
-            }
-        }
+        private val MIGRATION_2_16 = object : Migration(2, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_3_16 = object : Migration(3, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_4_16 = object : Migration(4, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_5_16 = object : Migration(5, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_6_16 = object : Migration(6, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_7_16 = object : Migration(7, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_8_16 = object : Migration(8, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_9_16 = object : Migration(9, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_10_16 = object : Migration(10, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_11_16 = object : Migration(11, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_12_16 = object : Migration(12, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_14.migrate(db); MIGRATION_14_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_13_16 = object : Migration(13, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_15.migrate(db); migrateTo16(db) } }
+        private val MIGRATION_14_16 = object : Migration(14, 16) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_15.migrate(db); migrateTo16(db) } }
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 16 (сразу в 17)
         // ============================================================
-        private val MIGRATION_2_17 = object : Migration(2, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_17 = object : Migration(3, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_17 = object : Migration(4, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_17 = object : Migration(5, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_17 = object : Migration(6, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_17 = object : Migration(7, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_17 = object : Migration(8, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_17 = object : Migration(9, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_17 = object : Migration(10, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_17 = object : Migration(11, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_17 = object : Migration(12, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_17 = object : Migration(13, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_17 = object : Migration(14, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_17 = object : Migration(15, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_16.migrate(db)
-                MIGRATION_16_17.migrate(db)
-            }
-        }
+        private val MIGRATION_2_17 = object : Migration(2, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_3_17 = object : Migration(3, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_4_17 = object : Migration(4, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_5_17 = object : Migration(5, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_6_17 = object : Migration(6, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_7_17 = object : Migration(7, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_8_17 = object : Migration(8, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_9_17 = object : Migration(9, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_10_17 = object : Migration(10, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_11_17 = object : Migration(11, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_12_17 = object : Migration(12, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_13_17 = object : Migration(13, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_14_17 = object : Migration(14, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_16.migrate(db); MIGRATION_16_17.migrate(db) } }
+        private val MIGRATION_15_17 = object : Migration(15, 17) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_16.migrate(db); MIGRATION_16_17.migrate(db) } }
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 17 (сразу в 18)
         // ============================================================
-        private val MIGRATION_2_18 = object : Migration(2, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_18 = object : Migration(3, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_18 = object : Migration(4, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_18 = object : Migration(5, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_18 = object : Migration(6, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_18 = object : Migration(7, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_18 = object : Migration(8, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_18 = object : Migration(9, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_18 = object : Migration(10, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_18 = object : Migration(11, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_18 = object : Migration(12, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_18 = object : Migration(13, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_18 = object : Migration(14, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_18 = object : Migration(15, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_18 = object : Migration(16, 18) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_17.migrate(db)
-                MIGRATION_17_18.migrate(db)
-            }
-        }
-
+        private val MIGRATION_2_18 = object : Migration(2, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_3_18 = object : Migration(3, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_4_18 = object : Migration(4, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_5_18 = object : Migration(5, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_6_18 = object : Migration(6, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_7_18 = object : Migration(7, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_8_18 = object : Migration(8, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_9_18 = object : Migration(9, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_10_18 = object : Migration(10, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_11_18 = object : Migration(11, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_12_18 = object : Migration(12, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_13_18 = object : Migration(13, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_14_18 = object : Migration(14, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_15_18 = object : Migration(15, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_17.migrate(db); MIGRATION_17_18.migrate(db) } }
+        private val MIGRATION_16_18 = object : Migration(16, 18) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_17.migrate(db); MIGRATION_17_18.migrate(db) } }
         private val MIGRATION_17_18_DIRECT = MIGRATION_17_18
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 18 (сразу в 19)
         // ============================================================
-        private val MIGRATION_17_19 = object : Migration(17, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_2_19 = object : Migration(2, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_19 = object : Migration(3, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_19 = object : Migration(4, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_19 = object : Migration(5, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_19 = object : Migration(6, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_19 = object : Migration(7, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_19 = object : Migration(8, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_19 = object : Migration(9, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_19 = object : Migration(10, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_19 = object : Migration(11, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_19 = object : Migration(12, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_19 = object : Migration(13, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_19 = object : Migration(14, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_19 = object : Migration(15, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_19 = object : Migration(16, 19) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_18.migrate(db)
-                MIGRATION_18_19.migrate(db)
-            }
-        }
-
+        private val MIGRATION_17_19 = object : Migration(17, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_2_19 = object : Migration(2, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_3_19 = object : Migration(3, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_4_19 = object : Migration(4, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_5_19 = object : Migration(5, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_6_19 = object : Migration(6, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_7_19 = object : Migration(7, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_8_19 = object : Migration(8, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_9_19 = object : Migration(9, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_10_19 = object : Migration(10, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_11_19 = object : Migration(11, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_12_19 = object : Migration(12, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_13_19 = object : Migration(13, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_14_19 = object : Migration(14, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_15_19 = object : Migration(15, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_18.migrate(db); MIGRATION_18_19.migrate(db) } }
+        private val MIGRATION_16_19 = object : Migration(16, 19) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_18.migrate(db); MIGRATION_18_19.migrate(db) } }
         private val MIGRATION_18_19_DIRECT = MIGRATION_18_19
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 19 (сразу в 20)
         // ============================================================
-        private val MIGRATION_18_20 = object : Migration(18, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_18_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_2_20 = object : Migration(2, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_20 = object : Migration(3, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_20 = object : Migration(4, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_20 = object : Migration(5, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_20 = object : Migration(6, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_20 = object : Migration(7, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_20 = object : Migration(8, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_20 = object : Migration(9, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_20 = object : Migration(10, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_20 = object : Migration(11, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_20 = object : Migration(12, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_20 = object : Migration(13, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_20 = object : Migration(14, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_20 = object : Migration(15, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_20 = object : Migration(16, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
-        private val MIGRATION_17_20 = object : Migration(17, 20) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_19.migrate(db)
-                MIGRATION_19_20.migrate(db)
-            }
-        }
-
+        private val MIGRATION_18_20 = object : Migration(18, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_18_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_2_20 = object : Migration(2, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_3_20 = object : Migration(3, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_4_20 = object : Migration(4, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_5_20 = object : Migration(5, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_6_20 = object : Migration(6, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_7_20 = object : Migration(7, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_8_20 = object : Migration(8, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_9_20 = object : Migration(9, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_10_20 = object : Migration(10, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_11_20 = object : Migration(11, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_12_20 = object : Migration(12, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_13_20 = object : Migration(13, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_14_20 = object : Migration(14, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_15_20 = object : Migration(15, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_16_20 = object : Migration(16, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_19.migrate(db); MIGRATION_19_20.migrate(db) } }
+        private val MIGRATION_17_20 = object : Migration(17, 20) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_19.migrate(db); MIGRATION_19_20.migrate(db) } }
         private val MIGRATION_19_20_DIRECT = MIGRATION_19_20
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 20 (сразу в 21)
         // ============================================================
         private val MIGRATION_20_21_DIRECT = MIGRATION_20_21
-
-        private val MIGRATION_2_21 = object : Migration(2, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_21 = object : Migration(3, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_21 = object : Migration(4, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_21 = object : Migration(5, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_21 = object : Migration(6, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_21 = object : Migration(7, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_21 = object : Migration(8, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_21 = object : Migration(9, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_21 = object : Migration(10, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_21 = object : Migration(11, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_21 = object : Migration(12, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_21 = object : Migration(13, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_21 = object : Migration(14, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_21 = object : Migration(15, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_21 = object : Migration(16, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_17_21 = object : Migration(17, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_18_21 = object : Migration(18, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_18_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
-
-        private val MIGRATION_19_21 = object : Migration(19, 21) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_19_20.migrate(db)
-                MIGRATION_20_21.migrate(db)
-            }
-        }
+        private val MIGRATION_2_21 = object : Migration(2, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_3_21 = object : Migration(3, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_4_21 = object : Migration(4, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_5_21 = object : Migration(5, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_6_21 = object : Migration(6, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_7_21 = object : Migration(7, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_8_21 = object : Migration(8, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_9_21 = object : Migration(9, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_10_21 = object : Migration(10, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_11_21 = object : Migration(11, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_12_21 = object : Migration(12, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_13_21 = object : Migration(13, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_14_21 = object : Migration(14, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_15_21 = object : Migration(15, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_16_21 = object : Migration(16, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_17_21 = object : Migration(17, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_18_21 = object : Migration(18, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_18_20.migrate(db); MIGRATION_20_21.migrate(db) } }
+        private val MIGRATION_19_21 = object : Migration(19, 21) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_19_20.migrate(db); MIGRATION_20_21.migrate(db) } }
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 21 (сразу в 22)
         // ============================================================
         private val MIGRATION_21_22_DIRECT = MIGRATION_21_22
-
-        private val MIGRATION_2_22 = object : Migration(2, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_22 = object : Migration(3, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_22 = object : Migration(4, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_22 = object : Migration(5, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_22 = object : Migration(6, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_22 = object : Migration(7, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_22 = object : Migration(8, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_22 = object : Migration(9, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_22 = object : Migration(10, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_22 = object : Migration(11, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_22 = object : Migration(12, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_22 = object : Migration(13, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_22 = object : Migration(14, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_22 = object : Migration(15, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_22 = object : Migration(16, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_17_22 = object : Migration(17, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_18_22 = object : Migration(18, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_18_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_19_22 = object : Migration(19, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_19_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
-
-        private val MIGRATION_20_22 = object : Migration(20, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_20_21.migrate(db)
-                MIGRATION_21_22.migrate(db)
-            }
-        }
+        private val MIGRATION_2_22 = object : Migration(2, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_3_22 = object : Migration(3, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_4_22 = object : Migration(4, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_5_22 = object : Migration(5, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_6_22 = object : Migration(6, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_7_22 = object : Migration(7, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_8_22 = object : Migration(8, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_9_22 = object : Migration(9, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_10_22 = object : Migration(10, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_11_22 = object : Migration(11, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_12_22 = object : Migration(12, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_13_22 = object : Migration(13, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_14_22 = object : Migration(14, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_15_22 = object : Migration(15, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_16_22 = object : Migration(16, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_17_22 = object : Migration(17, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_18_22 = object : Migration(18, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_18_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_19_22 = object : Migration(19, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_19_21.migrate(db); MIGRATION_21_22.migrate(db) } }
+        private val MIGRATION_20_22 = object : Migration(20, 22) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_20_21.migrate(db); MIGRATION_21_22.migrate(db) } }
 
         // ============================================================
         // ЦЕПОЧКИ С ПРОПУСКОМ 22 (сразу в 23)
         // ============================================================
         private val MIGRATION_22_23_DIRECT = MIGRATION_22_23
-
-        private val MIGRATION_2_23 = object : Migration(2, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_23 = object : Migration(3, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_23 = object : Migration(4, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_23 = object : Migration(5, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_23 = object : Migration(6, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_23 = object : Migration(7, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_23 = object : Migration(8, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_23 = object : Migration(9, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_23 = object : Migration(10, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_23 = object : Migration(11, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_23 = object : Migration(12, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_23 = object : Migration(13, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_23 = object : Migration(14, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_23 = object : Migration(15, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_23 = object : Migration(16, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_17_23 = object : Migration(17, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_18_23 = object : Migration(18, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_18_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_19_23 = object : Migration(19, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_19_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_20_23 = object : Migration(20, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_20_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
-
-        private val MIGRATION_21_23 = object : Migration(21, 23) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_21_22.migrate(db)
-                MIGRATION_22_23.migrate(db)
-            }
-        }
+        private val MIGRATION_2_23 = object : Migration(2, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_3_23 = object : Migration(3, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_4_23 = object : Migration(4, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_5_23 = object : Migration(5, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_6_23 = object : Migration(6, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_7_23 = object : Migration(7, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_8_23 = object : Migration(8, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_9_23 = object : Migration(9, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_10_23 = object : Migration(10, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_11_23 = object : Migration(11, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_12_23 = object : Migration(12, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_13_23 = object : Migration(13, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_14_23 = object : Migration(14, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_15_23 = object : Migration(15, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_16_23 = object : Migration(16, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_17_23 = object : Migration(17, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_18_23 = object : Migration(18, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_18_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_19_23 = object : Migration(19, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_19_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_20_23 = object : Migration(20, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_20_22.migrate(db); MIGRATION_22_23.migrate(db) } }
+        private val MIGRATION_21_23 = object : Migration(21, 23) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_21_22.migrate(db); MIGRATION_22_23.migrate(db) } }
 
         // ============================================================
         // 🆕 ЦЕПОЧКИ С ПРОПУСКОМ 23 (сразу в 24)
-        //
-        // Нужны, если на устройстве осталась БД версии 23 (обновились
-        // с v23.4.8) или восстановили бэкап v23.
-        //
-        // Практически основной будет MIGRATION_23_24. Остальные — страховка.
         // ============================================================
         private val MIGRATION_23_24_DIRECT = MIGRATION_23_24
-
-        private val MIGRATION_2_24 = object : Migration(2, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_2_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_3_24 = object : Migration(3, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_3_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_4_24 = object : Migration(4, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_4_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_5_24 = object : Migration(5, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_5_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_6_24 = object : Migration(6, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_6_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_7_24 = object : Migration(7, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_7_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_8_24 = object : Migration(8, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_8_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_9_24 = object : Migration(9, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_9_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_10_24 = object : Migration(10, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_10_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_11_24 = object : Migration(11, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_11_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_12_24 = object : Migration(12, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_12_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_13_24 = object : Migration(13, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_13_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_14_24 = object : Migration(14, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_14_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_15_24 = object : Migration(15, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_15_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_16_24 = object : Migration(16, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_16_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_17_24 = object : Migration(17, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_17_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_18_24 = object : Migration(18, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_18_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_19_24 = object : Migration(19, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_19_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_20_24 = object : Migration(20, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_20_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_21_24 = object : Migration(21, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_21_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
-
-        private val MIGRATION_22_24 = object : Migration(22, 24) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                MIGRATION_22_23.migrate(db)
-                MIGRATION_23_24.migrate(db)
-            }
-        }
+        private val MIGRATION_2_24 = object : Migration(2, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_2_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_3_24 = object : Migration(3, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_3_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_4_24 = object : Migration(4, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_4_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_5_24 = object : Migration(5, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_5_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_6_24 = object : Migration(6, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_6_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_7_24 = object : Migration(7, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_7_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_8_24 = object : Migration(8, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_8_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_9_24 = object : Migration(9, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_9_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_10_24 = object : Migration(10, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_10_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_11_24 = object : Migration(11, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_11_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_12_24 = object : Migration(12, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_12_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_13_24 = object : Migration(13, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_13_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_14_24 = object : Migration(14, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_14_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_15_24 = object : Migration(15, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_15_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_16_24 = object : Migration(16, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_16_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_17_24 = object : Migration(17, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_17_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_18_24 = object : Migration(18, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_18_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_19_24 = object : Migration(19, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_19_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_20_24 = object : Migration(20, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_20_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_21_24 = object : Migration(21, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_21_23.migrate(db); MIGRATION_23_24.migrate(db) } }
+        private val MIGRATION_22_24 = object : Migration(22, 24) { override fun migrate(db: SupportSQLiteDatabase) { MIGRATION_22_23.migrate(db); MIGRATION_23_24.migrate(db) } }
 
         // ============================================================
         // СБОРКА ЭКЗЕМПЛЯРА
@@ -2511,224 +945,77 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         // Основные шаги
-                        MIGRATION_2_3,
-                        MIGRATION_3_4,
-                        MIGRATION_4_5,
-                        MIGRATION_5_6,
-                        MIGRATION_6_7,
-                        MIGRATION_7_8,
-                        MIGRATION_8_9,
-                        MIGRATION_9_10,
-                        MIGRATION_10_11,
-                        MIGRATION_11_12,
-                        MIGRATION_12_13,
-                        MIGRATION_13_14,
-                        MIGRATION_14_15,
-                        MIGRATION_15_16,
+                        MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                        MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         // Старые цепочки с пропуском 13 (до v14)
-                        MIGRATION_2_4,
-                        MIGRATION_2_5,
-                        MIGRATION_4_6,
-                        MIGRATION_5_7,
-                        MIGRATION_6_8,
-                        MIGRATION_7_9,
-                        MIGRATION_9_11,
-                        MIGRATION_9_12,
-                        MIGRATION_10_12,
-                        MIGRATION_9_13,
-                        MIGRATION_10_13,
-                        MIGRATION_11_13,
+                        MIGRATION_2_4, MIGRATION_2_5, MIGRATION_4_6, MIGRATION_5_7, MIGRATION_6_8,
+                        MIGRATION_7_9, MIGRATION_9_11, MIGRATION_9_12, MIGRATION_10_12, MIGRATION_9_13,
+                        MIGRATION_10_13, MIGRATION_11_13,
                         // Цепочки с пропуском 13 (сразу в 14)
-                        MIGRATION_2_14,
-                        MIGRATION_3_14,
-                        MIGRATION_4_14,
-                        MIGRATION_5_14,
-                        MIGRATION_6_14,
-                        MIGRATION_7_14,
-                        MIGRATION_8_14,
-                        MIGRATION_9_14,
-                        MIGRATION_10_14,
-                        MIGRATION_11_14,
+                        MIGRATION_2_14, MIGRATION_3_14, MIGRATION_4_14, MIGRATION_5_14, MIGRATION_6_14,
+                        MIGRATION_7_14, MIGRATION_8_14, MIGRATION_9_14, MIGRATION_10_14, MIGRATION_11_14,
                         MIGRATION_12_14,
                         // Цепочки 13 → 15
                         MIGRATION_13_15,
                         // Цепочки с пропуском 15 (сразу в 16)
-                        MIGRATION_2_16,
-                        MIGRATION_3_16,
-                        MIGRATION_4_16,
-                        MIGRATION_5_16,
-                        MIGRATION_6_16,
-                        MIGRATION_7_16,
-                        MIGRATION_8_16,
-                        MIGRATION_9_16,
-                        MIGRATION_10_16,
-                        MIGRATION_11_16,
-                        MIGRATION_12_16,
-                        MIGRATION_13_16,
-                        MIGRATION_14_16,
-                        // v16 → v17: системные «Покупки» и «Список покупок»
+                        MIGRATION_2_16, MIGRATION_3_16, MIGRATION_4_16, MIGRATION_5_16, MIGRATION_6_16,
+                        MIGRATION_7_16, MIGRATION_8_16, MIGRATION_9_16, MIGRATION_10_16, MIGRATION_11_16,
+                        MIGRATION_12_16, MIGRATION_13_16, MIGRATION_14_16,
+                        // v16 → v17
                         MIGRATION_16_17,
                         // Цепочки с пропуском 16 (сразу в 17)
-                        MIGRATION_2_17,
-                        MIGRATION_3_17,
-                        MIGRATION_4_17,
-                        MIGRATION_5_17,
-                        MIGRATION_6_17,
-                        MIGRATION_7_17,
-                        MIGRATION_8_17,
-                        MIGRATION_9_17,
-                        MIGRATION_10_17,
-                        MIGRATION_11_17,
-                        MIGRATION_12_17,
-                        MIGRATION_13_17,
-                        MIGRATION_14_17,
-                        MIGRATION_15_17,
-                        // v17 → v18: DROP TABLE sync_queue
+                        MIGRATION_2_17, MIGRATION_3_17, MIGRATION_4_17, MIGRATION_5_17, MIGRATION_6_17,
+                        MIGRATION_7_17, MIGRATION_8_17, MIGRATION_9_17, MIGRATION_10_17, MIGRATION_11_17,
+                        MIGRATION_12_17, MIGRATION_13_17, MIGRATION_14_17, MIGRATION_15_17,
+                        // v17 → v18
                         MIGRATION_17_18_DIRECT,
                         // Цепочки с пропуском 17 (сразу в 18)
-                        MIGRATION_2_18,
-                        MIGRATION_3_18,
-                        MIGRATION_4_18,
-                        MIGRATION_5_18,
-                        MIGRATION_6_18,
-                        MIGRATION_7_18,
-                        MIGRATION_8_18,
-                        MIGRATION_9_18,
-                        MIGRATION_10_18,
-                        MIGRATION_11_18,
-                        MIGRATION_12_18,
-                        MIGRATION_13_18,
-                        MIGRATION_14_18,
-                        MIGRATION_15_18,
-                        MIGRATION_16_18,
-                        // v18 → v19: tombstones (№10)
+                        MIGRATION_2_18, MIGRATION_3_18, MIGRATION_4_18, MIGRATION_5_18, MIGRATION_6_18,
+                        MIGRATION_7_18, MIGRATION_8_18, MIGRATION_9_18, MIGRATION_10_18, MIGRATION_11_18,
+                        MIGRATION_12_18, MIGRATION_13_18, MIGRATION_14_18, MIGRATION_15_18, MIGRATION_16_18,
+                        // v18 → v19
                         MIGRATION_18_19_DIRECT,
                         // Цепочки с пропуском 18 (сразу в 19)
-                        MIGRATION_17_19,
-                        MIGRATION_2_19,
-                        MIGRATION_3_19,
-                        MIGRATION_4_19,
-                        MIGRATION_5_19,
-                        MIGRATION_6_19,
-                        MIGRATION_7_19,
-                        MIGRATION_8_19,
-                        MIGRATION_9_19,
-                        MIGRATION_10_19,
-                        MIGRATION_11_19,
-                        MIGRATION_12_19,
-                        MIGRATION_13_19,
-                        MIGRATION_14_19,
-                        MIGRATION_15_19,
+                        MIGRATION_17_19, MIGRATION_2_19, MIGRATION_3_19, MIGRATION_4_19, MIGRATION_5_19,
+                        MIGRATION_6_19, MIGRATION_7_19, MIGRATION_8_19, MIGRATION_9_19, MIGRATION_10_19,
+                        MIGRATION_11_19, MIGRATION_12_19, MIGRATION_13_19, MIGRATION_14_19, MIGRATION_15_19,
                         MIGRATION_16_19,
-                        // v19 → v20: напоминания
+                        // v19 → v20
                         MIGRATION_19_20_DIRECT,
                         // Цепочки с пропуском 19 (сразу в 20)
-                        MIGRATION_18_20,
-                        MIGRATION_2_20,
-                        MIGRATION_3_20,
-                        MIGRATION_4_20,
-                        MIGRATION_5_20,
-                        MIGRATION_6_20,
-                        MIGRATION_7_20,
-                        MIGRATION_8_20,
-                        MIGRATION_9_20,
-                        MIGRATION_10_20,
-                        MIGRATION_11_20,
-                        MIGRATION_12_20,
-                        MIGRATION_13_20,
-                        MIGRATION_14_20,
-                        MIGRATION_15_20,
-                        MIGRATION_16_20,
-                        MIGRATION_17_20,
-                        // v20 → v21: imageSynced + iconSynced
+                        MIGRATION_18_20, MIGRATION_2_20, MIGRATION_3_20, MIGRATION_4_20, MIGRATION_5_20,
+                        MIGRATION_6_20, MIGRATION_7_20, MIGRATION_8_20, MIGRATION_9_20, MIGRATION_10_20,
+                        MIGRATION_11_20, MIGRATION_12_20, MIGRATION_13_20, MIGRATION_14_20, MIGRATION_15_20,
+                        MIGRATION_16_20, MIGRATION_17_20,
+                        // v20 → v21
                         MIGRATION_20_21_DIRECT,
                         // Цепочки с пропуском 20 (сразу в 21)
-                        MIGRATION_2_21,
-                        MIGRATION_3_21,
-                        MIGRATION_4_21,
-                        MIGRATION_5_21,
-                        MIGRATION_6_21,
-                        MIGRATION_7_21,
-                        MIGRATION_8_21,
-                        MIGRATION_9_21,
-                        MIGRATION_10_21,
-                        MIGRATION_11_21,
-                        MIGRATION_12_21,
-                        MIGRATION_13_21,
-                        MIGRATION_14_21,
-                        MIGRATION_15_21,
-                        MIGRATION_16_21,
-                        MIGRATION_17_21,
-                        MIGRATION_18_21,
-                        MIGRATION_19_21,
-                        // v21 → v22: recipes + recipe_media
+                        MIGRATION_2_21, MIGRATION_3_21, MIGRATION_4_21, MIGRATION_5_21, MIGRATION_6_21,
+                        MIGRATION_7_21, MIGRATION_8_21, MIGRATION_9_21, MIGRATION_10_21, MIGRATION_11_21,
+                        MIGRATION_12_21, MIGRATION_13_21, MIGRATION_14_21, MIGRATION_15_21, MIGRATION_16_21,
+                        MIGRATION_17_21, MIGRATION_18_21, MIGRATION_19_21,
+                        // v21 → v22
                         MIGRATION_21_22_DIRECT,
                         // Цепочки с пропуском 21 (сразу в 22)
-                        MIGRATION_2_22,
-                        MIGRATION_3_22,
-                        MIGRATION_4_22,
-                        MIGRATION_5_22,
-                        MIGRATION_6_22,
-                        MIGRATION_7_22,
-                        MIGRATION_8_22,
-                        MIGRATION_9_22,
-                        MIGRATION_10_22,
-                        MIGRATION_11_22,
-                        MIGRATION_12_22,
-                        MIGRATION_13_22,
-                        MIGRATION_14_22,
-                        MIGRATION_15_22,
-                        MIGRATION_16_22,
-                        MIGRATION_17_22,
-                        MIGRATION_18_22,
-                        MIGRATION_19_22,
-                        MIGRATION_20_22,
-                        // v22 → v23: recipe_folders + recipes.folderId
+                        MIGRATION_2_22, MIGRATION_3_22, MIGRATION_4_22, MIGRATION_5_22, MIGRATION_6_22,
+                        MIGRATION_7_22, MIGRATION_8_22, MIGRATION_9_22, MIGRATION_10_22, MIGRATION_11_22,
+                        MIGRATION_12_22, MIGRATION_13_22, MIGRATION_14_22, MIGRATION_15_22, MIGRATION_16_22,
+                        MIGRATION_17_22, MIGRATION_18_22, MIGRATION_19_22, MIGRATION_20_22,
+                        // v22 → v23
                         MIGRATION_22_23_DIRECT,
                         // Цепочки с пропуском 22 (сразу в 23)
-                        MIGRATION_2_23,
-                        MIGRATION_3_23,
-                        MIGRATION_4_23,
-                        MIGRATION_5_23,
-                        MIGRATION_6_23,
-                        MIGRATION_7_23,
-                        MIGRATION_8_23,
-                        MIGRATION_9_23,
-                        MIGRATION_10_23,
-                        MIGRATION_11_23,
-                        MIGRATION_12_23,
-                        MIGRATION_13_23,
-                        MIGRATION_14_23,
-                        MIGRATION_15_23,
-                        MIGRATION_16_23,
-                        MIGRATION_17_23,
-                        MIGRATION_18_23,
-                        MIGRATION_19_23,
-                        MIGRATION_20_23,
-                        MIGRATION_21_23,
+                        MIGRATION_2_23, MIGRATION_3_23, MIGRATION_4_23, MIGRATION_5_23, MIGRATION_6_23,
+                        MIGRATION_7_23, MIGRATION_8_23, MIGRATION_9_23, MIGRATION_10_23, MIGRATION_11_23,
+                        MIGRATION_12_23, MIGRATION_13_23, MIGRATION_14_23, MIGRATION_15_23, MIGRATION_16_23,
+                        MIGRATION_17_23, MIGRATION_18_23, MIGRATION_19_23, MIGRATION_20_23, MIGRATION_21_23,
                         // 🆕 v23 → v24: кухня мира + рейтинг
                         MIGRATION_23_24_DIRECT,
                         // 🆕 Цепочки с пропуском 23 (сразу в 24)
-                        MIGRATION_2_24,
-                        MIGRATION_3_24,
-                        MIGRATION_4_24,
-                        MIGRATION_5_24,
-                        MIGRATION_6_24,
-                        MIGRATION_7_24,
-                        MIGRATION_8_24,
-                        MIGRATION_9_24,
-                        MIGRATION_10_24,
-                        MIGRATION_11_24,
-                        MIGRATION_12_24,
-                        MIGRATION_13_24,
-                        MIGRATION_14_24,
-                        MIGRATION_15_24,
-                        MIGRATION_16_24,
-                        MIGRATION_17_24,
-                        MIGRATION_18_24,
-                        MIGRATION_19_24,
-                        MIGRATION_20_24,
-                        MIGRATION_21_24,
+                        MIGRATION_2_24, MIGRATION_3_24, MIGRATION_4_24, MIGRATION_5_24, MIGRATION_6_24,
+                        MIGRATION_7_24, MIGRATION_8_24, MIGRATION_9_24, MIGRATION_10_24, MIGRATION_11_24,
+                        MIGRATION_12_24, MIGRATION_13_24, MIGRATION_14_24, MIGRATION_15_24, MIGRATION_16_24,
+                        MIGRATION_17_24, MIGRATION_18_24, MIGRATION_19_24, MIGRATION_20_24, MIGRATION_21_24,
                         MIGRATION_22_24
                     )
                     .build()
@@ -2745,10 +1032,8 @@ abstract class AppDatabase : RoomDatabase() {
 // ============================================================
 // 🆕 v23.4.9 (27.11.2026) — миграция 23→24
 // Добавлены поля в recipes: cuisineCountry, likes, dislikes, cookedCount
-// Добавлены индексы: index_recipes_cuisineCountry,
-//                    index_recipes_cookedCount,
-//                    index_recipes_likes,
-//                    index_recipes_dislikes
+// Добавлены индексы: index_recipes_cuisineCountry, index_recipes_cookedCount,
+//                    index_recipes_likes, index_recipes_dislikes
 // Добавлены цепочки миграций с пропуском 23 (MIGRATION_X_24 для X от 2 до 22)
 // Версия БД поднята с 23 до 24
 // ============================================================
