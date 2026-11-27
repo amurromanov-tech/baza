@@ -47,6 +47,11 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // 🆕 v23.4.9: расширенная сортировка (5 типов вместо 2)
     private var sortType: RecipeSortType = RecipeSortType.NEWEST
 
+    // 🆕 v23.4.9 (27.11.2026): флаг — пользователь уже явно выбрал сортировку.
+    // Пока false, кнопка btnSort показывает "🔽 Сортировка",
+    // после явного выбора в PopupMenu — displayName выбранного типа.
+    private var userSelectedSort: Boolean = false
+
     // 🆕 v23.4.9: фильтр по стране кухни (null = не выбран, показываем все)
     private var currentCountryFilter: String? = null
 
@@ -82,6 +87,10 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentSortType = MutableLiveData(RecipeSortType.NEWEST)
     val currentSortType: LiveData<RecipeSortType> = _currentSortType
 
+    // 🆕 v23.4.9 (27.11.2026): публичный LiveData для UI (кнопка сортировки)
+    private val _userSelectedSort = MutableLiveData(false)
+    val userSelectedSort: LiveData<Boolean> = _userSelectedSort
+
     // 🆕 v23.4.9: выбранная страна (для UI — плашка «🇮🇹 Итальянская ✕»)
     private val _selectedCountry = MutableLiveData<String?>(null)
     val selectedCountry: LiveData<String?> = _selectedCountry
@@ -111,6 +120,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         this.currentFolderId = null
         this.searchQuery = ""
         this.sortType = RecipeSortType.NEWEST
+        this.userSelectedSort = false
+        this._userSelectedSort.value = false
         this.currentCountryFilter = null
         this.folderStack.clear()
         Logger.log(TAG, "init: source=$source")
@@ -336,12 +347,17 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     fun setSortType(type: RecipeSortType) {
         if (sortType == type) return
         sortType = type
+        userSelectedSort = true
+        _userSelectedSort.value = true
         _currentSortType.value = type
         Logger.log(TAG, "setSortType: ${type.key} (${type.displayName})")
         loadContent()
     }
 
     fun getSortType(): RecipeSortType = sortType
+
+    // 🆕 v23.4.9 (27.11.2026): геттер флага явного выбора сортировки
+    fun isUserSelectedSort(): Boolean = userSelectedSort
 
     @Deprecated(
         "Use setSortType(RecipeSortType) instead",
@@ -706,4 +722,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 //      - decrementCookedCount(recipeId)
 //      Все вызывают соответствующие методы RecipesRepository,
 //      которые используют SQL MAX(0, value - 1) для защиты от минуса.
+//   4. v23.4.9 (27.11.2026): добавлен флаг userSelectedSort + LiveData
+//      для UI, чтобы кнопка btnSort показывала "🔽 Сортировка" до
+//      явного выбора пользователя. Сбрасывается в init().
 // ============================================================
