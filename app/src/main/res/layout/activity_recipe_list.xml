@@ -67,7 +67,7 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- 🆕 v23.4.9: Строка фильтров: кнопка сортировки + плашка страны + кнопка «Добавить папку» -->
+        <!-- 🆕 v23.4.9: Строка фильтров: кнопка сортировки + плашка страны -->
         <LinearLayout
             android:id="@+id/filterRow"
             android:layout_width="match_parent"
@@ -100,18 +100,6 @@
                 android:focusable="true"
                 android:visibility="gone"
                 app:closeIconVisible="true"
-                app:chipIcon="@null" />
-
-            <!-- Кнопка «Добавить папку» — в стиле чипов-фильтров -->
-            <com.google.android.material.chip.Chip
-                android:id="@+id/btnAddFolder"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="Добавить папку"
-                android:checkable="false"
-                android:clickable="true"
-                android:focusable="true"
                 app:chipIcon="@null" />
         </LinearLayout>
     </com.google.android.material.appbar.AppBarLayout>
@@ -177,20 +165,3 @@
         app:backgroundTint="?attr/colorPrimary" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
-
-<!-- ============================================================
-🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-Изменения:
-  - Удалены старые чипы сортировки: chipSortNewest, chipSortAlphabetical
-  - Удалён HorizontalScrollView sortChipsScroll
-  - Добавлена кнопка btnSort (Chip) — открывает PopupMenu с 6 пунктами:
-    1. 🕐 По новизне
-    2. 🔤 По алфавиту
-    3. 🔥 По популярности
-    4. 👍 По лайкам
-    5. 👎 По дизлайкам
-    6. 🌍 По странам... (открывает BottomSheet)
-  - Добавлена плашка chipCountryFilter (Chip с крестиком) — показывается
-    при активном фильтре по стране, позволяет сбросить фильтр
-  - Кнопка btnAddFolder сохранена без изменений
-============================================================ -->
