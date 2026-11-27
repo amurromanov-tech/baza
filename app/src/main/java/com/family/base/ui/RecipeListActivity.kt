@@ -85,6 +85,10 @@ class RecipeListActivity : AppCompatActivity() {
             val field = pendingVoiceField
             if (!text.isNullOrEmpty() && field != null) {
                 VoiceInputHelper.insertRecognizedText(field, text)
+                // 🆕 v23.4.9 (27.11.2026): после вставки в поиск — сразу применяем запрос
+                if (field === binding.etSearch) {
+                    performSearchNow(field.text?.toString() ?: "")
+                }
             }
         }
         pendingVoiceField = null
@@ -220,6 +224,10 @@ class RecipeListActivity : AppCompatActivity() {
         }
         binding.btnSearch.setOnClickListener {
             toggleSearch()
+        }
+        // 🆕 v23.4.9 (27.11.2026): микрофон в поле поиска
+        binding.tilSearch.setEndIconOnClickListener {
+            startVoiceFor(binding.etSearch)
         }
     }
 
@@ -557,7 +565,7 @@ class RecipeListActivity : AppCompatActivity() {
 
     private fun startVoiceFor(field: EditText) {
         pendingVoiceField = field
-        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Скажите, что хотите приготовить…")
+        VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
     }
 
     override fun onRequestPermissionsResult(
@@ -570,7 +578,7 @@ class RecipeListActivity : AppCompatActivity() {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 val field = pendingVoiceField
                 if (field != null) {
-                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Скажите, что хотите приготовить…")
+                    VoiceInputHelper.startVoiceInput(this, voiceLauncher, "Говорите…")
                 }
             } else {
                 pendingVoiceField = null
