@@ -1,6 +1,5 @@
 package com.family.base.ui
 
-import android.Manifest
 import android.app.ProgressDialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,16 +13,18 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.PopupMenu
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.family.base.data.local.AppDatabase
 import com.family.base.data.local.dao.CountryCountRow
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
@@ -33,12 +34,10 @@ import com.family.base.ui.viewmodel.RecipeSortType
 import com.family.base.ui.viewmodel.RecipeViewModel
 import com.family.base.util.Logger
 import com.family.base.util.VoiceInputHelper
-import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.family.base.data.local.AppDatabase
 
 class RecipeListActivity : AppCompatActivity() {
 
@@ -158,6 +157,19 @@ class RecipeListActivity : AppCompatActivity() {
             onRecipeLongClick = { recipe ->
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
+            },
+            // 🆕 v23.4.9: колбэки для лайков/дизлайков/приготовлений
+            onLikeClick = { recipe ->
+                Logger.log(TAG, "like clicked: id=${recipe.id}")
+                viewModel.likeRecipe(recipe.id)
+            },
+            onDislikeClick = { recipe ->
+                Logger.log(TAG, "dislike clicked: id=${recipe.id}")
+                viewModel.dislikeRecipe(recipe.id)
+            },
+            onCookedClick = { recipe ->
+                Logger.log(TAG, "cooked clicked: id=${recipe.id}")
+                viewModel.markCooked(recipe.id)
             }
         )
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
@@ -355,7 +367,7 @@ class RecipeListActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
         }
         
-        val titleView = android.widget.TextView(this).apply {
+        val titleView = TextView(this).apply {
             text = "🌍 Выбрать страну кухни"
             textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -363,7 +375,7 @@ class RecipeListActivity : AppCompatActivity() {
         }
         layout.addView(titleView)
         
-        val listView = android.widget.ListView(this).apply {
+        val listView = ListView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -903,6 +915,7 @@ class RecipeListActivity : AppCompatActivity() {
 //   - Добавлен showSortPopupMenu() — PopupMenu с 5 сортировками + "По странам"
 //   - Добавлен showCountryBottomSheet() — BottomSheet со списком стран
 //   - Добавлены observers: currentSortType, selectedCountry
+//   - В setupRecycler() добавлены колбэки: onLikeClick, onDislikeClick, onCookedClick
 //   - Обновлён updateUiState(): sortChipsScroll → btnSort
 //   - Добавлены импорты: PopupMenu, BottomSheetDialog, CountryCountRow, RecipeSortType
 // ============================================================
