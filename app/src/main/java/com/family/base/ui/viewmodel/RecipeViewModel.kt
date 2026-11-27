@@ -20,7 +20,6 @@ import java.io.File
 
 /**
  * 🆕 v23.4.9: Типы сортировки рецептов.
- * Используются в PopupMenu кнопки сортировки и в RecipeViewModel.
  */
 enum class RecipeSortType(val key: String, val displayName: String) {
     NEWEST("newest", "По новизне"),
@@ -49,7 +48,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private var sortType: RecipeSortType = RecipeSortType.NEWEST
 
     // 🆕 v23.4.9: фильтр по стране кухни (null = не выбран, показываем все)
-    private var selectedCountry: String? = null
+    // Переименовано в currentCountryFilter, чтобы избежать конфликта с LiveData selectedCountry
+    private var currentCountryFilter: String? = null
 
     private var currentFolderId: String? = null
     private var loadJob: Job? = null
@@ -112,7 +112,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         this.currentFolderId = null
         this.searchQuery = ""
         this.sortType = RecipeSortType.NEWEST
-        this.selectedCountry = null
+        this.currentCountryFilter = null
         this.folderStack.clear()
         Logger.log(TAG, "init: source=$source")
     }
@@ -130,7 +130,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 val folderMode = isFolderModeAvailable()
                 val folderId = currentFolderId
                 val hasQuery = searchQuery.isNotBlank()
-                val country = selectedCountry
+                val country = currentCountryFilter
                 val sort = sortType
 
                 // 1. Папки уровня (только если нет поиска и нет фильтра по стране)
@@ -155,7 +155,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     emptyMap()
                 }
 
-                // 3. Рецепты уровня — 🆕 v23.4.9: учитываем sortType и selectedCountry
+                // 3. Рецепты уровня — 🆕 v23.4.9: учитываем sortType и currentCountryFilter
                 val recipesList: List<RecipeEntity> = when {
                     isAi -> {
                         when {
@@ -192,8 +192,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 // 🆕 v23.4.9: вторичная сортировка по алфавиту только если
-                // основной sortType != ALPHABETICAL и есть поиск (чтобы
-                // результаты поиска были упорядочены предсказуемо).
+                // основной sortType != ALPHABETICAL и есть поиск.
                 val sortedRecipes: List<RecipeEntity> =
                     if (hasQuery && sort != RecipeSortType.ALPHABETICAL) {
                         recipesList.sortedBy { it.title.lowercase() }
@@ -276,7 +275,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         currentFolderId = folderId
         searchQuery = ""
         // 🆕 v23.4.9: при входе в папку сбрасываем фильтр по стране
-        selectedCountry = null
+        currentCountryFilter = null
         _selectedCountry.value = null
         Logger.log(TAG, "openFolder: $folderId (stack size=${folderStack.size})")
         loadContent()
@@ -287,7 +286,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         currentFolderId = null
         folderStack.clear()
         searchQuery = ""
-        selectedCountry = null
+        currentCountryFilter = null
         _selectedCountry.value = null
         Logger.log(TAG, "goToRoot")
         loadContent()
@@ -303,7 +302,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 Logger.log(TAG, "goBack: to root")
             }
             searchQuery = ""
-            selectedCountry = null
+            currentCountryFilter = null
             _selectedCountry.value = null
             loadContent()
             true
@@ -333,10 +332,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // 🆕 v23.4.9: СОРТИРОВКА (5 типов)
     // ============================================================
 
-    /**
-     * 🆕 Установить тип сортировки.
-     * Вызывается из PopupMenu кнопки сортировки.
-     */
     fun setSortType(type: RecipeSortType) {
         if (sortType == type) return
         sortType = type
@@ -347,10 +342,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     fun getSortType(): RecipeSortType = sortType
 
-    /**
-     * @deprecated Используйте [setSortType] с [RecipeSortType].
-     * Оставлено для обратной совместимости со старым UI.
-     */
     @Deprecated(
         "Use setSortType(RecipeSortType) instead",
         ReplaceWith("setSortType(if (newest) RecipeSortType.NEWEST else RecipeSortType.ALPHABETICAL)")
@@ -359,9 +350,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         setSortType(if (newest) RecipeSortType.NEWEST else RecipeSortType.ALPHABETICAL)
     }
 
-    /**
-     * @deprecated Используйте [getSortType] вместо этого.
-     */
     @Deprecated(
         "Use getSortType() instead",
         ReplaceWith("getSortType() == RecipeSortType.NEWEST")
@@ -372,13 +360,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     // 🆕 v23.4.9: ФИЛЬТР ПО СТРАНЕ КУХНИ
     // ============================================================
 
-    /**
-     * 🆕 Загрузить список стран с количеством рецептов (для BottomSheet).
-     * Список зависит от текущего контекста:
-     *   - внутри папки → только страны рецептов в этой папке
-     *   - в корне → только страны корневых рецептов
-     *   - для AI → все страны AI-рецептов
-     */
     fun loadCountries() {
         viewModelScope.launch {
             try {
@@ -400,39 +381,28 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * 🆕 Выбрать страну для фильтрации.
-     * Вызывается из BottomSheet «По странам».
-     */
     fun selectCountry(country: String) {
-        if (selectedCountry == country) return
-        selectedCountry = country
+        if (currentCountryFilter == country) return
+        currentCountryFilter = country
         _selectedCountry.value = country
         Logger.log(TAG, "selectCountry: '$country'")
         loadContent()
     }
 
-    /**
-     * 🆕 Сбросить фильтр по стране (кнопка «✕» на плашке).
-     */
     fun clearCountryFilter() {
-        if (selectedCountry == null) return
-        selectedCountry = null
+        if (currentCountryFilter == null) return
+        currentCountryFilter = null
         _selectedCountry.value = null
         Logger.log(TAG, "clearCountryFilter")
         loadContent()
     }
 
-    fun getSelectedCountry(): String? = selectedCountry
+    fun getSelectedCountry(): String? = currentCountryFilter
 
     // ============================================================
     // 🆕 v23.4.9: ЛАЙК / ДИЗЛАЙК / ПРИГОТОВЛЕНО
     // ============================================================
 
-    /**
-     * 🆕 +1 к лайкам рецепта.
-     * После обновления — перезагружаем список, чтобы отразить новое значение.
-     */
     fun likeRecipe(recipeId: String) {
         viewModelScope.launch {
             try {
@@ -448,9 +418,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * 🆕 +1 к дизлайкам рецепта.
-     */
     fun dislikeRecipe(recipeId: String) {
         viewModelScope.launch {
             try {
@@ -466,9 +433,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * 🆕 +1 к счётчику «Приготовлено».
-     */
     fun markCooked(recipeId: String) {
         viewModelScope.launch {
             try {
@@ -484,9 +448,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * 🆕 Обновить страну кухни рецепта (при редактировании).
-     */
     fun updateCuisineCountry(recipeId: String, country: String, onResult: (String?) -> Unit) {
         viewModelScope.launch {
             try {
@@ -499,7 +460,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     onResult(null)
                     loadContent()
                     // Если фильтр по стране активен — обновим список стран в BottomSheet
-                    if (selectedCountry != null) loadCountries()
+                    if (currentCountryFilter != null) loadCountries()
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "updateCuisineCountry ERROR: ${e.message}", e)
@@ -671,15 +632,5 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
 // ============================================================
 // 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-// Добавлено:
-//   - enum RecipeSortType (NEWEST/ALPHABETICAL/POPULARITY/LIKES/DISLIKES)
-//   - состояние sortType (вместо sortNewest: Boolean)
-//   - состояние selectedCountry + LiveData _selectedCountry
-//   - LiveData _countries для BottomSheet «По странам»
-//   - LiveData _currentSortType для подсветки активного пункта
-//   - методы: setSortType, getSortType, loadCountries, selectCountry,
-//             clearCountryFilter, likeRecipe, dislikeRecipe, markCooked,
-//             updateCuisineCountry
-//   - loadContent() теперь учитывает sortType и selectedCountry
-//   - старые setSort(Boolean) и isSortNewest() — deprecated-обёртки
+// Исправлен конфликт имён: приватная переменная переименована в currentCountryFilter
 // ============================================================
