@@ -67,7 +67,7 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Строка фильтров: чипы сортировки + кнопка «Добавить папку» справа -->
+        <!-- 🆕 v23.4.9: Строка фильтров: кнопка сортировки + плашка страны + кнопка «Добавить папку» -->
         <LinearLayout
             android:id="@+id/filterRow"
             android:layout_width="match_parent"
@@ -77,36 +77,30 @@
             android:paddingHorizontal="16dp"
             android:paddingBottom="8dp">
 
-            <HorizontalScrollView
-                android:id="@+id/sortChipsScroll"
-                android:layout_width="0dp"
+            <!-- 🆕 v23.4.9: Кнопка сортировки (открывает PopupMenu с 6 пунктами) -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/btnSort"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:scrollbars="none">
+                android:text="🔽 Сортировка"
+                android:checkable="false"
+                android:clickable="true"
+                android:focusable="true"
+                app:chipIcon="@null" />
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipSortNewest"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🕐 Новые"
-                        android:checkable="true"
-                        app:chipIcon="@null" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chipSortAlphabetical"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="🔤 А-Я"
-                        android:checkable="true"
-                        app:chipIcon="@null" />
-                </LinearLayout>
-            </HorizontalScrollView>
+            <!-- 🆕 v23.4.9: Плашка активного фильтра по стране (скрыта по умолчанию) -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipCountryFilter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="🌍 Страна"
+                android:checkable="false"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                app:closeIconVisible="true"
+                app:chipIcon="@null" />
 
             <!-- Кнопка «Добавить папку» — в стиле чипов-фильтров -->
             <com.google.android.material.chip.Chip
@@ -183,3 +177,20 @@
         app:backgroundTint="?attr/colorPrimary" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
+
+<!-- ============================================================
+🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+Изменения:
+  - Удалены старые чипы сортировки: chipSortNewest, chipSortAlphabetical
+  - Удалён HorizontalScrollView sortChipsScroll
+  - Добавлена кнопка btnSort (Chip) — открывает PopupMenu с 6 пунктами:
+    1. 🕐 По новизне
+    2. 🔤 По алфавиту
+    3. 🔥 По популярности
+    4. 👍 По лайкам
+    5. 👎 По дизлайкам
+    6. 🌍 По странам... (открывает BottomSheet)
+  - Добавлена плашка chipCountryFilter (Chip с крестиком) — показывается
+    при активном фильтре по стране, позволяет сбросить фильтр
+  - Кнопка btnAddFolder сохранена без изменений
+============================================================ -->
