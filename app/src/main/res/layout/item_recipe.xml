@@ -16,7 +16,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:minHeight="88dp">
+        android:minHeight="120dp">
 
         <View
             android:id="@+id/colorBar"
@@ -55,6 +55,19 @@
                 android:textStyle="bold"
                 tools:text="Блины классические" />
 
+            <!-- 🆕 v23.4.9: Страна кухни -->
+            <TextView
+                android:id="@+id/tvRecipeCountry"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="12sp"
+                android:textStyle="italic"
+                tools:text="🌍 Русская кухня" />
+
             <TextView
                 android:id="@+id/tvRecipeDescription"
                 android:layout_width="match_parent"
@@ -77,8 +90,76 @@
                 android:textSize="12sp"
                 tools:text="🤖 ИИ · 12.11.2026 · 📷 3 · 🎬 1" />
 
+            <!-- 🆕 v23.4.9: Кнопки лайк/дизлайк/приготовлено -->
+            <LinearLayout
+                android:id="@+id/llRecipeActions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/btnLike"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:text="👍 0"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp"
+                    tools:text="👍 12" />
+
+                <TextView
+                    android:id="@+id/btnDislike"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:text="👎 0"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp"
+                    tools:text="👎 3" />
+
+                <TextView
+                    android:id="@+id/btnCooked"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:text="🍳 0"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="13sp"
+                    tools:text="🍳 5" />
+            </LinearLayout>
         </LinearLayout>
-
     </LinearLayout>
-
 </androidx.cardview.widget.CardView>
+
+<!-- ============================================================
+🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+Изменения:
+  - Добавлен tvRecipeCountry — страна кухни (между названием и описанием)
+  - Добавлен llRecipeActions с тремя кнопками:
+    * btnLike (👍 + счётчик)
+    * btnDislike (👎 + счётчик)
+    * btnCooked (🍳 + счётчик)
+  - Увеличен minHeight карточки с 88dp до 120dp (чтобы влезли новые элементы)
+============================================================ -->
