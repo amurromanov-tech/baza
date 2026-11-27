@@ -43,12 +43,16 @@
                 android:padding="16dp">
 
                 <!-- ===== НАЗВАНИЕ ===== -->
+                <!-- 🆕 v23.4.9: микрофон (голосовой ввод) -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilTitle"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Название">
+                    android:hint="Название"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@drawable/ic_mic"
+                    app:endIconContentDescription="Голосовой ввод">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etTitle"
@@ -80,13 +84,17 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <!-- ===== ОПИСАНИЕ ===== -->
+                <!-- 🆕 v23.4.9: микрофон (голосовой ввод) -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilDescription"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:hint="Описание, ингредиенты, шаги (необязательно)">
+                    android:hint="Описание, ингредиенты, шаги (необязательно)"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@drawable/ic_mic"
+                    app:endIconContentDescription="Голосовой ввод">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDescription"
@@ -189,13 +197,3 @@
         </androidx.core.widget.NestedScrollView>
     </LinearLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
-
-<!-- ============================================================
-🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-Изменения:
-  - Добавлено поле "Страна кухни" (tilCountry + etCountry)
-  - Поле кликабельное (focusable="false", clickable="true")
-  - При клике открывается BottomSheet со списком стран
-  - Поле обязательное (валидация при сохранении)
-  - Placeholder: "Выберите страну"
-============================================================ -->
