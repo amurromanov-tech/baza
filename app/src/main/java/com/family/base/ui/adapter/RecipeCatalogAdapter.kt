@@ -20,10 +20,14 @@ class RecipeCatalogAdapter(
     private val onRecipeClick: (RecipeEntity) -> Unit,
     private val onFolderLongClick: (RecipeFolderEntity) -> Unit,
     private val onRecipeLongClick: (RecipeEntity) -> Unit,
-    // 🆕 v23.4.9: колбэки для лайк/дизлайк/приготовлено
+    // 🆕 v23.4.9: колбэки для лайк/дизлайк/приготовлено (инкремент)
     private val onLikeClick: (RecipeEntity) -> Unit = {},
     private val onDislikeClick: (RecipeEntity) -> Unit = {},
-    private val onCookedClick: (RecipeEntity) -> Unit = {}
+    private val onCookedClick: (RecipeEntity) -> Unit = {},
+    // 🆕 v23.4.9 (27.11.2026): колбэки для отмены долгим нажатием (декремент)
+    private val onLongLikeClick: (RecipeEntity) -> Unit = {},
+    private val onLongDislikeClick: (RecipeEntity) -> Unit = {},
+    private val onLongCookedClick: (RecipeEntity) -> Unit = {}
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -205,7 +209,7 @@ class RecipeCatalogAdapter(
             btnDislike.text = "👎 ${recipe.dislikes}"
             btnCooked.text = "🍳 ${recipe.cookedCount}"
 
-            // 🆕 v23.4.9: обработчики кликов на кнопки (с защитой от всплытия к itemView)
+            // 🆕 v23.4.9: обработчики кликов на кнопки (короткое нажатие = +1)
             btnLike.setOnClickListener {
                 it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                 onLikeClick(recipe)
@@ -217,6 +221,23 @@ class RecipeCatalogAdapter(
             btnCooked.setOnClickListener {
                 it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                 onCookedClick(recipe)
+            }
+
+            // 🆕 v23.4.9 (27.11.2026): обработчики долгого нажатия = -1 (отмена)
+            btnLike.setOnLongClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongLikeClick(recipe)
+                true
+            }
+            btnDislike.setOnLongClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongDislikeClick(recipe)
+                true
+            }
+            btnCooked.setOnLongClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongCookedClick(recipe)
+                true
             }
 
             itemView.setOnClickListener { onRecipeClick(recipe) }
@@ -236,17 +257,13 @@ class RecipeCatalogAdapter(
 }
 
 // ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг + отмена долгим нажатием
 // Изменения:
-//   - Добавлены 3 новых колбэка в конструктор:
-//     * onLikeClick(recipe) — клик по 👍
-//     * onDislikeClick(recipe) — клик по 👎
-//     * onCookedClick(recipe) — клик по 🍳
-//   - В RecipeViewHolder добавлены поля:
-//     * tvRecipeCountry — страна кухни
-//     * btnLike, btnDislike, btnCooked — счётчики
-//   - В bind() заполняется страна и счётчики
-//   - На кнопки установлены onClickListener с haptic feedback
-//   - В DiffUtil.areContentsTheSame() учитываются новые поля:
-//     cuisineCountry, likes, dislikes, cookedCount
+//   - Добавлены 3 новых колбэка в конструктор (с дефолтами = {}):
+//     * onLongLikeClick(recipe) — долгое нажатие на 👍 (отмена, -1)
+//     * onLongDislikeClick(recipe) — долгое нажатие на 👎 (отмена, -1)
+//     * onLongCookedClick(recipe) — долгое нажатие на 🍳 (отмена, -1)
+//   - В RecipeViewHolder добавлены setOnLongClickListener на btnLike/btnDislike/btnCooked
+//   - Haptic feedback LONG_PRESS для долгих нажатий (отличается от VIRTUAL_KEY для коротких)
+//   - Возврат true в onLongClickListener предотвращает всплытие события к itemView
 // ============================================================
