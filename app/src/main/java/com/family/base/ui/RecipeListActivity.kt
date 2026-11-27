@@ -325,7 +325,7 @@ class RecipeListActivity : AppCompatActivity() {
     // 🆕 v23.4.9: ПЛАШКА ФИЛЬТРА ПО СТРАНЕ
     // ============================================================
     private fun setupCountryFilterChip() {
-        binding.chipCountryFilter.setCloseIconOnClickListener {
+        binding.chipCountryFilter.setOnCloseIconClickListener {
             viewModel.clearCountryFilter()
         }
         binding.chipCountryFilter.setOnClickListener {
