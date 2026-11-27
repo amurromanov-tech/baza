@@ -79,16 +79,8 @@ interface RecipeDao {
 
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): СОРТИРОВКИ ПО РЕЙТИНГУ (source)
-    //
-    // По лайкам, дизлайкам, популярности (cookedCount).
-    // Все методы возвращают только «живые» рецепты (isDeleted = 0).
-    // При равенстве счётчика — вторичная сортировка по новизне.
     // ============================================================
 
-    /**
-     * 🆕 Сортировка по лайкам (убывание).
-     * При равенстве лайков — по новизне (createdAt DESC).
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source AND isDeleted = 0
@@ -96,10 +88,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceByLikes(source: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Сортировка по дизлайкам (убывание).
-     * При равенстве дизлайков — по новизне (createdAt DESC).
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source AND isDeleted = 0
@@ -107,10 +95,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceByDislikes(source: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Сортировка по популярности (cookedCount, убывание).
-     * При равенстве cookedCount — по новизне (createdAt DESC).
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source AND isDeleted = 0
@@ -120,17 +104,8 @@ interface RecipeDao {
 
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): ФИЛЬТР ПО СТРАНЕ КУХНИ (source)
-    //
-    // BottomSheet «По странам»: пользователь выбирает страну →
-    * список фильтруется. В заголовке показывается плашка
-    * «🇮🇹 Итальянская кухня» с кнопкой «✕ Сбросить».
     // ============================================================
 
-    /**
-     * 🆕 Фильтр по стране кухни (source + country).
-     * Сортировка — по новизне (createdAt DESC).
-     * country = "" → покажет рецепты без указанной страны (старые).
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -140,9 +115,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceAndCountry(source: String, country: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Фильтр по стране кухни + сортировка по алфавиту.
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -152,9 +124,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceAndCountryAlphabetical(source: String, country: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Фильтр по стране + сортировка по лайкам.
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -164,9 +133,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceAndCountryByLikes(source: String, country: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Фильтр по стране + сортировка по дизлайкам.
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -176,9 +142,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceAndCountryByDislikes(source: String, country: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Фильтр по стране + сортировка по популярности.
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -188,9 +151,6 @@ interface RecipeDao {
     """)
     suspend fun getBySourceAndCountryByPopularity(source: String, country: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Поиск внутри страны кухни.
-     */
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -204,16 +164,6 @@ interface RecipeDao {
     """)
     suspend fun searchBySourceAndCountry(source: String, country: String, query: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Список стран с количеством рецептов (для BottomSheet).
-     * Возвращает только те страны, где есть хотя бы 1 рецепт.
-     * Сортировка — по убыванию количества, затем по алфавиту.
-     *
-     * Используется в BottomSheet «По странам»:
-     * 🇮🇹 Итальянская (12)
-     * 🇷🇺 Русская (8)
-     * 🇯🇵 Японская (5)
-     */
     @Query("""
         SELECT cuisineCountry AS country, COUNT(*) AS count
         FROM recipes
@@ -225,9 +175,6 @@ interface RecipeDao {
     """)
     suspend fun getDistinctCountriesWithCount(source: String): List<CountryCountRow>
 
-    /**
-     * 🆕 Список стран с количеством рецептов (для всех источников).
-     */
     @Query("""
         SELECT cuisineCountry AS country, COUNT(*) AS count
         FROM recipes
@@ -304,12 +251,6 @@ interface RecipeDao {
     """)
     suspend fun countByFolder(folderId: String): Int
 
-    /**
-     * 🆕 Глубокий подсчёт рецептов по папкам (batch, рекурсивный CTE).
-     * Для каждой папки из :folderIds считает все «живые» рецепты
-     * на всю глубину вложенности (папка + все её подпапки).
-     * Аналог ItemDao.getFolderStatsDeep, но для рецептов.
-     */
     @Query("""
         WITH RECURSIVE folder_tree(root_id, folder_id) AS (
             SELECT id, id FROM recipe_folders WHERE id IN (:folderIds) AND isDeleted = 0
@@ -332,9 +273,6 @@ interface RecipeDao {
 
     // ============================================================
     // 🆕 v23.4.9: СОРТИРОВКИ ВНУТРИ ПАПКИ
-    //
-    // Когда пользователь внутри папки — те же 5 сортировок
-    // (новизна, алфавит, популярность, лайки, дизлайки).
     // ============================================================
 
     @Query("""
@@ -420,9 +358,6 @@ interface RecipeDao {
     """)
     suspend fun searchInFolderByCountry(folderId: String, country: String, query: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Список стран с количеством рецептов внутри папки (для BottomSheet).
-     */
     @Query("""
         SELECT cuisineCountry AS country, COUNT(*) AS count
         FROM recipes
@@ -436,8 +371,6 @@ interface RecipeDao {
 
     // ============================================================
     // 🆕 v23.4.9: СОРТИРОВКИ В КОРНЕ «МОИХ РЕЦЕПТОВ»
-    //
-    // Корень — это рецепты без папки (folderId IS NULL).
     // ============================================================
 
     @Query("""
@@ -535,9 +468,6 @@ interface RecipeDao {
     """)
     suspend fun searchRootRecipesByCountry(source: String, country: String, query: String): List<RecipeEntity>
 
-    /**
-     * 🆕 Список стран с количеством рецептов в корне (для BottomSheet).
-     */
     @Query("""
         SELECT cuisineCountry AS country, COUNT(*) AS count
         FROM recipes
@@ -580,14 +510,8 @@ interface RecipeDao {
 
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): ИНКРЕМЕНТ СЧЁТЧИКОВ
-    //
-    // Лайк, дизлайк, «Приготовлено». Каждый клик = +1.
-    // После изменения — syncStatus = 'pending' (уезжает в changelog).
     // ============================================================
 
-    /**
-     * 🆕 +1 к лайкам. Вызывается при клике на кнопку «Лайк» в UI.
-     */
     @Query("""
         UPDATE recipes SET
             likes = likes + 1,
@@ -598,9 +522,6 @@ interface RecipeDao {
     """)
     suspend fun incrementLikes(recipeId: String, date: Long, user: String?)
 
-    /**
-     * 🆕 +1 к дизлайкам. Вызывается при клике на кнопку «Дизлайк» в UI.
-     */
     @Query("""
         UPDATE recipes SET
             dislikes = dislikes + 1,
@@ -611,11 +532,6 @@ interface RecipeDao {
     """)
     suspend fun incrementDislikes(recipeId: String, date: Long, user: String?)
 
-    /**
-     * 🆕 +1 к счётчику приготовлений.
-     * Вызывается при клике на кнопку «Приготовлено» в UI.
-     * Используется для сортировки «По популярности».
-     */
     @Query("""
         UPDATE recipes SET
             cookedCount = cookedCount + 1,
@@ -626,9 +542,6 @@ interface RecipeDao {
     """)
     suspend fun incrementCookedCount(recipeId: String, date: Long, user: String?)
 
-    /**
-     * 🆕 Обновить страну кухни (при редактировании рецепта).
-     */
     @Query("""
         UPDATE recipes SET
             cuisineCountry = :country,
