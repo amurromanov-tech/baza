@@ -7,6 +7,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.family.base.data.TokenStorage
 import com.family.base.data.local.AppDatabase
+import com.family.base.data.local.dao.CountryCountRow
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.data.repository.RecipesRepository
@@ -17,8 +18,24 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 
-class RecipeViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * 🆕 v23.4.9: Типы сортировки рецептов.
+ * Используются в PopupMenu кнопки сортировки и в RecipeViewModel.
+ */
+enum class RecipeSortType(val key: String, val displayName: String) {
+    NEWEST("newest", "По новизне"),
+    ALPHABETICAL("alphabetical", "По алфавиту"),
+    POPULARITY("popularity", "По популярности"),
+    LIKES("likes", "По лайкам"),
+    DISLIKES("dislikes", "По дизлайкам");
 
+    companion object {
+        fun fromKey(key: String): RecipeSortType =
+            values().firstOrNull { it.key == key } ?: NEWEST
+    }
+}
+
+class RecipeViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "RecipeViewModel"
 
     private val db by lazy { AppDatabase.getInstance(application) }
@@ -27,7 +44,13 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     private var source: String = RecipeEntity.SOURCE_USER
     private var searchQuery: String = ""
-    private var sortNewest: Boolean = false
+
+    // 🆕 v23.4.9: расширенная сортировка (5 типов вместо 2)
+    private var sortType: RecipeSortType = RecipeSortType.NEWEST
+
+    // 🆕 v23.4.9: фильтр по стране кухни (null = не выбран, показываем все)
+    private var selectedCountry: String? = null
+
     private var currentFolderId: String? = null
     private var loadJob: Job? = null
 
@@ -51,6 +74,18 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _currentFolderName = MutableLiveData<String?>(null)
     val currentFolderName: LiveData<String?> = _currentFolderName
+
+    // 🆕 v23.4.9: список стран с количеством рецептов (для BottomSheet)
+    private val _countries = MutableLiveData<List<CountryCountRow>>(emptyList())
+    val countries: LiveData<List<CountryCountRow>> = _countries
+
+    // 🆕 v23.4.9: текущий тип сортировки (для UI — подсветка активного пункта)
+    private val _currentSortType = MutableLiveData(RecipeSortType.NEWEST)
+    val currentSortType: LiveData<RecipeSortType> = _currentSortType
+
+    // 🆕 v23.4.9: выбранная страна (для UI — плашка «🇮🇹 Итальянская ✕»)
+    private val _selectedCountry = MutableLiveData<String?>(null)
+    val selectedCountry: LiveData<String?> = _selectedCountry
 
     // ============================================================
     // 🆕 AI-ГЕНЕРАЦИЯ РЕЦЕПТОВ (Шаг 2)
@@ -76,6 +111,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         this.source = source
         this.currentFolderId = null
         this.searchQuery = ""
+        this.sortType = RecipeSortType.NEWEST
+        this.selectedCountry = null
         this.folderStack.clear()
         Logger.log(TAG, "init: source=$source")
     }
@@ -93,13 +130,16 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 val folderMode = isFolderModeAvailable()
                 val folderId = currentFolderId
                 val hasQuery = searchQuery.isNotBlank()
+                val country = selectedCountry
+                val sort = sortType
 
-                // 1. Папки уровня
-                val foldersList: List<RecipeFolderEntity> = if (folderMode && !hasQuery) {
-                    recipesRepository.getFolders(folderId, sortNewest)
-                } else {
-                    emptyList()
-                }
+                // 1. Папки уровня (только если нет поиска и нет фильтра по стране)
+                val foldersList: List<RecipeFolderEntity> =
+                    if (folderMode && !hasQuery && country == null) {
+                        recipesRepository.getFolders(folderId, sort == RecipeSortType.NEWEST)
+                    } else {
+                        emptyList()
+                    }
 
                 // 2. Счётчики рецептов в папках (глубокий подсчёт)
                 val counts: Map<String, Int> = if (foldersList.isNotEmpty()) {
@@ -115,28 +155,51 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                     emptyMap()
                 }
 
-                // 3. Рецепты уровня
+                // 3. Рецепты уровня — 🆕 v23.4.9: учитываем sortType и selectedCountry
                 val recipesList: List<RecipeEntity> = when {
                     isAi -> {
-                        if (hasQuery) recipesRepository.searchRecipes(source, searchQuery)
-                        else recipesRepository.getRecipesBySource(source, sortNewest)
+                        when {
+                            hasQuery -> recipesRepository.searchRecipes(source, searchQuery)
+                            country != null -> recipesRepository.getRecipesByCountry(source, country, sort.key)
+                            else -> recipesRepository.getRecipesBySourceSorted(source, sort.key)
+                        }
                     }
                     folderId != null -> {
-                        if (hasQuery) recipesRepository.searchInFolder(folderId, searchQuery)
-                        else recipesRepository.getRecipesInFolder(folderId, sortNewest)
+                        when {
+                            hasQuery && country != null ->
+                                recipesRepository.searchInFolderByCountry(folderId, country, searchQuery)
+                            hasQuery ->
+                                recipesRepository.searchInFolder(folderId, searchQuery)
+                            country != null ->
+                                recipesRepository.getRecipesInFolderByCountry(folderId, country, sort.key)
+                            else ->
+                                recipesRepository.getRecipesInFolderSorted(folderId, sort.key)
+                        }
                     }
                     else -> {
-                        if (hasQuery) {
-                            db.recipeDao().searchAllUserRecipes(searchQuery)
-                        } else {
-                            recipesRepository.getRootRecipes(source, sortNewest)
+                        // Корень «Моих рецептов»
+                        when {
+                            hasQuery && country != null ->
+                                recipesRepository.searchRootRecipesByCountry(source, country, searchQuery)
+                            hasQuery ->
+                                db.recipeDao().searchAllUserRecipes(searchQuery)
+                            country != null ->
+                                recipesRepository.getRootRecipesByCountry(source, country, sort.key)
+                            else ->
+                                recipesRepository.getRootRecipesSorted(source, sort.key)
                         }
                     }
                 }
 
+                // 🆕 v23.4.9: вторичная сортировка по алфавиту только если
+                // основной sortType != ALPHABETICAL и есть поиск (чтобы
+                // результаты поиска были упорядочены предсказуемо).
                 val sortedRecipes: List<RecipeEntity> =
-                    if (hasQuery && !sortNewest) recipesList.sortedBy { it.title.lowercase() }
-                    else recipesList
+                    if (hasQuery && sort != RecipeSortType.ALPHABETICAL) {
+                        recipesList.sortedBy { it.title.lowercase() }
+                    } else {
+                        recipesList
+                    }
 
                 // 4. Подстановка локального файла первого фото
                 val appContext = getApplication<Application>()
@@ -176,8 +239,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 Logger.log(
                     TAG,
                     "loadContent: source=$source, folderId=$folderId, query='$searchQuery', " +
-                        "sortNewest=$sortNewest, folders=${foldersList.size}, recipes=${listItems.size}, " +
-                        "withPhoto=${listItems.count { it.photoFile != null }}, counts=${counts.size}"
+                        "sortType=${sort.key}, country=$country, folders=${foldersList.size}, " +
+                        "recipes=${listItems.size}, withPhoto=${listItems.count { it.photoFile != null }}, " +
+                        "counts=${counts.size}"
                 )
 
                 _folders.value = foldersList
@@ -211,6 +275,9 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         currentFolderId?.let { folderStack.addLast(it) }
         currentFolderId = folderId
         searchQuery = ""
+        // 🆕 v23.4.9: при входе в папку сбрасываем фильтр по стране
+        selectedCountry = null
+        _selectedCountry.value = null
         Logger.log(TAG, "openFolder: $folderId (stack size=${folderStack.size})")
         loadContent()
     }
@@ -220,6 +287,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         currentFolderId = null
         folderStack.clear()
         searchQuery = ""
+        selectedCountry = null
+        _selectedCountry.value = null
         Logger.log(TAG, "goToRoot")
         loadContent()
     }
@@ -234,6 +303,8 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 Logger.log(TAG, "goBack: to root")
             }
             searchQuery = ""
+            selectedCountry = null
+            _selectedCountry.value = null
             loadContent()
             true
         } else {
@@ -258,15 +329,188 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         loadContent()
     }
 
-    fun setSort(newest: Boolean) {
-        if (sortNewest == newest) return
-        sortNewest = newest
-        Logger.log(TAG, "setSort: newest=$newest")
+    // ============================================================
+    // 🆕 v23.4.9: СОРТИРОВКА (5 типов)
+    // ============================================================
+
+    /**
+     * 🆕 Установить тип сортировки.
+     * Вызывается из PopupMenu кнопки сортировки.
+     */
+    fun setSortType(type: RecipeSortType) {
+        if (sortType == type) return
+        sortType = type
+        _currentSortType.value = type
+        Logger.log(TAG, "setSortType: ${type.key} (${type.displayName})")
         loadContent()
     }
 
-    fun isSortNewest(): Boolean = sortNewest
+    fun getSortType(): RecipeSortType = sortType
 
+    /**
+     * @deprecated Используйте [setSortType] с [RecipeSortType].
+     * Оставлено для обратной совместимости со старым UI.
+     */
+    @Deprecated(
+        "Use setSortType(RecipeSortType) instead",
+        ReplaceWith("setSortType(if (newest) RecipeSortType.NEWEST else RecipeSortType.ALPHABETICAL)")
+    )
+    fun setSort(newest: Boolean) {
+        setSortType(if (newest) RecipeSortType.NEWEST else RecipeSortType.ALPHABETICAL)
+    }
+
+    /**
+     * @deprecated Используйте [getSortType] вместо этого.
+     */
+    @Deprecated(
+        "Use getSortType() instead",
+        ReplaceWith("getSortType() == RecipeSortType.NEWEST")
+    )
+    fun isSortNewest(): Boolean = sortType == RecipeSortType.NEWEST
+
+    // ============================================================
+    // 🆕 v23.4.9: ФИЛЬТР ПО СТРАНЕ КУХНИ
+    // ============================================================
+
+    /**
+     * 🆕 Загрузить список стран с количеством рецептов (для BottomSheet).
+     * Список зависит от текущего контекста:
+     *   - внутри папки → только страны рецептов в этой папке
+     *   - в корне → только страны корневых рецептов
+     *   - для AI → все страны AI-рецептов
+     */
+    fun loadCountries() {
+        viewModelScope.launch {
+            try {
+                val folderId = currentFolderId
+                val rows: List<CountryCountRow> = when {
+                    source == RecipeEntity.SOURCE_AI ->
+                        recipesRepository.getDistinctCountriesWithCount(source)
+                    folderId != null ->
+                        recipesRepository.getDistinctCountriesWithCountInFolder(folderId)
+                    else ->
+                        recipesRepository.getDistinctCountriesWithCountInRoot(source)
+                }
+                Logger.log(TAG, "loadCountries: count=${rows.size}")
+                _countries.value = rows
+            } catch (e: Exception) {
+                Logger.log(TAG, "loadCountries ERROR: ${e.message}", e)
+                _countries.value = emptyList()
+            }
+        }
+    }
+
+    /**
+     * 🆕 Выбрать страну для фильтрации.
+     * Вызывается из BottomSheet «По странам».
+     */
+    fun selectCountry(country: String) {
+        if (selectedCountry == country) return
+        selectedCountry = country
+        _selectedCountry.value = country
+        Logger.log(TAG, "selectCountry: '$country'")
+        loadContent()
+    }
+
+    /**
+     * 🆕 Сбросить фильтр по стране (кнопка «✕» на плашке).
+     */
+    fun clearCountryFilter() {
+        if (selectedCountry == null) return
+        selectedCountry = null
+        _selectedCountry.value = null
+        Logger.log(TAG, "clearCountryFilter")
+        loadContent()
+    }
+
+    fun getSelectedCountry(): String? = selectedCountry
+
+    // ============================================================
+    // 🆕 v23.4.9: ЛАЙК / ДИЗЛАЙК / ПРИГОТОВЛЕНО
+    // ============================================================
+
+    /**
+     * 🆕 +1 к лайкам рецепта.
+     * После обновления — перезагружаем список, чтобы отразить новое значение.
+     */
+    fun likeRecipe(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.incrementLikes(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "likeRecipe: OK id=$recipeId, likes=${updated.likes}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "likeRecipe ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 +1 к дизлайкам рецепта.
+     */
+    fun dislikeRecipe(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.incrementDislikes(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "dislikeRecipe: OK id=$recipeId, dislikes=${updated.dislikes}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "dislikeRecipe ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 +1 к счётчику «Приготовлено».
+     */
+    fun markCooked(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.incrementCookedCount(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "markCooked: OK id=$recipeId, cookedCount=${updated.cookedCount}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "markCooked ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 Обновить страну кухни рецепта (при редактировании).
+     */
+    fun updateCuisineCountry(recipeId: String, country: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val ok = recipesRepository.updateCuisineCountry(recipeId, country, user)
+                if (!ok) {
+                    onResult("Не удалось обновить страну кухни")
+                } else {
+                    Logger.log(TAG, "updateCuisineCountry: OK id=$recipeId, country='$country'")
+                    onResult(null)
+                    loadContent()
+                    // Если фильтр по стране активен — обновим список стран в BottomSheet
+                    if (selectedCountry != null) loadCountries()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "updateCuisineCountry ERROR: ${e.message}", e)
+                onResult("Ошибка: ${e.message}")
+            }
+        }
+    }
+
+    // ============================================================
+    // ПАПКИ (CRUD)
+    // ============================================================
     fun createFolder(
         name: String,
         currentUser: String,
@@ -391,16 +635,13 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
             onResult("Введите запрос для генерации рецепта")
             return
         }
-
         _aiError.value = null
         _generatedAiRecipe.value = null
         _isAiGenerating.value = true
-
         viewModelScope.launch {
             try {
                 Logger.log(TAG, "generateAiRecipe: start, prompt='$cleanPrompt'")
                 val recipeText = recipesRepository.generateAiRecipe(cleanPrompt)
-
                 if (recipeText.isNullOrBlank()) {
                     val errorMsg = "Не удалось сгенерировать рецепт. Проверьте интернет и попробуйте снова."
                     Logger.log(TAG, "generateAiRecipe: empty response")
@@ -427,3 +668,18 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
         _aiError.value = null
     }
 }
+
+// ============================================================
+// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+// Добавлено:
+//   - enum RecipeSortType (NEWEST/ALPHABETICAL/POPULARITY/LIKES/DISLIKES)
+//   - состояние sortType (вместо sortNewest: Boolean)
+//   - состояние selectedCountry + LiveData _selectedCountry
+//   - LiveData _countries для BottomSheet «По странам»
+//   - LiveData _currentSortType для подсветки активного пункта
+//   - методы: setSortType, getSortType, loadCountries, selectCountry,
+//             clearCountryFilter, likeRecipe, dislikeRecipe, markCooked,
+//             updateCuisineCountry
+//   - loadContent() теперь учитывает sortType и selectedCountry
+//   - старые setSort(Boolean) и isSortNewest() — deprecated-обёртки
+// ============================================================
