@@ -19,7 +19,11 @@ class RecipeCatalogAdapter(
     private val onFolderClick: (RecipeFolderEntity) -> Unit,
     private val onRecipeClick: (RecipeEntity) -> Unit,
     private val onFolderLongClick: (RecipeFolderEntity) -> Unit,
-    private val onRecipeLongClick: (RecipeEntity) -> Unit
+    private val onRecipeLongClick: (RecipeEntity) -> Unit,
+    // 🆕 v23.4.9: колбэки для лайк/дизлайк/приготовлено
+    private val onLikeClick: (RecipeEntity) -> Unit = {},
+    private val onDislikeClick: (RecipeEntity) -> Unit = {},
+    private val onCookedClick: (RecipeEntity) -> Unit = {}
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -50,7 +54,6 @@ class RecipeCatalogAdapter(
         val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
             override fun getOldListSize(): Int = oldItems.size
             override fun getNewListSize(): Int = newItems.size
-
             override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean {
                 val old = oldItems[oldPos]
                 val new = newItems[newPos]
@@ -62,7 +65,6 @@ class RecipeCatalogAdapter(
                     else -> false
                 }
             }
-
             override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
                 val old = oldItems[oldPos]
                 val new = newItems[newPos]
@@ -75,6 +77,10 @@ class RecipeCatalogAdapter(
                     old is RecipeCatalogItem.Recipe && new is RecipeCatalogItem.Recipe ->
                         old.recipe.title == new.recipe.title &&
                             old.recipe.description == new.recipe.description &&
+                            old.recipe.cuisineCountry == new.recipe.cuisineCountry &&
+                            old.recipe.likes == new.recipe.likes &&
+                            old.recipe.dislikes == new.recipe.dislikes &&
+                            old.recipe.cookedCount == new.recipe.cookedCount &&
                             old.recipe.updatedAt == new.recipe.updatedAt &&
                             old.photoFile?.absolutePath == new.photoFile?.absolutePath
                     else -> false
@@ -120,23 +126,18 @@ class RecipeCatalogAdapter(
         fun bind(item: RecipeCatalogItem.Folder) {
             val folder = item.folder
             val context = itemView.context
-
             colorBar.setBackgroundColor(
                 context.resources.getColor(R.color.colorPrimary, context.theme)
             )
-
             ivFolderIcon.load(R.drawable.ic_folder_default) {
                 placeholder(R.drawable.ic_folder_default)
                 error(R.drawable.ic_folder_default)
             }
-
             tvFolderName.text = folder.name
-
             tvFolderMeta.text = when {
                 item.recipesCount <= 0 -> "📁 Пусто"
                 else -> "📁 ${item.recipesCount} ${pluralRecipes(item.recipesCount)}"
             }
-
             itemView.setOnClickListener { onFolderClick(folder) }
             itemView.setOnLongClickListener { onFolderLongClick(folder); true }
         }
@@ -146,20 +147,24 @@ class RecipeCatalogAdapter(
         private val colorBar: View = view.findViewById(R.id.colorBar)
         private val ivRecipePhoto: ImageView = view.findViewById(R.id.ivRecipePhoto)
         private val tvRecipeTitle: TextView = view.findViewById(R.id.tvRecipeTitle)
+        // 🆕 v23.4.9: страна кухни
+        private val tvRecipeCountry: TextView = view.findViewById(R.id.tvRecipeCountry)
         private val tvRecipeDescription: TextView = view.findViewById(R.id.tvRecipeDescription)
         private val tvRecipeMeta: TextView = view.findViewById(R.id.tvRecipeMeta)
+        // 🆕 v23.4.9: кнопки лайк/дизлайк/приготовлено
+        private val btnLike: TextView = view.findViewById(R.id.btnLike)
+        private val btnDislike: TextView = view.findViewById(R.id.btnDislike)
+        private val btnCooked: TextView = view.findViewById(R.id.btnCooked)
 
         fun bind(item: RecipeCatalogItem.Recipe) {
             val recipe = item.recipe
             val context = itemView.context
-
             val colorRes = if (recipe.source == RecipeEntity.SOURCE_AI) {
                 R.color.colorWarning
             } else {
                 R.color.colorNormal
             }
             colorBar.setBackgroundColor(context.resources.getColor(colorRes, context.theme))
-
             if (item.photoFile != null && item.photoFile.exists()) {
                 ivRecipePhoto.load(item.photoFile) {
                     crossfade(true)
@@ -169,8 +174,16 @@ class RecipeCatalogAdapter(
             } else {
                 ivRecipePhoto.load(R.drawable.ic_item_default)
             }
-
             tvRecipeTitle.text = recipe.title
+
+            // 🆕 v23.4.9: страна кухни
+            val country = recipe.cuisineCountry.trim()
+            if (country.isEmpty()) {
+                tvRecipeCountry.visibility = View.GONE
+            } else {
+                tvRecipeCountry.visibility = View.VISIBLE
+                tvRecipeCountry.text = "🌍 $country"
+            }
 
             val desc = recipe.description
             if (desc.isNullOrBlank()) {
@@ -179,7 +192,6 @@ class RecipeCatalogAdapter(
                 tvRecipeDescription.visibility = View.VISIBLE
                 tvRecipeDescription.text = desc
             }
-
             val sourceLabel = if (recipe.source == RecipeEntity.SOURCE_AI) "🤖 ИИ" else "📝 Мои"
             val dateStr = try {
                 dateFormat.format(Date(recipe.createdAt))
@@ -187,6 +199,25 @@ class RecipeCatalogAdapter(
                 ""
             }
             tvRecipeMeta.text = if (dateStr.isEmpty()) sourceLabel else "$sourceLabel · $dateStr"
+
+            // 🆕 v23.4.9: счётчики лайков/дизлайков/приготовлений
+            btnLike.text = "👍 ${recipe.likes}"
+            btnDislike.text = "👎 ${recipe.dislikes}"
+            btnCooked.text = "🍳 ${recipe.cookedCount}"
+
+            // 🆕 v23.4.9: обработчики кликов на кнопки (с защитой от всплытия к itemView)
+            btnLike.setOnClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                onLikeClick(recipe)
+            }
+            btnDislike.setOnClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                onDislikeClick(recipe)
+            }
+            btnCooked.setOnClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                onCookedClick(recipe)
+            }
 
             itemView.setOnClickListener { onRecipeClick(recipe) }
             itemView.setOnLongClickListener { onRecipeLongClick(recipe); true }
@@ -203,3 +234,19 @@ class RecipeCatalogAdapter(
         }
     }
 }
+
+// ============================================================
+// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
+// Изменения:
+//   - Добавлены 3 новых колбэка в конструктор:
+//     * onLikeClick(recipe) — клик по 👍
+//     * onDislikeClick(recipe) — клик по 👎
+//     * onCookedClick(recipe) — клик по 🍳
+//   - В RecipeViewHolder добавлены поля:
+//     * tvRecipeCountry — страна кухни
+//     * btnLike, btnDislike, btnCooked — счётчики
+//   - В bind() заполняется страна и счётчики
+//   - На кнопки установлены onClickListener с haptic feedback
+//   - В DiffUtil.areContentsTheSame() учитываются новые поля:
+//     cuisineCountry, likes, dislikes, cookedCount
+// ============================================================
