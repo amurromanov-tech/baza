@@ -48,7 +48,6 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     private var sortType: RecipeSortType = RecipeSortType.NEWEST
 
     // 🆕 v23.4.9: фильтр по стране кухни (null = не выбран, показываем все)
-    // Переименовано в currentCountryFilter, чтобы избежать конфликта с LiveData selectedCountry
     private var currentCountryFilter: String? = null
 
     private var currentFolderId: String? = null
@@ -402,7 +401,7 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
     fun getSelectedCountry(): String? = currentCountryFilter
 
     // ============================================================
-    // 🆕 v23.4.9: ЛАЙК / ДИЗЛАЙК / ПРИГОТОВЛЕНО
+    // 🆕 v23.4.9: ЛАЙК / ДИЗЛАЙК / ПРИГОТОВЛЕНО (инкремент)
     // ============================================================
 
     fun likeRecipe(recipeId: String) {
@@ -446,6 +445,68 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 Logger.log(TAG, "markCooked ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    // ============================================================
+    // 🆕 v23.4.9 (27.11.2026): ДЕКРЕМЕНТ СЧЁТЧИКОВ (отмена долгого нажатия)
+    //
+    // Вызывается при долгом нажатии на кнопку 👍/👎/🍳.
+    // Защита от ухода в минус реализована в SQL (MAX(0, value - 1))
+    // на уровне DAO, поэтому здесь просто вызываем репозиторий.
+    // ============================================================
+
+    /**
+     * 🆕 -1 к лайкам (отмена долгого нажатия).
+     */
+    fun decrementLikes(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.decrementLikes(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "decrementLikes: OK id=$recipeId, likes=${updated.likes}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementLikes ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 -1 к дизлайкам (отмена долгого нажатия).
+     */
+    fun decrementDislikes(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.decrementDislikes(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "decrementDislikes: OK id=$recipeId, dislikes=${updated.dislikes}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementDislikes ERROR: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 🆕 -1 к счётчику приготовлений (отмена долгого нажатия).
+     */
+    fun decrementCookedCount(recipeId: String) {
+        viewModelScope.launch {
+            try {
+                val user = currentUserName
+                val updated = recipesRepository.decrementCookedCount(recipeId, user)
+                if (updated != null) {
+                    Logger.log(TAG, "decrementCookedCount: OK id=$recipeId, cookedCount=${updated.cookedCount}")
+                    loadContent()
+                }
+            } catch (e: Exception) {
+                Logger.log(TAG, "decrementCookedCount ERROR: ${e.message}", e)
             }
         }
     }
@@ -633,10 +694,16 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 }
 
 // ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-// Исправления:
-//   - Убраны пробелы в строках enum RecipeSortType
-//   - В loadContent() папки ВСЕГДА запрашиваются с параметром false
-//     (по алфавиту), чтобы порядок "01, 02, 03" не скакал при
-//     переключении сортировки рецептов.
+// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг + отмена долгим нажатием
+// Исправления и добавления:
+//   1. Убраны пробелы в enum RecipeSortType (было "newest ", стало "newest")
+//   2. В loadContent() папки ВСЕГДА запрашиваются с параметром false
+//      (по алфавиту), чтобы порядок "01, 02, 03" не скакал при
+//      переключении сортировки рецептов.
+//   3. Добавлены методы декремента счётчиков:
+//      - decrementLikes(recipeId)
+//      - decrementDislikes(recipeId)
+//      - decrementCookedCount(recipeId)
+//      Все вызывают соответствующие методы RecipesRepository,
+//      которые используют SQL MAX(0, value - 1) для защиты от минуса.
 // ============================================================
