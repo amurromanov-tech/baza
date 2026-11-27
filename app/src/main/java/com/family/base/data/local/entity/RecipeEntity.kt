@@ -29,7 +29,7 @@ import java.util.UUID
  * Папки есть ТОЛЬКО у «Моих рецептов» (source = "user").
  * У «Рецептов ИИ» (source = "ai") folderId всегда null.
  *
- * 🆕 v23.4.8+ (миграция 23→24): КУХНЯ МИРА + РЕЙТИНГ.
+ * 🆕 v23.4.9 (миграция 23→24): КУХНЯ МИРА + РЕЙТИНГ.
  * Добавлены поля:
  * - cuisineCountry (страна кухни, обязательное, по умолчанию "")
  * - likes (количество лайков, по умолчанию 0)
@@ -79,7 +79,7 @@ import java.util.UUID
             value = ["deleteConfirmed", "deletedAt"],
             name = "index_recipes_deleteConfirmed_deletedAt"
         ),
-        // 🆕 v23.4.8+: индексы для новых полей
+        // 🆕 v23.4.9 (миграция 23→24): индексы для новых полей
         Index(value = ["cuisineCountry"], name = "index_recipes_cuisineCountry"),
         Index(value = ["cookedCount"], name = "index_recipes_cookedCount"),
         Index(value = ["likes"], name = "index_recipes_likes"),
@@ -129,7 +129,7 @@ data class RecipeEntity(
     val folderId: String? = null,
 
     /**
-     * 🆕 v23.4.8+ (миграция 23→24): страна кухни.
+     * 🆕 v23.4.9 (миграция 23→24): страна кухни.
      * Обязательное поле (NOT NULL), по умолчанию пустая строка.
      * В UI при создании/редактировании рецепта это поле обязательно к заполнению.
      * Для старых рецептов (до миграции) будет пустая строка — в UI показываем
@@ -139,21 +139,21 @@ data class RecipeEntity(
     val cuisineCountry: String = "",
 
     /**
-     * 🆕 v23.4.8+ (миграция 23→24): количество лайков.
+     * 🆕 v23.4.9 (миграция 23→24): количество лайков.
      * По умолчанию 0. Увеличивается при нажатии на кнопку "Лайк" в UI.
      */
     @ColumnInfo(defaultValue = "0")
     val likes: Int = 0,
 
     /**
-     * 🆕 v23.4.8+ (миграция 23→24): количество дизлайков.
+     * 🆕 v23.4.9 (миграция 23→24): количество дизлайков.
      * По умолчанию 0. Увеличивается при нажатии на кнопку "Дизлайк" в UI.
      */
     @ColumnInfo(defaultValue = "0")
     val dislikes: Int = 0,
 
     /**
-     * 🆕 v23.4.8+ (миграция 23→24): количество приготовлений.
+     * 🆕 v23.4.9 (миграция 23→24): количество приготовлений.
      * По умолчанию 0. Увеличивается при нажатии на кнопку "Приготовлено" в UI.
      * Используется для сортировки "По популярности".
      */
@@ -204,3 +204,12 @@ data class RecipeEntity(
         const val SYNC_STATUS_PENDING = "pending"
     }
 }
+
+// ============================================================
+// 🆕 v23.4.9 (27.11.2026) — миграция 23→24
+// Добавлены поля: cuisineCountry, likes, dislikes, cookedCount
+// Добавлены индексы: index_recipes_cuisineCountry,
+//                    index_recipes_cookedCount,
+//                    index_recipes_likes,
+//                    index_recipes_dislikes
+// ============================================================
