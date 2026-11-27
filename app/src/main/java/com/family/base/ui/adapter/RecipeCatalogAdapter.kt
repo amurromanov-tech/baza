@@ -20,7 +20,7 @@ class RecipeCatalogAdapter(
     private val onRecipeClick: (RecipeEntity) -> Unit,
     private val onFolderLongClick: (RecipeFolderEntity) -> Unit,
     private val onRecipeLongClick: (RecipeEntity) -> Unit,
-    // 🆕 v23.4.9: колбэки для лайк/дизлайк/приготовлено (инкремент)
+    // 🆕 v23.4.9: колбэки для лайк/дизлайк/приготовлено (инкремент — короткий клик)
     private val onLikeClick: (RecipeEntity) -> Unit = {},
     private val onDislikeClick: (RecipeEntity) -> Unit = {},
     private val onCookedClick: (RecipeEntity) -> Unit = {},
@@ -209,7 +209,7 @@ class RecipeCatalogAdapter(
             btnDislike.text = "👎 ${recipe.dislikes}"
             btnCooked.text = "🍳 ${recipe.cookedCount}"
 
-            // 🆕 v23.4.9: обработчики кликов на кнопки (короткое нажатие = +1)
+            // 🆕 v23.4.9: обработчики короткого клика на кнопки (+1)
             btnLike.setOnClickListener {
                 it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                 onLikeClick(recipe)
@@ -224,10 +224,13 @@ class RecipeCatalogAdapter(
             }
 
             // 🆕 v23.4.9 (27.11.2026): обработчики долгого нажатия = -1 (отмена)
+            // Защита от многократного срабатывания: setOnLongClickListener срабатывает
+            // ОДИН РАЗ за одно долгое нажатие. Пока палец держится — не срабатывает повторно.
+            // Отпустил палец → новое долгое нажатие = ещё один -1.
             btnLike.setOnLongClickListener {
                 it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                 onLongLikeClick(recipe)
-                true
+                true // true — предотвращает всплытие события к itemView
             }
             btnDislike.setOnLongClickListener {
                 it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
@@ -266,4 +269,6 @@ class RecipeCatalogAdapter(
 //   - В RecipeViewHolder добавлены setOnLongClickListener на btnLike/btnDislike/btnCooked
 //   - Haptic feedback LONG_PRESS для долгих нажатий (отличается от VIRTUAL_KEY для коротких)
 //   - Возврат true в onLongClickListener предотвращает всплытие события к itemView
+//   - Защита от многократного срабатывания: стандартное поведение Android —
+//     одно долгое нажатие = одно срабатывание. Отпустил палец → новое долгое = ещё -1.
 // ============================================================
