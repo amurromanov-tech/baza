@@ -25,7 +25,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.family.base.data.local.AppDatabase
-import com.family.base.data.local.dao.CountryCountRow
 import com.family.base.data.local.entity.RecipeEntity
 import com.family.base.data.local.entity.RecipeFolderEntity
 import com.family.base.databinding.ActivityRecipeListBinding
@@ -158,7 +157,7 @@ class RecipeListActivity : AppCompatActivity() {
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
             },
-            // 🆕 v23.4.9: колбэки для лайков/дизлайков/приготовлений
+            // 🆕 v23.4.9: колбэки для лайков/дизлайков/приготовлений (короткий клик = +1)
             onLikeClick = { recipe ->
                 Logger.log(TAG, "like clicked: id=${recipe.id}")
                 viewModel.likeRecipe(recipe.id)
@@ -170,6 +169,19 @@ class RecipeListActivity : AppCompatActivity() {
             onCookedClick = { recipe ->
                 Logger.log(TAG, "cooked clicked: id=${recipe.id}")
                 viewModel.markCooked(recipe.id)
+            },
+            // 🆕 v23.4.9 (27.11.2026): долгие нажатия — декремент счётчиков
+            onLongLikeClick = { recipe ->
+                Logger.log(TAG, "like longClicked: id=${recipe.id}")
+                viewModel.decrementLikes(recipe.id)
+            },
+            onLongDislikeClick = { recipe ->
+                Logger.log(TAG, "dislike longClicked: id=${recipe.id}")
+                viewModel.decrementDislikes(recipe.id)
+            },
+            onLongCookedClick = { recipe ->
+                Logger.log(TAG, "cooked longClicked: id=${recipe.id}")
+                viewModel.decrementCookedCount(recipe.id)
             }
         )
         binding.rvRecipes.layoutManager = LinearLayoutManager(this)
@@ -266,7 +278,13 @@ class RecipeListActivity : AppCompatActivity() {
         }
     }
 
+    // 🆕 v23.4.9 (27.11.2026): показываем "🔽 Сортировка" до явного выбора,
+    // после выбора — иконку + displayName выбранного типа.
     private fun updateSortButtonText(sortType: RecipeSortType) {
+        if (!viewModel.isUserSelectedSort()) {
+            binding.btnSort.text = "🔽 Сортировка"
+            return
+        }
         val icon = when (sortType) {
             RecipeSortType.NEWEST -> "🕐"
             RecipeSortType.ALPHABETICAL -> "🔤"
@@ -280,7 +298,7 @@ class RecipeListActivity : AppCompatActivity() {
     private fun showSortPopupMenu() {
         val popup = PopupMenu(this, binding.btnSort)
         val currentSort = viewModel.getSortType()
-        
+
         popup.menu.add(0, 1, 1, "🕐 По новизне").apply {
             isChecked = currentSort == RecipeSortType.NEWEST
         }
@@ -297,9 +315,9 @@ class RecipeListActivity : AppCompatActivity() {
             isChecked = currentSort == RecipeSortType.DISLIKES
         }
         popup.menu.setGroupCheckable(0, true, true)
-        
+
         popup.menu.add(0, 6, 6, "🌍 По странам...")
-        
+
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> {
@@ -329,7 +347,7 @@ class RecipeListActivity : AppCompatActivity() {
                 else -> false
             }
         }
-        
+
         popup.show()
     }
 
@@ -359,14 +377,14 @@ class RecipeListActivity : AppCompatActivity() {
     // ============================================================
     private fun showCountryBottomSheet() {
         viewModel.loadCountries()
-        
+
         val dialog = BottomSheetDialog(this)
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = (16 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad, pad, pad)
         }
-        
+
         val titleView = TextView(this).apply {
             text = "🌍 Выбрать страну кухни"
             textSize = 18f
@@ -374,7 +392,7 @@ class RecipeListActivity : AppCompatActivity() {
             setPadding(0, 0, 0, (16 * resources.displayMetrics.density).toInt())
         }
         layout.addView(titleView)
-        
+
         val listView = ListView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -382,7 +400,7 @@ class RecipeListActivity : AppCompatActivity() {
             )
         }
         layout.addView(listView)
-        
+
         viewModel.countries.observe(this) { countries ->
             val items = countries.map { "${it.country} (${it.count})" }
             val adapter = android.widget.ArrayAdapter(
@@ -391,14 +409,14 @@ class RecipeListActivity : AppCompatActivity() {
                 items
             )
             listView.adapter = adapter
-            
+
             listView.setOnItemClickListener { _, _, position, _ ->
                 val selectedCountry = countries[position].country
                 viewModel.selectCountry(selectedCountry)
                 dialog.dismiss()
             }
         }
-        
+
         dialog.setContentView(layout)
         dialog.show()
     }
@@ -424,12 +442,12 @@ class RecipeListActivity : AppCompatActivity() {
             folderName != null -> Triple(
                 "📁",
                 "В папке «$folderName» пока пусто",
-                "Нажми «+», чтобы добавить рецепт в эту папку,\nили «Добавить папку» сверху, чтобы создать подпапку."
+                "Нажми «+», чтобы добавить рецепт в эту папку,\nили зажми «+», чтобы создать подпапку."
             )
             source == RecipeEntity.SOURCE_USER -> Triple(
                 "📝",
                 "Здесь пока пусто",
-                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео.\nИли «Добавить папку» сверху, чтобы создать папку."
+                "Нажми «+», чтобы добавить первый рецепт:\nназвание, описание, а скоро — фото и видео.\nИли зажми «+», чтобы создать папку."
             )
             else -> Triple(
                 "🍳",
@@ -442,30 +460,43 @@ class RecipeListActivity : AppCompatActivity() {
         binding.tvEmptySubtitle.text = subtitle
     }
 
+    // ============================================================
+    // FAB «+»: короткий клик — создать рецепт, долгий — создать папку
+    // 🆕 v23.4.9 (27.11.2026): btnAddFolder удалён из layout
+    // ============================================================
     private fun setupFabs() {
         if (source == RecipeEntity.SOURCE_AI) {
             binding.fabAddRecipe.visibility = View.VISIBLE
             binding.fabAddRecipe.setOnClickListener {
                 showAiRecipeDialog()
             }
+            binding.fabAddRecipe.setOnLongClickListener { false }
         } else if (source == RecipeEntity.SOURCE_USER) {
             binding.fabAddRecipe.visibility = View.VISIBLE
             binding.fabAddRecipe.setOnClickListener {
                 openCreateRecipe()
             }
+            binding.fabAddRecipe.setOnLongClickListener {
+                showCreateFolderConfirmDialog()
+                true
+            }
         } else {
             binding.fabAddRecipe.visibility = View.GONE
             binding.fabAddRecipe.setOnClickListener(null)
+            binding.fabAddRecipe.setOnLongClickListener(null)
         }
-        if (viewModel.isFolderModeAvailable()) {
-            binding.btnAddFolder.visibility = View.VISIBLE
-            binding.btnAddFolder.setOnClickListener {
+    }
+
+    // 🆕 v23.4.9 (27.11.2026): подтверждение создания папки по долгому нажатию FAB
+    private fun showCreateFolderConfirmDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("📁 Создать папку?")
+            .setMessage("Создать новую папку в текущем месте?")
+            .setPositiveButton("Да") { _, _ ->
                 showCreateFolderDialog()
             }
-        } else {
-            binding.btnAddFolder.visibility = View.GONE
-            binding.btnAddFolder.setOnClickListener(null)
-        }
+            .setNegativeButton("Нет", null)
+            .show()
     }
 
     private fun openCreateRecipe() {
@@ -727,7 +758,7 @@ class RecipeListActivity : AppCompatActivity() {
             if (ordered.isEmpty()) {
                 Toast.makeText(
                     this@RecipeListActivity,
-                    "Нет папок. Создайте папку кнопкой «Добавить папку».",
+                    "Нет папок. Создайте папку долгим нажатием на «+».",
                     Toast.LENGTH_LONG
                 ).show()
                 return@launch
@@ -850,13 +881,19 @@ class RecipeListActivity : AppCompatActivity() {
                 Logger.log(TAG, "aiError observer: $error")
             }
         }
-        
+
         // 🆕 v23.4.9: наблюдение за типом сортировки
         viewModel.currentSortType.observe(this) { sortType ->
             Logger.log(TAG, "currentSortType observer: ${sortType.key}")
             updateSortButtonText(sortType)
         }
-        
+
+        // 🆕 v23.4.9 (27.11.2026): флаг явного выбора сортировки
+        viewModel.userSelectedSort.observe(this) { selected ->
+            Logger.log(TAG, "userSelectedSort observer: $selected")
+            updateSortButtonText(viewModel.getSortType())
+        }
+
         // 🆕 v23.4.9: наблюдение за фильтром по стране
         viewModel.selectedCountry.observe(this) { country ->
             Logger.log(TAG, "selectedCountry observer: '$country'")
@@ -905,17 +942,3 @@ class RecipeListActivity : AppCompatActivity() {
         dismissAiProgressDialog()
     }
 }
-
-// ============================================================
-// 🆕 v23.4.9 (27.11.2026) — кухня мира + рейтинг
-// Изменения:
-//   - Удалён setupSortChips() с chipSortNewest/chipSortAlphabetical
-//   - Добавлен setupSortButton() — кнопка с PopupMenu (6 пунктов)
-//   - Добавлен setupCountryFilterChip() — плашка фильтра по стране
-//   - Добавлен showSortPopupMenu() — PopupMenu с 5 сортировками + "По странам"
-//   - Добавлен showCountryBottomSheet() — BottomSheet со списком стран
-//   - Добавлены observers: currentSortType, selectedCountry
-//   - В setupRecycler() добавлены колбэки: onLikeClick, onDislikeClick, onCookedClick
-//   - Обновлён updateUiState(): sortChipsScroll → btnSort
-//   - Добавлены импорты: PopupMenu, BottomSheetDialog, CountryCountRow, RecipeSortType
-// ============================================================
