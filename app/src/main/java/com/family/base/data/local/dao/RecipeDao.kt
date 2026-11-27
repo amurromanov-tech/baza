@@ -80,7 +80,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): СОРТИРОВКИ ПО РЕЙТИНГУ (source)
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source AND isDeleted = 0
@@ -105,7 +104,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): ФИЛЬТР ПО СТРАНЕ КУХНИ (source)
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -274,7 +272,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9: СОРТИРОВКИ ВНУТРИ ПАПКИ
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE folderId = :folderId AND isDeleted = 0
@@ -299,7 +296,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9: ФИЛЬТР ПО СТРАНЕ ВНУТРИ ПАПКИ
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE folderId = :folderId
@@ -372,7 +368,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9: СОРТИРОВКИ В КОРНЕ «МОИХ РЕЦЕПТОВ»
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -403,7 +398,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9: ФИЛЬТР ПО СТРАНЕ В КОРНЕ
     // ============================================================
-
     @Query("""
         SELECT * FROM recipes
         WHERE source = :source
@@ -511,7 +505,6 @@ interface RecipeDao {
     // ============================================================
     // 🆕 v23.4.9 (миграция 23→24): ИНКРЕМЕНТ СЧЁТЧИКОВ
     // ============================================================
-
     @Query("""
         UPDATE recipes SET
             likes = likes + 1,
@@ -541,6 +534,56 @@ interface RecipeDao {
         WHERE id = :recipeId
     """)
     suspend fun incrementCookedCount(recipeId: String, date: Long, user: String?)
+
+    // ============================================================
+    // 🆕 v23.4.9 (27.11.2026): ДЕКРЕМЕНТ СЧЁТЧИКОВ (отмена долгого нажатия)
+    //
+    // Защита от ухода в минус: MAX(0, value - 1).
+    // Даже если счётчик уже 0, он останется 0, а не станет -1.
+    // Используется для отмены случайного лайка/дизлайка/приготовлено.
+    // ============================================================
+
+    /**
+     * 🆕 -1 к лайкам (отмена долгого нажатия).
+     * Защита от ухода в минус: MAX(0, likes - 1).
+     */
+    @Query("""
+        UPDATE recipes SET
+            likes = MAX(0, likes - 1),
+            updatedAt = :date,
+            updatedBy = :user,
+            syncStatus = 'pending'
+        WHERE id = :recipeId
+    """)
+    suspend fun decrementLikes(recipeId: String, date: Long, user: String?)
+
+    /**
+     * 🆕 -1 к дизлайкам (отмена долгого нажатия).
+     * Защита от ухода в минус: MAX(0, dislikes - 1).
+     */
+    @Query("""
+        UPDATE recipes SET
+            dislikes = MAX(0, dislikes - 1),
+            updatedAt = :date,
+            updatedBy = :user,
+            syncStatus = 'pending'
+        WHERE id = :recipeId
+    """)
+    suspend fun decrementDislikes(recipeId: String, date: Long, user: String?)
+
+    /**
+     * 🆕 -1 к счётчику приготовлений (отмена долгого нажатия).
+     * Защита от ухода в минус: MAX(0, cookedCount - 1).
+     */
+    @Query("""
+        UPDATE recipes SET
+            cookedCount = MAX(0, cookedCount - 1),
+            updatedAt = :date,
+            updatedBy = :user,
+            syncStatus = 'pending'
+        WHERE id = :recipeId
+    """)
+    suspend fun decrementCookedCount(recipeId: String, date: Long, user: String?)
 
     @Query("""
         UPDATE recipes SET
@@ -584,12 +627,10 @@ interface RecipeDao {
 }
 
 // ============================================================
-// 🆕 v23.4.9 (27.11.2026) — миграция 23→24
-// Добавлены методы для:
-//   - сортировки по likes/dislikes/cookedCount (для source, folder, root)
-//   - фильтрации по стране кухни (cuisineCountry)
-//   - получения списка стран с количеством рецептов (для BottomSheet)
-//   - инкремента счётчиков лайков/дизлайков/приготовлений
-//   - обновления страны кухни
-// CountryCountRow используется из того же пакета (определён в ItemDao.kt)
+// 🆕 v23.4.9 (27.11.2026) — отмена долгим нажатием
+// Добавлены методы декремента счётчиков:
+//   - decrementLikes    (MAX(0, likes - 1))
+//   - decrementDislikes (MAX(0, dislikes - 1))
+//   - decrementCookedCount (MAX(0, cookedCount - 1))
+// Защита от ухода в минус через SQL-функцию MAX().
 // ============================================================
