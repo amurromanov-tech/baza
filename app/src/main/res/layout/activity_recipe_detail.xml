@@ -41,6 +41,18 @@
                     android:textStyle="bold"
                     tools:text="Блины классические" />
 
+                <!-- 🆕 v23.4.9 (28.11.2026): Страна кухни -->
+                <TextView
+                    android:id="@+id/tvCountry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="14sp"
+                    android:visibility="gone"
+                    tools:text="🌍 Итальянская"
+                    tools:visibility="visible" />
+
                 <!-- 2. Описание / шаги / ингредиенты -->
                 <TextView
                     android:id="@+id/tvDescription"
