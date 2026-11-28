@@ -57,6 +57,13 @@ class RecipeListActivity : AppCompatActivity() {
     private var aiProgressDialog: ProgressDialog? = null
     private var pendingVoiceField: EditText? = null
 
+    /**
+     * 🆕 v23.4.9 (28.11.2026): флаг «прокрутить список в начало после смены сортировки».
+     * Выставляется в observer currentSortType, применяется в rebuildList()
+     * когда реально пришёл новый отсортированный список.
+     */
+    private var pendingScrollToTop = false
+
     private val editLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -161,7 +168,6 @@ class RecipeListActivity : AppCompatActivity() {
                 Logger.log(TAG, "recipe longClicked: id=${recipe.id}, title='${recipe.title}'")
                 showRecipeActionsDialog(recipe)
             },
-            // 🆕 v23.4.9: колбэки для лайков/дизлайков/приготовлений (короткий клик = +1)
             onLikeClick = { recipe ->
                 Logger.log(TAG, "like clicked: id=${recipe.id}")
                 viewModel.likeRecipe(recipe.id)
@@ -174,7 +180,6 @@ class RecipeListActivity : AppCompatActivity() {
                 Logger.log(TAG, "cooked clicked: id=${recipe.id}")
                 viewModel.markCooked(recipe.id)
             },
-            // 🆕 v23.4.9 (27.11.2026): долгие нажатия — декремент счётчиков
             onLongLikeClick = { recipe ->
                 Logger.log(TAG, "like longClicked: id=${recipe.id}")
                 viewModel.decrementLikes(recipe.id)
@@ -894,6 +899,10 @@ class RecipeListActivity : AppCompatActivity() {
         viewModel.currentSortType.observe(this) { sortType ->
             Logger.log(TAG, "currentSortType observer: ${sortType.key}")
             updateSortButtonText(sortType)
+            // 🆕 v23.4.9 (28.11.2026): при смене сортировки — прокрутить список в начало.
+            // Сработает после того, как loadContent() принесёт новый список
+            // (флаг применяется в rebuildList()).
+            pendingScrollToTop = true
         }
 
         // 🆕 v23.4.9 (27.11.2026): флаг явного выбора сортировки
@@ -932,6 +941,15 @@ class RecipeListActivity : AppCompatActivity() {
             )
         }
         adapter.submitList(list)
+
+        // 🆕 v23.4.9 (28.11.2026): после смены сортировки — прокрутить в начало.
+        if (pendingScrollToTop) {
+            pendingScrollToTop = false
+            binding.rvRecipes.post {
+                binding.rvRecipes.scrollToPosition(0)
+            }
+            Logger.log(TAG, "rebuildList: scrolled to top after sort change")
+        }
     }
 
     private fun updateUiState(isEmpty: Boolean) {
