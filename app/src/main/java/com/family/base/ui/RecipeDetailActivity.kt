@@ -281,6 +281,16 @@ class RecipeDetailActivity : AppCompatActivity() {
     private fun bindRecipe(r: RecipeEntity) {
         binding.tvTitle.text = r.title
 
+        // 🆕 v23.4.9 (28.11.2026): страна кухни — обновляем при каждом bindRecipe().
+        // Пустая → скрываем. Иначе — «🌍 <страна>».
+        val country = r.cuisineCountry.trim()
+        if (country.isEmpty()) {
+            binding.tvCountry.visibility = View.GONE
+        } else {
+            binding.tvCountry.visibility = View.VISIBLE
+            binding.tvCountry.text = "🌍 $country"
+        }
+
         val desc = r.description?.trim()
         if (desc.isNullOrEmpty()) {
             binding.tvDescription.visibility = View.GONE
